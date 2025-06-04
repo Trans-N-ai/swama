@@ -1,0 +1,28 @@
+# SwiftFormat Configuration
+--swiftversion 6.1
+
+# Formatting rules
+--rules all
+--enable isEmpty
+--enable sortImports
+--enable unusedArguments
+--enable wrap
+--enable wrapArguments
+
+# Options
+--indent 4
+--tabwidth 4
+--maxwidth 120
+--wraparguments beforefirst
+--wrapcollections beforefirst
+--closingparen balanced
+--commas inline
+--trimwhitespace always
+--linebreaks lf
+--elseposition next-line
+--guardelse next-line
+
+# Excluded rules
+--disable redundantSelf
+--disable trailingCommas
+--disable organizeDeclarations
