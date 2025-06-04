@@ -1,0 +1,373 @@
+# Swama
+
+[![Swift](https://img.shields.io/badge/Swift-6.1-orange.svg)](https://swift.org)
+[![macOS](https://img.shields.io/badge/macOS-14.0+-blue.svg)](https://www.apple.com/macos/)
+[![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+> 中文版本 | [日本語](README_JA.md) | [English](README.md)
+
+**Swama** 是一个用纯 Swift 编写的高性能机器学习运行时，专为 macOS 设计，基于 Apple 的 MLX 框架。它为本地 LLM（大语言模型）和 VLM（视觉语言模型）推理提供了强大且易用的解决方案。
+
+## ✨ 特性
+
+- 🚀 **高性能**: 基于 Apple MLX 框架，针对 Apple Silicon 优化
+- 🔌 **OpenAI 兼容 API**: 提供标准的 `/v1/chat/completions` 端点
+- 📱 **菜单栏应用**: 优雅的 macOS 原生菜单栏集成
+- 💻 **命令行工具**: 完整的 CLI 支持用于模型管理和推理
+- 🖼️ **多模态支持**: 同时支持文本和图像输入
+- 📦 **智能模型管理**: 自动下载、缓存和版本管理
+- 🔄 **流式响应**: 支持实时流式文本生成
+- 🌍 **HuggingFace 集成**: 直接从 HuggingFace Hub 下载模型
+
+## 🏗️ 架构
+
+Swama 采用模块化架构设计：
+
+- **SwamaKit**: 核心框架库，包含所有业务逻辑
+- **Swama CLI**: 命令行工具，提供完整的模型管理和推理功能
+- **Swama.app**: macOS 菜单栏应用，提供图形界面和后台服务
+
+## 📋 系统要求
+
+- macOS 14.0 或更高版本
+- Apple Silicon (M1/M2/M3)
+- Xcode 15.0+ (用于编译)
+- Swift 6.1+
+
+## 🛠️ 安装
+
+### 📱 下载预构建应用（推荐）
+
+1. **下载最新版本**
+   - 访问 [Releases](https://github.com/Trans-N-ai/swama/releases) 页面
+   - 从最新版本中下载 `Swama.zip`
+   - 解压 zip 文件
+
+2. **安装应用**
+   ```bash
+   # 移动到应用程序文件夹
+   mv Swama.app /Applications/
+   
+   # 启动应用
+   open /Applications/Swama.app
+   ```
+   
+   **注意**: 首次启动时，macOS 可能会显示安全警告。如果出现此情况：
+   - 前往 **系统偏好设置 > 安全性与隐私 > 通用**
+   - 点击 Swama 应用信息旁边的 **"仍要打开"**
+   - 或右键点击应用并从菜单中选择 **"打开"**
+
+3. **安装命令行工具**（可选）
+   - 从菜单栏打开 Swama
+   - 点击"Install Command Line Tool…"将 `swama` 命令添加到 PATH
+
+### 🔧 从源码构建（高级用户）
+
+适合想要从源码构建的开发者：
+
+```bash
+# 克隆仓库
+git clone https://github.com/Trans-N-ai/swama.git
+cd swama
+
+# 构建 CLI 工具
+swift build -c release
+sudo cp .build/release/swama /usr/local/bin/
+
+# 构建 macOS 应用（需要 Xcode）
+cd swama-macos/Swama
+xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
+```
+
+## 🚀 快速开始
+
+安装 Swama.app 后，您可以使用菜单栏应用或命令行：
+
+### 1. 使用模型别名即时推理
+
+```bash
+# 使用简短的别名而不是完整模型名 - 需要时自动下载！
+swama run qwen3 "你好，AI！"
+swama run llama3.2 "给我讲个笑话"
+swama run deepseek-r1 "解释一下量子计算"
+
+# 传统方式（同样有效）
+swama run mlx-community/Llama-3.2-1B-Instruct-4bit "Hello, how are you?"
+
+# 查看已下载的模型
+swama list
+```
+
+**✨ 智能特性:**
+- **模型别名**: 使用友好的名称如 `qwen3`、`llama3.2`、`deepseek-r1` 而不是长链接
+- **自动下载**: 首次使用时自动下载模型 - 无需先执行 `pull`！
+- **缓存管理**: 下载的模型会被缓存以供后续使用
+
+### 2. 可用的模型别名
+
+| 别名 | 完整模型名 | 描述 |
+|-------|----------------|-------------|
+| `qwen3` | `mlx-community/Qwen3-8B-4bit` | Qwen3 8B (默认) |
+| `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | Qwen3 1.7B (轻量级) |
+| `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | Llama 3.2 3B (默认) |
+| `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | Llama 3.2 1B (最快) |
+| `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | DeepSeek R1 (推理型) |
+| `deepseek-coder` | `mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx` | DeepSeek 编程助手 |
+| `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Qwen 2.5 7B |
+
+### 3. 启动 API 服务
+
+```bash
+# 或不指定模型启动（可通过 API 切换）
+swama serve --host 0.0.0.0 --port 28100
+```
+
+### 4. 菜单栏应用
+
+```bash
+# 启动菜单栏应用
+swama menubar
+```
+
+### 5. API 使用
+
+#### 🔌 OpenAI 兼容 API
+
+Swama 提供完全兼容 OpenAI 的 API 端点，允许您将其与现有工具和集成一起使用：
+
+```bash
+# 获取可用模型
+curl http://localhost:28100/v1/models
+
+# 使用别名的聊天补全（需要时自动下载）
+curl -X POST http://localhost:28100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3",
+    "messages": [
+      {"role": "user", "content": "你好！"}
+    ],
+    "temperature": 0.7,
+    "max_tokens": 100
+  }'
+
+# 使用 DeepSeek R1 的流式响应
+curl -X POST http://localhost:28100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-r1",
+    "messages": [
+      {"role": "user", "content": "逐步解决这个问题：240 的 15% 是多少？"}
+    ],
+    "stream": true
+  }'
+```
+
+#### 🛠️ 社区工具集成
+
+由于 Swama 提供 OpenAI 兼容的端点，您可以轻松地将其与流行的社区工具集成：
+
+**🤖 AI 编程助手:**
+```bash
+# Continue.dev - 添加到 config.json
+{
+  "models": [{
+    "title": "Swama 本地",
+    "provider": "openai",
+    "model": "qwen3",
+    "apiBase": "http://localhost:28100/v1"
+  }]
+}
+
+# Cursor - 设置自定义 API 端点
+# API Base URL: http://localhost:28100/v1
+# Model: qwen3 或 deepseek-coder
+```
+
+**💬 聊天界面:**
+```bash
+# Open WebUI (之前的 Ollama WebUI)
+# 添加 OpenAI API 连接:
+# Base URL: http://localhost:28100/v1
+# API Key: not-required
+
+# LibreChat
+# 添加到 .env 文件:
+OPENAI_API_KEY=not-required
+OPENAI_REVERSE_PROXY=http://localhost:28100/v1
+
+# ChatBox
+# 添加 OpenAI API 提供商，使用 base URL: http://localhost:28100/v1
+```
+
+**🔧 开发工具:**
+```python
+# Python 使用 OpenAI 库
+import openai
+
+client = openai.OpenAI(
+    base_url="http://localhost:28100/v1",
+    api_key="not-required"  # Swama 不需要 API 密钥
+)
+
+response = client.chat.completions.create(
+    model="qwen3",
+    messages=[{"role": "user", "content": "来自 Python 的问候！"}]
+)
+```
+
+```javascript
+// Node.js 使用 OpenAI 库
+import OpenAI from 'openai';
+
+const openai = new OpenAI({
+  baseURL: 'http://localhost:28100/v1',
+  apiKey: 'not-required'
+});
+
+const completion = await openai.chat.completions.create({
+  model: 'deepseek-coder',
+  messages: [{ role: 'user', content: '写一个 hello world 函数' }]
+});
+```
+
+**📊 热门集成:**
+- **Langchain/LlamaIndex**: 使用自定义 base URL 的 OpenAI 提供商
+- **AutoGen**: 配置为 OpenAI 端点进行多智能体对话  
+- **Semantic Kernel**: 添加为 OpenAI 聊天补全服务
+- **Flowise/Langflow**: 通过自定义端点的 OpenAI 节点连接
+- **任何工具**: 任何支持 OpenAI API 的工具都可以连接到 Swama！
+
+## 📚 命令参考
+
+### 模型管理
+
+```bash
+# 下载模型（支持别名和完整名称）
+swama pull qwen3                    # 使用别名
+swama pull mlx-community/Qwen3-8B-4bit  # 使用完整名称
+
+# 列出本地模型和可用别名
+swama list [--format json]
+
+# 运行推理（如果本地未找到模型会自动下载）
+swama run qwen3 "你的提示词"              # 使用别名 - 自动下载！
+swama run deepseek-coder "写一个Python函数"  # 另一个别名
+swama run <完整模型名> <提示词> [选项]      # 使用完整名称
+```
+
+### 服务器
+
+```bash
+# 启动 API 服务器
+swama serve [--host HOST] [--port PORT] [--model MODEL_ALIAS]
+
+# 启动菜单栏应用
+swama menubar
+```
+
+### 模型别名
+
+Swama 支持流行模型的便捷别名。使用这些简短名称而不是完整的模型 URL：
+
+```bash
+# 不同模型系列的示例
+swama run qwen3 "解释机器学习"           # Qwen3 8B
+swama run llama3.2-1b "快速问题：什么是AI？"  # Llama 3.2 1B (最快)
+swama run deepseek-r1 "逐步思考：2+2*3"    # DeepSeek R1 (推理型)
+```
+
+### 选项
+
+- `--temperature <value>`: 采样温度 (0.0-2.0)
+- `--top-p <value>`: 核采样参数 (0.0-1.0)
+- `--max-tokens <number>`: 最大生成令牌数
+- `--repetition-penalty <value>`: 重复惩罚因子
+
+## 🖼️ 多模态支持
+
+Swama 支持视觉语言模型，可以处理图像输入：
+
+```bash
+curl -X POST http://localhost:28100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mlx-community/llava-v1.6-mistral-7b-hf-4bit",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "What do you see in this image?"},
+          {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}
+        ]
+      }
+    ]
+  }'
+```
+
+## 🔧 开发
+
+### 依赖项
+
+- [swift-nio](https://github.com/apple/swift-nio) - 高性能网络框架
+- [swift-argument-parser](https://github.com/apple/swift-argument-parser) - 命令行参数解析
+- [mlx-swift](https://github.com/ml-explore/mlx-swift) - Apple MLX Swift 绑定
+- [mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples) - MLX Swift 示例和模型
+
+### 构建
+
+```bash
+# 开发构建
+swift build
+
+# 发布构建
+swift build -c release
+
+# 运行测试
+swift test
+
+# 生成 Xcode 项目
+swift package generate-xcodeproj
+```
+
+## 🤝 贡献
+
+我们欢迎社区贡献！请参考以下步骤：
+
+1. Fork 此仓库
+2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
+3. 提交更改 (`git commit -m 'Add some amazing feature'`)
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 开启 Pull Request
+
+### 开发指南
+
+- 遵循 Swift 代码风格指南
+- 为新功能添加测试
+- 更新相关文档
+- 确保所有测试通过
+
+## 📝 许可证
+
+本项目基于 MIT 许可证开源 - 查看 [LICENSE](LICENSE) 文件了解详情。
+
+## 🙏 致谢
+
+- [Apple MLX](https://github.com/ml-explore/mlx) 团队提供的优秀机器学习框架
+- [Swift NIO](https://github.com/apple/swift-nio) 提供的高性能网络支持
+- 所有贡献者和社区成员
+
+## 📞 支持
+
+- 📝 [问题反馈](https://github.com/your-username/swama/issues)
+- 💬 [讨论区](https://github.com/your-username/swama/discussions)
+- 📧 邮件: your-email@example.com
+
+## 🗺️ 路线图
+
+- TODO
+
+---
+
+**Swama** - 为 macOS 用户带来最佳的本地 AI 体验 🚀

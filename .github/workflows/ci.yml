@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: macos-14
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Select Xcode version
+      run: sudo xcode-select -s /Applications/Xcode_15.0.app/Contents/Developer
+    
+    - name: Cache Swift Package Manager
+      uses: actions/cache@v4
+      with:
+        path: swama/.build
+        key: ${{ runner.os }}-spm-${{ hashFiles('swama/Package.resolved') }}
+        restore-keys: |
+          ${{ runner.os }}-spm-
+    
+    - name: Build CLI
+      run: |
+        cd swama
+        swift build -c release
+    
+    - name: Run tests
+      run: |
+        cd swama
+        swift test
+
+  format-check:
+    runs-on: macos-14
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install SwiftFormat
+      run: brew install swiftformat
+    
+    - name: Check formatting
+      run: |
+        swiftformat . --dryrun --verbose
+        if [ $? -ne 0 ]; then
+          echo "❌ Code formatting issues found. Please run 'swiftformat .' to fix them."
+          exit 1
+        else
+          echo "✅ All files are properly formatted."
+        fi
