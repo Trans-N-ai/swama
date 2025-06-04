@@ -88,7 +88,7 @@ xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 
 ```bash
 # 使用简短的别名而不是完整模型名 - 需要时自动下载！
-swama run qwen3 "你好，AI！"
+swama run qwen3 "你好，AI"
 swama run llama3.2 "给我讲个笑话"
 swama run deepseek-r1 "解释一下量子计算"
 
