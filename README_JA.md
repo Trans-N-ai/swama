@@ -88,7 +88,7 @@ Swama.app をインストール後、メニューバーアプリまたはコマ�
 
 ```bash
 # 長いモデル名の代わりに短いエイリアスを使用 - 必要に応じて自動ダウンロード！
-swama run qwen3 "こんにちは、AI！"
+swama run qwen3 "こんにちは、AI"
 swama run llama3.2 "ジョークを教えて"
 swama run deepseek-r1 "量子コンピュータについて説明して"
 

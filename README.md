@@ -88,7 +88,7 @@ After installing Swama.app, you can use either the menu bar app or command line:
 
 ```bash
 # Use short aliases instead of full model names - auto-downloads if needed!
-swama run qwen3 "Hello, AI!"
+swama run qwen3 "Hello, AI"
 swama run llama3.2 "Tell me a joke"
 swama run deepseek-r1 "Explain quantum computing"
 
