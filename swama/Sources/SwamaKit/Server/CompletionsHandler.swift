@@ -227,8 +227,9 @@ public enum CompletionsHandler {
                 )
                 return
             }
+            let resolvedModelName = ModelAliasResolver.resolve(name: payload.model)
 
-            let container = try await modelPool.get(modelName: payload.model)
+            let container = try await modelPool.get(modelName: resolvedModelName)
             let runner = ModelRunner(container: container)
 
             let promptText = lastUserMessage.content.textContent
