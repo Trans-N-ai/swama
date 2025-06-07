@@ -6,25 +6,24 @@ import Foundation
 public enum ModelManager {
     /// Lists all locally available models.
     /// It scans a predefined directory structure for models and their metadata.
+    // Standard directory for storing Hugging Face models.
+    public static let modelsBaseDirectory: URL = {
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            return home.appendingPathComponent(".swama/models")
+        }()
     public static func models() -> [ModelInfo] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        // Standard directory for storing Hugging Face models.
-        let modelsRootDirectory = home.appendingPathComponent("Documents")
-            .appendingPathComponent("huggingface")
-            .appendingPathComponent("models")
-
         var modelInfos: [ModelInfo] = []
         let orgDirs: [URL]
         do {
             orgDirs = try FileManager.default.contentsOfDirectory(
-                at: modelsRootDirectory,
+                at: modelsBaseDirectory,
                 includingPropertiesForKeys: [.isDirectoryKey],
                 options: [.skipsHiddenFiles]
             )
         }
         catch {
             fputs(
-                "SwamaKit.ModelManager: Error reading models root directory \(modelsRootDirectory.path): \(error.localizedDescription)\n",
+                "SwamaKit.ModelManager: Error reading models root directory \(modelsBaseDirectory.path): \(error.localizedDescription)\n",
                 stderr
             )
             return [] // Return empty if the root directory is inaccessible
@@ -98,10 +97,6 @@ public enum ModelManager {
 
     /// Loads detailed information for a specific model by its ID.
     public static func loadModel(id: String) throws -> LoadedModel {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let modelsBaseDirectory = home.appendingPathComponent("Documents")
-            .appendingPathComponent("huggingface")
-            .appendingPathComponent("models")
         let modelDir = modelsBaseDirectory.appendingPathComponent(id)
         let configURL = modelDir.appendingPathComponent("config.json")
         let tokenizerURL = modelDir.appendingPathComponent("tokenizer.json")
