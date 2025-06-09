@@ -360,9 +360,9 @@ swift package generate-xcodeproj
 
 ## 📞 支持
 
-- 📝 [问题反馈](https://github.com/your-username/swama/issues)
-- 💬 [讨论区](https://github.com/your-username/swama/discussions)
-- 📧 邮件: your-email@example.com
+- 📝 [问题反馈](https://github.com/Trans-N-ai/swama/issues)
+- 💬 [讨论区](https://github.com/Trans-N-ai/swama/discussions)
+- 📧 邮件: info@trans-n.ai
 
 ## 🗺️ 路线图
 
