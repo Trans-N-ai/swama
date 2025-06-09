@@ -21,9 +21,9 @@ MODELS=(
     "Qwen3-4B|qwen3:4b|mlx-community/Qwen3-4B-4bit"
     "Qwen3-8B|qwen3:8b|mlx-community/Qwen3-8B-4bit"
     "Qwen3-14B|qwen3:14b|mlx-community/Qwen3-14B-4bit"
-    # "Qwen3-30B|qwen3:30b|mlx-community/Qwen3-30B-4bit"
+    # "Qwen3-30B|qwen3:30b|mlx-community/Qwen3-30B-A3B-4bit"
     # "Qwen3-32B|qwen3:32b|mlx-community/Qwen3-32B-4bit"
-    # "Qwen3-235B|qwen3:235b|mlx-community/Qwen3-235B-4bit"
+    # "Qwen3-235B|qwen3:235b|mlx-community/Qwen3-235B-A22B-4bit"
     "DeepSeek-R1-8B|deepseek-r1:8b|mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit"
     # "DeepSeek-R1-671B|deepseek-r1:671b|mlx-community/DeepSeek-R1-0528-4bit"
 )
