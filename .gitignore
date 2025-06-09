@@ -111,3 +111,15 @@ logs/
 # Model cache (if you want to exclude downloaded models)
 # models/
 # .swama/
+
+# Xcode build outputs
+build/
+*.xcarchive
+*.app.dSYM
+
+# Archive and distribution files
+*.ipa
+*.pkg
+ExportOptions.plist
+DistributionSummary.plist
+Packaging.log

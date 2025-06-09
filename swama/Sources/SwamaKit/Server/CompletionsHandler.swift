@@ -227,6 +227,7 @@ public enum CompletionsHandler {
                 )
                 return
             }
+
             let resolvedModelName = ModelAliasResolver.resolve(name: payload.model)
 
             let container = try await modelPool.get(modelName: resolvedModelName)

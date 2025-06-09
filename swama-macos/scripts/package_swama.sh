@@ -70,9 +70,26 @@ echo "📌 Stapling notarization ticket..."
 xcrun stapler staple "$APP_DIR"
 
 # ---------------------------------------------
+# 🔍 VERIFICATION (OPTIONAL)
+# ---------------------------------------------
+
+echo "🔍 Verifying notarization..."
+if xcrun stapler validate "$APP_DIR" &>/dev/null; then
+  echo "✅ Stapling verified successfully"
+else
+  echo "⚠️  Stapling verification failed (but app should still work)"
+fi
+
+if spctl --assess --type execute --verbose=4 "$APP_DIR" 2>&1 | grep -q "accepted"; then
+  echo "✅ Gatekeeper verification passed"
+else
+  echo "⚠️  Gatekeeper verification failed"
+fi
+
+# ---------------------------------------------
 # ✅ COMPLETE
 # ---------------------------------------------
 
 echo "✅ Notarization and packaging complete."
-echo "App path: $APP_DIR"
+echo "App path: $APP_DIR" 
 echo "ZIP archive: $ZIP_PATH"

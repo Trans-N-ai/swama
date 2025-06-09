@@ -1,5 +1,6 @@
 import Foundation
 import MLX
+import mlx_embeddings
 import MLXLLM
 import MLXLMCommon
 import MLXVLM
@@ -15,7 +16,7 @@ public actor ModelPool {
 
     public static let shared: ModelPool = .init()
 
-    public func get(modelName: String) async throws -> ModelContainer {
+    public func get(modelName: String) async throws -> MLXLMCommon.ModelContainer {
         if let container = cache[modelName] {
             NSLog("SwamaKit.ModelPool: Cache hit for \(modelName).")
             return container
@@ -32,7 +33,7 @@ public actor ModelPool {
 
             // Fast path: Check if we already know the model type
             if let isVLM = modelTypeCache[modelName] {
-                let container: ModelContainer
+                let container: MLXLMCommon.ModelContainer
                 if isVLM {
                     // We know it's a VLM, load directly
                     let vlmConfig = try getVLMConfiguration(modelName: modelName)
@@ -42,7 +43,7 @@ public actor ModelPool {
                 else {
                     // We know it's an LLM, load directly
                     NSLog("SwamaKit.ModelPool: Fast path - Loading LLM model \(modelName) using LLMModelFactory.")
-                    let llmConfig = ModelConfiguration(id: modelName)
+                    let llmConfig = MLXLMCommon.ModelConfiguration(id: modelName)
                     container = try await LLMModelFactory.shared.loadContainer(configuration: llmConfig)
                 }
                 cache[modelName] = container
@@ -51,7 +52,7 @@ public actor ModelPool {
             }
 
             // Slow path: First time loading this model - determine type
-            var configToLoad: ModelConfiguration?
+            var configToLoad: MLXLMCommon.ModelConfiguration?
             var useVLMFactory = false
 
             // Lazy load and cache VLM registry for better performance
@@ -74,7 +75,7 @@ public actor ModelPool {
             }
             else {
                 // It's an LLM
-                configToLoad = ModelConfiguration(id: modelName)
+                configToLoad = MLXLMCommon.ModelConfiguration(id: modelName)
                 useVLMFactory = false
                 modelTypeCache[modelName] = false // Cache for future fast path
                 NSLog("SwamaKit.ModelPool: \(modelName) not found in VLMRegistry. Treating as LLM.")
@@ -90,7 +91,7 @@ public actor ModelPool {
                 )
             }
 
-            let container: ModelContainer
+            let container: MLXLMCommon.ModelContainer
             if useVLMFactory {
                 NSLog("SwamaKit.ModelPool: Loading VLM model \(finalConfig.name) using VLMModelFactory.")
                 container = try await VLMModelFactory.shared.loadContainer(configuration: finalConfig)
@@ -108,11 +109,23 @@ public actor ModelPool {
         return try await task.value
     }
 
+    /// Gets or loads an embedding model runner for the given model name.
+    public func getEmbeddingRunner(for modelName: String) async -> EmbeddingRunner? {
+        embeddingRunnerCache[modelName]
+    }
+
+    /// Sets an embedding model runner for the given model name.
+    public func setEmbeddingRunner(_ runner: EmbeddingRunner, for modelName: String) async {
+        embeddingRunnerCache[modelName] = runner
+        NSLog("SwamaKit.ModelPool: Cached embedding runner for \(modelName).")
+    }
+
     /// Clears the entire model cache and cancels any ongoing loading tasks.
     public func clearCache() {
         cache.removeAll()
         modelTypeCache.removeAll() // Clear type cache too
         vlmRegistryCache = nil // Reset VLM registry cache
+        embeddingRunnerCache.removeAll() // Clear embedding cache
         for (_, task) in tasks {
             task.cancel()
         }
@@ -124,6 +137,7 @@ public actor ModelPool {
     public func remove(modelName: String) {
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName) // Clear type cache for this model
+        embeddingRunnerCache.removeValue(forKey: modelName) // Clear embedding cache for this model
         if let task = tasks.removeValue(forKey: modelName) {
             task.cancel()
             NSLog("SwamaKit.ModelPool: Removed \(modelName) from cache and cancelled its loading task.")
@@ -135,15 +149,16 @@ public actor ModelPool {
 
     // MARK: Private
 
-    private var cache: [String: ModelContainer] = .init()
-    private var tasks: [String: Task<ModelContainer, Error>] = .init()
+    private var cache: [String: MLXLMCommon.ModelContainer] = .init()
+    private var tasks: [String: Task<MLXLMCommon.ModelContainer, Error>] = .init()
+    private var embeddingRunnerCache: [String: EmbeddingRunner] = .init()
 
     // Performance optimization: Cache model types to avoid repeated Registry lookups
     private var modelTypeCache: [String: Bool] = .init() // true = VLM, false = LLM
-    private var vlmRegistryCache: [String: ModelConfiguration]?
+    private var vlmRegistryCache: [String: MLXLMCommon.ModelConfiguration]?
 
     /// Helper method to get VLM configuration (used in fast path)
-    private func getVLMConfiguration(modelName: String) throws -> ModelConfiguration {
+    private func getVLMConfiguration(modelName: String) throws -> MLXLMCommon.ModelConfiguration {
         // Ensure VLM registry cache is available
         if vlmRegistryCache == nil {
             vlmRegistryCache = [:]

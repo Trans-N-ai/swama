@@ -41,7 +41,6 @@ struct List: AsyncParsableCommand {
     private func printModelsText(_ models: [ModelInfo]) {
         // Determine column widths
         let nameHeader = "NAME"
-        let idHeader = "ID" // For internal use if NAME is different
         let sizeHeader = "SIZE"
         let modifiedHeader = "MODIFIED"
 
@@ -69,15 +68,11 @@ struct List: AsyncParsableCommand {
             return (name: name, id: model.id, size: size, modified: modified)
         }
 
-        // Print header
-        let header =
-            "\(nameHeader.padding(toLength: maxNameLen, withPad: " ", startingAt: 0))  \(idHeader.padding(toLength: 12, withPad: " ", startingAt: 0)) \(sizeHeader.padding(toLength: maxSizeLen, withPad: " ", startingAt: 0))  \(modifiedHeader.padding(toLength: maxModifiedLen, withPad: " ", startingAt: 0))"
         // Header with NAME, ID (short hash for uniqueness if needed, or full ID if short), SIZE, MODIFIED
         // For now, let's use full ID for NAME, and a placeholder for a shorter ID if we decide to implement it.
         // We will display the full model.id as NAME, and can add a short ID column if needed later.
         // The request was to be like ollama, which uses NAME, ID (short hash), SIZE, MODIFIED.
         // Let's simplify for now and use NAME (full model id), SIZE, MODIFIED.
-
         print(
             "\(nameHeader.padding(toLength: maxNameLen, withPad: " ", startingAt: 0))  \(sizeHeader.padding(toLength: maxSizeLen, withPad: " ", startingAt: 0))  \(modifiedHeader.padding(toLength: maxModifiedLen, withPad: " ", startingAt: 0))"
         )

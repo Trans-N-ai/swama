@@ -85,6 +85,18 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
                 }
             }
 
+        case (.POST, "/v1/embeddings"):
+            let channel = context.channel
+            channel.eventLoop.execute {
+                Task {
+                    await EmbeddingsHandler.handle(
+                        requestHead: request,
+                        body: bodyBuffer,
+                        channel: channel
+                    )
+                }
+            }
+
         default:
             respond404(context: context, request: request)
         }

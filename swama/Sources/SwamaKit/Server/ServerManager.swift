@@ -116,7 +116,7 @@ public class ServerManager {
                     .get()
                 self.channel = boundChannel // Store the channel for the background server
                 NSLog(
-                    "🚀 SwamaKit.ServerManager: NIO background server started on \(self.hostForBackground):\(self.portForBackground)"
+                    "🚀 SwamaKit.ServerManager: Swama background server started on \(self.hostForBackground):\(self.portForBackground)"
                 )
 
                 try await boundChannel.closeFuture.get()
