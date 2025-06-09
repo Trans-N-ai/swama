@@ -346,9 +346,9 @@ swift package generate-xcodeproj
 
 ## 📞 サポート
 
-- 📝 [Issue Tracker](https://github.com/your-username/swama/issues)
-- 💬 [ディスカッション](https://github.com/your-username/swama/discussions)
-- 📧 Email: your-email@example.com
+- 📝 [Issue Tracker](https://github.com/Trans-N-ai/swama/issues)
+- 💬 [ディスカッション](https://github.com/Trans-N-ai/swama/discussions)
+- 📧 Email: info@trans-n.ai
 
 ## 🗺️ ロードマップ
 
