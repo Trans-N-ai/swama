@@ -26,3 +26,4 @@
 --disable redundantSelf
 --disable trailingCommas
 --disable organizeDeclarations
+--disable acronyms

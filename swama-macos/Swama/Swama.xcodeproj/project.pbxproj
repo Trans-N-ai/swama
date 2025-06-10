@@ -231,7 +231,7 @@
 			mainGroup = 894B2B902DD33F680081F47B;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				894B2BC42DD33F930081F47B /* XCLocalSwiftPackageReference "../../swama" */,
+				894B4F8E2DF6DD3C000E0E11 /* XCLocalSwiftPackageReference "../../swama" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 894B2B9A2DD33F680081F47B /* Products */;
@@ -444,7 +444,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "trans-n.ai.Swama";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -459,7 +459,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
-				CODE_SIGN_ENTITLEMENTS = Swama/SwamaRelease.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Swama/Swama.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -475,7 +475,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "trans-n.ai.Swama";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -594,7 +594,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		894B2BC42DD33F930081F47B /* XCLocalSwiftPackageReference "../../swama" */ = {
+		894B4F8E2DF6DD3C000E0E11 /* XCLocalSwiftPackageReference "../../swama" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../swama;
 		};
@@ -603,6 +603,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		894B2BC52DD33F930081F47B /* SwamaKit */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 894B4F8E2DF6DD3C000E0E11 /* XCLocalSwiftPackageReference "../../swama" */;
 			productName = SwamaKit;
 		};
 /* End XCSwiftPackageProductDependency section */

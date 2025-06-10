@@ -12,10 +12,11 @@
 ## ✨ 特性
 
 - 🚀 **高性能**: 基于 Apple MLX 框架，针对 Apple Silicon 优化
-- 🔌 **OpenAI 兼容 API**: 提供标准的 `/v1/chat/completions` 端点
+- 🔌 **OpenAI 兼容 API**: 提供标准的 `/v1/chat/completions` 和 `/v1/embeddings` 端点
 - 📱 **菜单栏应用**: 优雅的 macOS 原生菜单栏集成
 - 💻 **命令行工具**: 完整的 CLI 支持用于模型管理和推理
 - 🖼️ **多模态支持**: 同时支持文本和图像输入
+- 🔍 **文本嵌入**: 内置嵌入生成功能，支持语义搜索和 RAG 应用
 - 📦 **智能模型管理**: 自动下载、缓存和版本管理
 - 🔄 **流式响应**: 支持实时流式文本生成
 - 🌍 **HuggingFace 集成**: 直接从 HuggingFace Hub 下载模型
@@ -161,6 +162,14 @@ curl -X POST http://localhost:28100/v1/chat/completions \
       {"role": "user", "content": "逐步解决这个问题：240 的 15% 是多少？"}
     ],
     "stream": true
+  }'
+
+# 生成文本嵌入
+curl -X POST http://localhost:28100/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": ["Hello world", "Text embeddings"],
+    "model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
   }'
 ```
 

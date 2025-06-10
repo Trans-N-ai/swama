@@ -38,28 +38,22 @@ final class ModelManagerTests {
         #expect(modelInfo.rawMetadata == nil)
     }
 
-    @Test func loadedModelInitialization() {
-        // Test LoadedModel initialization
-        let testConfig: [String: Any] = ["hidden_size": 768, "vocab_size": 50000]
-        let testTokenizer: [String: Any] = ["vocab_size": 50000, "model_type": "BPE"]
-        let testWeightFiles = [
-            URL(fileURLWithPath: "/path/to/model.safetensors"),
-            URL(fileURLWithPath: "/path/to/tokenizer.bin")
-        ]
+    @Test func modelInfoWithRawMetadata() {
+        // Test ModelInfo with rawMetadata
+        let testMetadata: [String: Any] = ["hidden_size": 768, "vocab_size": 50000, "model_type": "BPE"]
 
-        let loadedModel = LoadedModel(
-            id: "test/loaded-model",
-            config: testConfig,
-            tokenizer: testTokenizer,
-            weightFiles: testWeightFiles
+        let modelInfo = ModelInfo(
+            id: "test/model-with-metadata",
+            created: 1_703_980_800,
+            sizeInBytes: 1024 * 1024 * 1024, // 1GB
+            source: .metaFile,
+            rawMetadata: testMetadata
         )
 
-        #expect(loadedModel.id == "test/loaded-model")
-        #expect(loadedModel.config != nil)
-        #expect(loadedModel.tokenizer != nil)
-        #expect(loadedModel.weightFiles.count == 2)
-        #expect(loadedModel.config?["hidden_size"] as? Int == 768)
-        #expect(loadedModel.tokenizer?["model_type"] as? String == "BPE")
+        #expect(modelInfo.id == "test/model-with-metadata")
+        #expect(modelInfo.rawMetadata != nil)
+        #expect(modelInfo.rawMetadata?["hidden_size"] as? Int == 768)
+        #expect(modelInfo.rawMetadata?["model_type"] as? String == "BPE")
     }
 
     @Test func metadataSourceEquality() {
@@ -72,7 +66,7 @@ final class ModelManagerTests {
     @Test func modelsListReturnsArray() {
         // Test that models() returns an array (even if empty)
         let models = ModelManager.models()
-        #expect(models != nil)
+        #expect(models.count >= 0) // Should always return a valid array, even if empty
         // Note: We can't test the actual content since it depends on the file system
         // In a real test environment, you might want to mock the file system
     }

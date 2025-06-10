@@ -33,9 +33,7 @@ struct Run: AsyncParsableCommand {
 
         // Check if model exists locally
         let localModels = ModelManager.models()
-        var modelExists = true
         if !localModels.contains(where: { $0.id == resolvedModelName }) {
-            modelExists = false
             fputs("Model \(resolvedModelName) not found locally.\n", stdout)
             fflush(stdout)
             do {

@@ -12,10 +12,11 @@
 ## ✨ Features
 
 - 🚀 **High Performance**: Built on Apple MLX framework, optimized for Apple Silicon
-- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions` endpoint support
+- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions` and `/v1/embeddings` endpoint support
 - 📱 **Menu Bar App**: Elegant macOS native menu bar integration
 - 💻 **Command Line Tools**: Complete CLI support for model management and inference
 - 🖼️ **Multimodal Support**: Support for both text and image inputs
+- 🔍 **Text Embeddings**: Built-in embedding generation for semantic search and RAG applications
 - 📦 **Smart Model Management**: Automatic downloading, caching, and version management
 - 🔄 **Streaming Responses**: Real-time streaming text generation support
 - 🌍 **HuggingFace Integration**: Direct model downloads from HuggingFace Hub
@@ -161,6 +162,14 @@ curl -X POST http://localhost:28100/v1/chat/completions \
       {"role": "user", "content": "Solve this step by step: What is 15% of 240?"}
     ],
     "stream": true
+  }'
+
+# Generate text embeddings
+curl -X POST http://localhost:28100/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": ["Hello world", "Text embeddings"],
+    "model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
   }'
 ```
 
