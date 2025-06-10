@@ -45,7 +45,7 @@ public actor ModelRunner {
     // MARK: Public
 
     /// Runs the model with the given prompt and parameters, returning only the generated output string.
-    public func run(prompt: String, images: [Data]? = nil, parameters: GenerateParameters) async throws -> String {
+    public func run(prompt: String, images _: [Data]? = nil, parameters: GenerateParameters) async throws -> String {
         // Use new chat-based method for consistency
         let chatMessages: [MLXLMCommon.Chat.Message] = [.user(prompt)]
         let (output, _, _) = try await runWithChatUsage(chatMessages: chatMessages, parameters: parameters)
@@ -64,13 +64,13 @@ public actor ModelRunner {
         let completionTokens = completionInfo?.generationTokenCount ?? 0
         return (output, promptTokens, completionTokens)
     }
-    
+
     /// Runs the model with chat messages, returning the generated output, token usage, and performance metrics.
     public nonisolated func runWithChatUsageAndPerformance(
         chatMessages: [MLXLMCommon.Chat.Message],
         parameters: GenerateParameters
     ) async throws -> (String, Int, GenerateCompletionInfo?) {
-        return try await container.perform { (context: ModelContext) in
+        try await container.perform { (context: ModelContext) in
             var output = ""
             var promptTokens = 0
             var capturedCompletionInfo: GenerateCompletionInfo?
@@ -106,7 +106,7 @@ public actor ModelRunner {
         parameters: GenerateParameters,
         onToken: @escaping @Sendable (String) -> Void
     ) async throws -> (promptTokens: Int, completionInfo: GenerateCompletionInfo?) {
-        return try await container.perform { (context: ModelContext) in
+        try await container.perform { (context: ModelContext) in
             var promptTokens = 0
             var capturedCompletionInfo: GenerateCompletionInfo?
 
@@ -130,7 +130,7 @@ public actor ModelRunner {
                     capturedCompletionInfo = info
                 }
             }
-            
+
             return (promptTokens, capturedCompletionInfo)
         }
     }

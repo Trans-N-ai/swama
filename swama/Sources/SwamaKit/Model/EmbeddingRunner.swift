@@ -46,7 +46,7 @@ public actor EmbeddingRunner {
     public func generateEmbeddings(inputs: [String]) async throws -> (
         embeddings: [[Float]], usage: EmbeddingUsage
     ) {
-        return try await container.perform { (model: any EmbeddingModel, tokenizer: Tokenizer) throws -> (
+        try await container.perform { (model: any EmbeddingModel, tokenizer: Tokenizer) throws -> (
             embeddings: [[Float]], usage: EmbeddingUsage
         ) in
             var totalTokens = 0
@@ -84,7 +84,7 @@ public actor EmbeddingRunner {
 
             // Convert each embedding to Float array and evaluate
             eval(embeddings)
-            
+
             let allEmbeddings = (0 ..< inputs.count).map { i in
                 embeddings[i].asArray(Float.self)
             }
@@ -104,10 +104,10 @@ public actor EmbeddingRunner {
         while isRunning {
             try await Task.sleep(nanoseconds: 10_000_000) // 10ms
         }
-        
+
         isRunning = true
         defer { isRunning = false }
-        
+
         let result = try await generateEmbeddings(inputs: [input])
         guard let firstEmbedding = result.embeddings.first else {
             throw EmbeddingError.noEmbeddingGenerated

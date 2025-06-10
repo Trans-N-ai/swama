@@ -8,6 +8,8 @@ import Foundation
 import NIOCore
 import NIOHTTP1
 
+// MARK: - CompletionsHandler
+
 public enum CompletionsHandler {
     // MARK: Public
 
@@ -28,27 +30,28 @@ public enum CompletionsHandler {
     public enum MessageContent: Decodable, Encodable, Sendable {
         case text(String)
         case multimodal([ContentPartValue])
-        
+
         var textContent: String {
             switch self {
             case let .text(text):
-                return text
+                text
             case let .multimodal(parts):
-                return parts.compactMap { part in
+                parts.compactMap { part in
                     if case let .text(text) = part {
                         return text
                     }
                     return nil
-                }.joined(separator: " ")
+                }
+                .joined(separator: " ")
             }
         }
-        
+
         var imageURLs: [String] {
             switch self {
             case .text:
-                return []
+                []
             case let .multimodal(parts):
-                return parts.compactMap { part in
+                parts.compactMap { part in
                     if case let .imageURL(imageURL) = part {
                         return imageURL.url
                     }
@@ -62,42 +65,53 @@ public enum CompletionsHandler {
         let type: String
         let text: String?
         let image_url: ImageURL?
-        
+
         enum CodingKeys: String, CodingKey {
-            case type, text, image_url
+            case type
+            case text
+            case image_url
         }
     }
-    
+
     public enum ContentPartValue: Decodable, Encodable, Sendable {
         case text(String)
         case imageURL(ImageURL)
-        
+
         enum CodingKeys: String, CodingKey {
-            case type, text, image_url
+            case type
+            case text
+            case image_url
         }
-        
+
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             let type = try container.decode(String.self, forKey: .type)
-            
+
             switch type {
             case "text":
                 let text = try container.decode(String.self, forKey: .text)
                 self = .text(text)
+
             case "image_url":
                 let imageURL = try container.decode(ImageURL.self, forKey: .image_url)
                 self = .imageURL(imageURL)
+
             default:
-                throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Invalid content part type")
+                throw DecodingError.dataCorruptedError(
+                    forKey: .type,
+                    in: container,
+                    debugDescription: "Invalid content part type"
+                )
             }
         }
-        
+
         public func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             switch self {
             case let .text(text):
                 try container.encode("text", forKey: .type)
                 try container.encode(text, forKey: .text)
+
             case let .imageURL(imageURL):
                 try container.encode("image_url", forKey: .type)
                 try container.encode(imageURL, forKey: .image_url)
@@ -130,9 +144,11 @@ public enum CompletionsHandler {
         let total_tokens: Int
         let response_token_s: Double?
         let total_duration: Double?
-        
+
         private enum CodingKeys: String, CodingKey {
-            case prompt_tokens, completion_tokens, total_tokens
+            case prompt_tokens
+            case completion_tokens
+            case total_tokens
             case response_token_s = "response_token/s"
             case total_duration
         }
@@ -199,9 +215,9 @@ public enum CompletionsHandler {
     }
 
     // MARK: - Chat Message Conversion
-    
+
     private static func convertToMLXChatMessages(_ messages: [Message]) throws -> [MLXLMCommon.Chat.Message] {
-        return try messages.map { message in
+        try messages.map { message in
             let role: MLXLMCommon.Chat.Message.Role
             switch message.role {
             case "system":
@@ -213,13 +229,13 @@ public enum CompletionsHandler {
             default:
                 throw CompletionsError.invalidRole(message.role)
             }
-            
+
             let content = message.content.textContent
             let imageURLs = message.content.imageURLs
             let images = imageURLs.compactMap { urlString in
                 URL(string: urlString).map { MLXLMCommon.UserInput.Image.url($0) }
             }
-            
+
             return MLXLMCommon.Chat.Message(
                 role: role,
                 content: content,
@@ -227,9 +243,9 @@ public enum CompletionsHandler {
             )
         }
     }
-    
+
     // MARK: - Chat Response Methods
-    
+
     public static func sendNonStreamResponse(
         channel: Channel,
         modelName: String,
@@ -252,17 +268,17 @@ public enum CompletionsHandler {
         // Construct the message content for the response
         let responseMessageContent = MessageContent.text(output)
         let responseMessage = Message(role: "assistant", content: responseMessageContent)
-        
+
         let choice = CompletionChoice(
             index: 0,
             message: responseMessage,
             finish_reason: "stop"
         )
-        
+
         // Calculate performance metrics
         let tokensPerSecond = completionInfo?.tokensPerSecond ?? 0.0
         let totalDuration = (completionInfo?.promptTime ?? 0.0) + (completionInfo?.generateTime ?? 0.0)
-        
+
         let usage = CompletionUsage(
             prompt_tokens: promptTokens,
             completion_tokens: completionTokens,
@@ -270,7 +286,7 @@ public enum CompletionsHandler {
             response_token_s: tokensPerSecond > 0 ? tokensPerSecond : nil,
             total_duration: totalDuration > 0 ? totalDuration : nil
         )
-        
+
         let response = CompletionResponse(
             id: "chatcmpl-" + UUID().uuidString,
             object: "chat.completion",
@@ -285,15 +301,15 @@ public enum CompletionsHandler {
         let jsonData = try encoder.encode(response)
         var headers = HTTPHeaders()
         headers.add(name: "Content-Type", value: "application/json")
-        
+
         let responseHead = HTTPResponseHead(version: .http1_1, status: .ok, headers: headers)
         let responseBody = HTTPServerResponsePart.body(.byteBuffer(ByteBuffer(bytes: jsonData)))
-        
+
         try await channel.writeAndFlush(HTTPServerResponsePart.head(responseHead))
         try await channel.writeAndFlush(responseBody)
         try await channel.writeAndFlush(HTTPServerResponsePart.end(nil))
     }
-    
+
     public static func sendStreamResponse(
         channel: Channel,
         modelName: String,
@@ -313,7 +329,7 @@ public enum CompletionsHandler {
 
         let chunkId = "chatcmpl-" + UUID().uuidString
         let timestamp = Int(Date().timeIntervalSince1970)
-        
+
         // Send initial chunk with role
         let initialJSON: [String: Any] = [
             "id": chunkId,
@@ -343,12 +359,12 @@ public enum CompletionsHandler {
                 }
             }
         }
-        
+
         // Send final chunk with usage information
         let finalCompletionTokens = completionInfo?.generationTokenCount ?? 0
         let tokensPerSecond = completionInfo?.tokensPerSecond ?? 0.0
         let totalDuration = (completionInfo?.promptTime ?? 0.0) + (completionInfo?.generateTime ?? 0.0)
-        
+
         let finishJSON: [String: Any] = [
             "id": chunkId,
             "object": "chat.completion.chunk",
@@ -371,7 +387,7 @@ public enum CompletionsHandler {
 
     // MARK: - Helper Methods
 
-    private static let modelPool = ModelPool.shared
+    private static let modelPool: ModelPool = .shared
 
     private static func sendFullResponse(
         channel: Channel,
@@ -409,7 +425,7 @@ public enum CompletionsHandler {
     }
 
     private static func parsePayload(_ buffer: ByteBuffer?) -> CompletionRequest? {
-        guard let buffer = buffer,
+        guard let buffer,
               let data = buffer.getBytes(at: buffer.readerIndex, length: buffer.readableBytes)
         else {
             return nil
@@ -421,9 +437,13 @@ public enum CompletionsHandler {
     private static func writeSSEJSON(channel: Channel, payload: [String: Any]) async throws {
         let jsonData = try JSONSerialization.data(withJSONObject: payload)
         guard let jsonString = String(data: jsonData, encoding: .utf8) else {
-            throw NSError(domain: "EncodingError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to encode JSON to string"])
+            throw NSError(
+                domain: "EncodingError",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to encode JSON to string"]
+            )
         }
-        
+
         try await writeSSELine(channel: channel, line: "data: \(jsonString)\n\n")
     }
 
@@ -434,39 +454,44 @@ public enum CompletionsHandler {
     }
 }
 
+// MARK: - CompletionsError
+
 enum CompletionsError: Error, LocalizedError {
     case invalidRole(String)
 
     public var errorDescription: String? {
         switch self {
         case let .invalidRole(role):
-            return "Invalid role: \(role). Must be 'system', 'user', or 'assistant'"
+            "Invalid role: \(role). Must be 'system', 'user', or 'assistant'"
         }
     }
 }
 
 // MARK: - MessageContent Extensions
 
-extension CompletionsHandler.MessageContent {
-    public init(from decoder: Decoder) throws {
+public extension CompletionsHandler.MessageContent {
+    init(from decoder: Decoder) throws {
         if let text = try? String(from: decoder) {
             self = .text(text)
-        } else {
+        }
+        else {
             let parts = try [CompletionsHandler.ContentPart](from: decoder)
             let convertedParts = parts.map { part in
                 if let text = part.text {
-                    return CompletionsHandler.ContentPartValue.text(text)
-                } else if let imageURL = part.image_url {
-                    return CompletionsHandler.ContentPartValue.imageURL(imageURL)
-                } else {
-                    return CompletionsHandler.ContentPartValue.text("")
+                    CompletionsHandler.ContentPartValue.text(text)
+                }
+                else if let imageURL = part.image_url {
+                    CompletionsHandler.ContentPartValue.imageURL(imageURL)
+                }
+                else {
+                    CompletionsHandler.ContentPartValue.text("")
                 }
             }
             self = .multimodal(convertedParts)
         }
     }
 
-    public func encode(to encoder: Encoder) throws {
+    func encode(to encoder: Encoder) throws {
         switch self {
         case let .text(text):
             try text.encode(to: encoder)
