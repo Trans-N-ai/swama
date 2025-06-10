@@ -10,7 +10,7 @@ import NIOHTTP1
 
 /// This modelPool instance should ideally be managed and injected by ServerManager or a DI system.
 /// For now, keeping it global within SwamaKit as per original Router.swift structure.
-let modelPool: ModelPool = .init() // Will use SwamaKit.ModelPool
+let modelPool: ModelPool = .shared // Use the same shared instance as CompletionsHandler
 
 // MARK: - HTTPHandler
 

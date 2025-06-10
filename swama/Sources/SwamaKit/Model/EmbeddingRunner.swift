@@ -37,6 +37,7 @@ public actor EmbeddingRunner {
 
     public init(container: mlx_embeddings.ModelContainer) {
         self.container = container
+        self.isRunning = false
     }
 
     // MARK: Public
@@ -83,6 +84,7 @@ public actor EmbeddingRunner {
 
             // Convert each embedding to Float array and evaluate
             eval(embeddings)
+
             let allEmbeddings = (0 ..< inputs.count).map { i in
                 embeddings[i].asArray(Float.self)
             }
@@ -98,6 +100,14 @@ public actor EmbeddingRunner {
 
     /// Generates a single embedding for the given input text.
     public func generateEmbedding(input: String) async throws -> (embedding: [Float], usage: EmbeddingUsage) {
+        // Wait for any ongoing inference to complete
+        while isRunning {
+            try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+        }
+
+        isRunning = true
+        defer { isRunning = false }
+
         let result = try await generateEmbeddings(inputs: [input])
         guard let firstEmbedding = result.embeddings.first else {
             throw EmbeddingError.noEmbeddingGenerated
@@ -109,6 +119,7 @@ public actor EmbeddingRunner {
     // MARK: Private
 
     private let container: mlx_embeddings.ModelContainer
+    private var isRunning: Bool
 }
 
 // MARK: - EmbeddingUsage
