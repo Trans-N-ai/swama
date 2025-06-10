@@ -5,8 +5,9 @@ import MLXLLM
 import MLXLMCommon
 import MLXVLM
 
-/// A pool to manage and cache `ModelContainer` instances.
-/// This helps in reusing already loaded models to save resources and time.
+/// A pool to manage and cache `ModelContainer` instances with built-in concurrency control.
+/// This helps in reusing already loaded models to save resources and time while preventing
+/// MLX heap corruption through controlled concurrent access.
 public actor ModelPool {
     // MARK: Lifecycle
 
@@ -15,8 +16,94 @@ public actor ModelPool {
     // MARK: Public
 
     public static let shared: ModelPool = .init()
+    
+    // MARK: - Concurrency Control
+    
+    private var runningInferences = 0
+    private let maxConcurrentInferences = 3 // Optimal for high-performance machines
+    
+    // Per-model concurrency control: track which models are currently running inference
+    private var runningModels: Set<String> = []
+    
+    /// Safely run a model operation with concurrency control to prevent MLX heap corruption
+    public func run<T: Sendable>(
+        modelName: String,
+        operation: @Sendable @escaping (ModelRunner) async throws -> T
+    ) async throws -> T {
+        // Wait for available slot AND ensure the specific model is not already running
+        while runningInferences >= maxConcurrentInferences || runningModels.contains(modelName) {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        }
+        
+        runningInferences += 1
+        runningModels.insert(modelName)
+        NSLog("SwamaKit.ModelPool: Acquired inference slot for \(modelName). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)")
+        
+        do {
+            // Get or load the model container
+            let container = try await getContainer(modelName: modelName)
+            
+            // Create a fresh ModelRunner instance for this request to avoid sharing conflicts
+            let runner = ModelRunner(container: container)
+            
+            // Execute the operation
+            let result = try await operation(runner)
+            
+            runningInferences = max(0, runningInferences - 1)
+            runningModels.remove(modelName)
+            NSLog("SwamaKit.ModelPool: Released inference slot for \(modelName). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)")
+            
+            return result
+        } catch {
+            runningInferences = max(0, runningInferences - 1)
+            runningModels.remove(modelName)
+            NSLog("SwamaKit.ModelPool: Released inference slot for \(modelName) (error). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)")
+            throw error
+        }
+    }
 
-    public func get(modelName: String) async throws -> MLXLMCommon.ModelContainer {
+    /// Safely run an embedding operation with concurrency control to prevent MLX heap corruption
+    public func runEmbeddingWithConcurrencyControl<T: Sendable>(
+        modelName: String,
+        operation: @Sendable @escaping (EmbeddingRunner) async throws -> T
+    ) async throws -> T {
+        // Wait for available slot
+        while runningInferences >= maxConcurrentInferences {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        }
+        
+        runningInferences += 1
+        NSLog("SwamaKit.ModelPool: Acquired inference slot (embedding). Running: \(runningInferences)/\(maxConcurrentInferences)")
+        
+        do {
+            // Get or create embedding runner
+            let runner: EmbeddingRunner
+            if let existingRunner = embeddingRunnerCache[modelName] {
+                runner = existingRunner
+            } else {
+                // Load the embedding model
+                let container = try await loadEmbeddingModelContainer(modelName: modelName)
+                runner = EmbeddingRunner(container: container)
+                embeddingRunnerCache[modelName] = runner
+                NSLog("SwamaKit.ModelPool: Cached embedding runner for \(modelName).")
+            }
+            
+            // Execute the operation
+            let result = try await operation(runner)
+            
+            runningInferences = max(0, runningInferences - 1)
+            NSLog("SwamaKit.ModelPool: Released inference slot (embedding). Running: \(runningInferences)/\(maxConcurrentInferences)")
+            
+            return result
+        } catch {
+            runningInferences = max(0, runningInferences - 1)
+            NSLog("SwamaKit.ModelPool: Released inference slot (embedding error). Running: \(runningInferences)/\(maxConcurrentInferences)")
+            throw error
+        }
+    }
+
+    /// Gets or loads a ModelContainer (internal method without concurrency control)
+    private func getContainer(modelName: String) async throws -> MLXLMCommon.ModelContainer {
         if let container = cache[modelName] {
             NSLog("SwamaKit.ModelPool: Cache hit for \(modelName).")
             return container
