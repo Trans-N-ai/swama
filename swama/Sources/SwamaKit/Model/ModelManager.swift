@@ -5,14 +5,21 @@ import Foundation
 /// Manages available MLX models, providing functionalities to list and load them.
 public enum ModelManager {
     /// Lists all locally available models.
-    /// It scans a predefined directory structure for models and their metadata.
+    /// It scans both preferred and legacy directories for models and their metadata.
     public static func models() -> [ModelInfo] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        // Standard directory for storing Hugging Face models.
-        let modelsRootDirectory = home.appendingPathComponent("Documents")
-            .appendingPathComponent("huggingface")
-            .appendingPathComponent("models")
-
+        var modelInfos: [ModelInfo] = []
+        
+        // Scan all model directories (both preferred and legacy)
+        for modelsRootDirectory in ModelPaths.allModelsDirectories {
+            let directoryModels = scanModelsDirectory(at: modelsRootDirectory)
+            modelInfos.append(contentsOf: directoryModels)
+        }
+        
+        return modelInfos
+    }
+    
+    /// Scans a specific models directory and returns ModelInfo array
+    private static func scanModelsDirectory(at modelsRootDirectory: URL) -> [ModelInfo] {
         var modelInfos: [ModelInfo] = []
         let orgDirs: [URL]
         do {
@@ -23,10 +30,13 @@ public enum ModelManager {
             )
         }
         catch {
-            fputs(
-                "SwamaKit.ModelManager: Error reading models root directory \(modelsRootDirectory.path): \(error.localizedDescription)\n",
-                stderr
-            )
+            // Only log error if the directory should exist (not for optional paths)
+            if FileManager.default.fileExists(atPath: modelsRootDirectory.path) {
+                fputs(
+                    "SwamaKit.ModelManager: Error reading models root directory \(modelsRootDirectory.path): \(error.localizedDescription)\n",
+                    stderr
+                )
+            }
             return [] // Return empty if the root directory is inaccessible
         }
 
