@@ -228,7 +228,6 @@ public actor ModelPool {
 
             // Slow path: First time loading this model - determine type
             var configToLoad: MLXLMCommon.ModelConfiguration?
-            var useVLMFactory = false
 
             // Lazy load and cache VLM registry for better performance
             if vlmRegistryCache == nil {
@@ -243,17 +242,57 @@ public actor ModelPool {
 
             // Fast lookup in cached registry
             if let vlmConfig = vlmRegistryCache![modelName] {
-                configToLoad = vlmConfig
-                useVLMFactory = true
+                // Check if VLM model exists locally first using shared function
+                let localConfig = createModelConfiguration(modelName: modelName)
+
+                // If it's a directory-based config, use it; otherwise use registry config
+                if case .directory = localConfig.id {
+                    configToLoad = localConfig
+                    NSLog("SwamaKit.ModelPool: Using local directory configuration for VLM: \(modelName)")
+                }
+                else {
+                    configToLoad = vlmConfig
+                    NSLog("SwamaKit.ModelPool: VLM model \(modelName) not found locally, using registry configuration")
+                }
                 modelTypeCache[modelName] = true // Cache for future fast path
                 NSLog("SwamaKit.ModelPool: Found \(modelName) in VLMRegistry.")
             }
+            else if isVLMModelByName(modelName) {
+                // Heuristic detection: model name suggests it's a VLM but not in registry
+                // Try to load it as VLM with directory-based configuration
+                let localConfig = createModelConfiguration(modelName: modelName)
+
+                if case .directory = localConfig.id {
+                    configToLoad = localConfig
+                    modelTypeCache[modelName] = true // Cache for future fast path
+                    NSLog(
+                        "SwamaKit.ModelPool: Model \(modelName) detected as VLM by name pattern. Using local directory configuration."
+                    )
+                }
+                else {
+                    // VLM model not available locally and not in registry - this will likely fail
+                    // Create a basic VLM configuration and let VLMModelFactory handle it
+                    configToLoad = MLXLMCommon.ModelConfiguration(id: modelName)
+                    modelTypeCache[modelName] = true // Cache for future fast path
+                    NSLog(
+                        "SwamaKit.ModelPool: Model \(modelName) detected as VLM by name pattern but not found locally. Attempting registry fallback."
+                    )
+                }
+            }
             else {
-                // It's an LLM
-                configToLoad = MLXLMCommon.ModelConfiguration(id: modelName)
-                useVLMFactory = false
+                // It's an LLM - use the shared loadModelContainer function
+                NSLog(
+                    "SwamaKit.ModelPool: \(modelName) not found in VLMRegistry and not detected as VLM by name. Loading as LLM using shared loadModelContainer."
+                )
+                let container = try await loadModelContainer(modelName: modelName)
+
+                cache[modelName] = container
+                modelUsageInfo[modelName] = ModelUsageInfo()
                 modelTypeCache[modelName] = false // Cache for future fast path
-                NSLog("SwamaKit.ModelPool: \(modelName) not found in VLMRegistry. Treating as LLM.")
+                NSLog(
+                    "SwamaKit.ModelPool: Successfully loaded and cached LLM \(modelName) via shared loadModelContainer."
+                )
+                return container
             }
 
             guard let finalConfig = configToLoad else {
@@ -266,15 +305,10 @@ public actor ModelPool {
                 )
             }
 
+            // Only VLM models reach this point
             let container: MLXLMCommon.ModelContainer
-            if useVLMFactory {
-                NSLog("SwamaKit.ModelPool: Loading VLM model \(finalConfig.name) using VLMModelFactory.")
-                container = try await VLMModelFactory.shared.loadContainer(configuration: finalConfig)
-            }
-            else {
-                NSLog("SwamaKit.ModelPool: Loading LLM model \(finalConfig.name) using LLMModelFactory.")
-                container = try await LLMModelFactory.shared.loadContainer(configuration: finalConfig)
-            }
+            NSLog("SwamaKit.ModelPool: Loading VLM model \(finalConfig.name) using VLMModelFactory.")
+            container = try await VLMModelFactory.shared.loadContainer(configuration: finalConfig)
 
             cache[modelName] = container
             // Initialize usage tracking for new model
@@ -394,6 +428,26 @@ public actor ModelPool {
         }
 
         return vlmConfig
+    }
+
+    /// Helper method to detect VLM models by name pattern (heuristic for models not in registry)
+    private func isVLMModelByName(_ modelName: String) -> Bool {
+        let vlmPatterns = [
+            "-VL-", // Common VLM naming pattern (e.g., Qwen2.5-VL-32B)
+            "-vl-", // Lowercase variant
+            "VL-", // Prefix variant
+            "vision", // Vision models
+            "Visual", // Visual models
+            "multimodal" // Multimodal models
+        ]
+
+        for pattern in vlmPatterns {
+            if modelName.contains(pattern) {
+                return true
+            }
+        }
+
+        return false
     }
 
     // MARK: - Memory Management

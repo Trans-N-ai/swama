@@ -77,9 +77,7 @@ public enum ModelDownloader {
     public static func downloadModel(resolvedModelName: String) async throws {
         printMessage("Pulling model: \(resolvedModelName)")
 
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let modelDir = home.appendingPathComponent("Documents/huggingface/models")
-            .appendingPathComponent(resolvedModelName)
+        let modelDir = ModelPaths.getModelDirectory(for: resolvedModelName)
         try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
 
         let fileInfos = try await listHuggingFaceFilesWithSize(repo: resolvedModelName)
