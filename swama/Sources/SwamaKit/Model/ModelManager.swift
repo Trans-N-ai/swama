@@ -8,16 +8,16 @@ public enum ModelManager {
     /// It scans both preferred and legacy directories for models and their metadata.
     public static func models() -> [ModelInfo] {
         var modelInfos: [ModelInfo] = []
-        
+
         // Scan all model directories (both preferred and legacy)
         for modelsRootDirectory in ModelPaths.allModelsDirectories {
             let directoryModels = scanModelsDirectory(at: modelsRootDirectory)
             modelInfos.append(contentsOf: directoryModels)
         }
-        
+
         return modelInfos
     }
-    
+
     /// Scans a specific models directory and returns ModelInfo array
     private static func scanModelsDirectory(at modelsRootDirectory: URL) -> [ModelInfo] {
         var modelInfos: [ModelInfo] = []

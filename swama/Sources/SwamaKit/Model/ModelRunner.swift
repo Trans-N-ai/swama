@@ -40,7 +40,8 @@ public func createModelConfiguration(modelName: String) -> ModelConfiguration {
         // Use local directory configuration (offline mode)
         NSLog("SwamaKit.ModelRunner: Using local model directory: \(localDir.path)")
         return ModelConfiguration(directory: localDir)
-    } else {
+    }
+    else {
         // Fall back to HuggingFace Hub ID (online mode)
         NSLog("SwamaKit.ModelRunner: Model not found locally, will attempt download from HuggingFace Hub")
         return ModelConfiguration(id: modelName)
