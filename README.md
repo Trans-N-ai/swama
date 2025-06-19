@@ -12,10 +12,11 @@
 ## ✨ Features
 
 - 🚀 **High Performance**: Built on Apple MLX framework, optimized for Apple Silicon
-- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions` and `/v1/embeddings` endpoint support
+- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/embeddings`, and `/v1/audio/transcriptions` endpoint support
 - 📱 **Menu Bar App**: Elegant macOS native menu bar integration
 - 💻 **Command Line Tools**: Complete CLI support for model management and inference
 - 🖼️ **Multimodal Support**: Support for both text and image inputs
+- 🎤 **Local Audio Transcription**: Built-in speech recognition with Whisper (no cloud required)
 - 🔍 **Text Embeddings**: Built-in embedding generation for semantic search and RAG applications
 - 📦 **Smart Model Management**: Automatic downloading, caching, and version management
 - 🔄 **Streaming Responses**: Real-time streaming text generation support
@@ -114,8 +115,9 @@ swama list
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | Llama 3.2 3B (default) |
 | `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | Llama 3.2 1B (fastest) |
 | `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | DeepSeek R1 (reasoning) |
-| `deepseek-coder` | `mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx` | DeepSeek Coder |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Qwen 2.5 7B |
+| `whisper-large` | `openai_whisper-large-v3` | Whisper Large (speech recognition) |
+| `whisper-base` | `openai_whisper-base` | Whisper Base (faster, lower accuracy) |
 
 ### 3. Start API Service
 
@@ -171,6 +173,12 @@ curl -X POST http://localhost:28100/v1/embeddings \
     "input": ["Hello world", "Text embeddings"],
     "model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
   }'
+
+# Transcribe audio files (local processing)
+curl -X POST http://localhost:28100/v1/audio/transcriptions \
+  -F "file=@audio.wav" \
+  -F "model=whisper-large" \
+  -F "response_format=json"
 ```
 
 #### 🛠️ Community Tool Integration
@@ -255,6 +263,7 @@ const completion = await openai.chat.completions.create({
 ```bash
 # Download model (supports both aliases and full names)
 swama pull qwen3                    # Using alias
+swama pull whisper-large            # Download speech recognition model
 swama pull mlx-community/Qwen3-8B-4bit  # Using full name
 
 # List local models and available aliases
@@ -264,6 +273,9 @@ swama list [--format json]
 swama run qwen3 "Your prompt here"              # Using alias - downloads automatically!
 swama run deepseek-coder "Write a Python function"  # Another alias
 swama run <full-model-name> <prompt> [options]      # Using full name
+
+# Transcribe audio files
+swama transcribe audio.wav --model whisper-large --language en
 ```
 
 ### Server
