@@ -62,6 +62,90 @@ public actor ModelPool {
 
     public static let shared: ModelPool = .init()
 
+    // MARK: - WhisperKit Support
+
+    /// Safely run a WhisperKit operation with caching and concurrency control
+    public func runWhisperKit<T: Sendable>(
+        modelName: String,
+        operation: @Sendable @escaping (WhisperKitRunner) async throws -> T
+    ) async throws -> T {
+        // Wait for available slot AND ensure the specific model is not already running
+        while runningInferences >= maxConcurrentInferences || runningModels.contains(modelName) {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        }
+
+        runningInferences += 1
+        runningModels.insert(modelName)
+        NSLog(
+            "SwamaKit.ModelPool: Acquired inference slot for WhisperKit \(modelName). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)"
+        )
+
+        do {
+            // Get or load the WhisperKit runner
+            let runner = try await getWhisperKitRunner(modelName: modelName)
+
+            // Execute the operation
+            let result = try await operation(runner)
+
+            runningInferences = max(0, runningInferences - 1)
+            runningModels.remove(modelName)
+            NSLog(
+                "SwamaKit.ModelPool: Released inference slot for WhisperKit \(modelName). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)"
+            )
+
+            return result
+        }
+        catch {
+            runningInferences = max(0, runningInferences - 1)
+            runningModels.remove(modelName)
+            NSLog(
+                "SwamaKit.ModelPool: Released inference slot for WhisperKit \(modelName) (error). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)"
+            )
+            throw error
+        }
+    }
+
+    /// Gets or loads a WhisperKit runner for the given model name
+    private func getWhisperKitRunner(modelName: String) async throws -> WhisperKitRunner {
+        // Ensure memory management is started
+        ensureMemoryManagementStarted()
+
+        if let runner = whisperKitRunnerCache[modelName] {
+            // Record usage for existing cached runner
+            modelUsageInfo[modelName]?.recordUsage()
+            NSLog("SwamaKit.ModelPool: WhisperKit cache hit for \(modelName).")
+            return runner
+        }
+
+        if let task = whisperKitTasks[modelName] {
+            NSLog("SwamaKit.ModelPool: Joining existing WhisperKit loading task for \(modelName).")
+            let runner = try await task.value
+            // Record usage for newly loaded runner
+            modelUsageInfo[modelName]?.recordUsage()
+            return runner
+        }
+
+        NSLog("SwamaKit.ModelPool: WhisperKit cache miss for \(modelName). Starting new loading task.")
+
+        // Check if we need to free up memory before loading a new model
+        await performMemoryPressureCheck()
+
+        let task = Task {
+            defer { whisperKitTasks[modelName] = nil }
+
+            let runner = WhisperKitRunner()
+            try await runner.loadModel(modelName)
+
+            whisperKitRunnerCache[modelName] = runner
+            // Initialize usage tracking for new runner
+            modelUsageInfo[modelName] = ModelUsageInfo()
+            NSLog("SwamaKit.ModelPool: Successfully loaded and cached WhisperKit \(modelName).")
+            return runner
+        }
+        whisperKitTasks[modelName] = task
+        return try await task.value
+    }
+
     // MARK: - Memory Management Configuration
 
     /// Maximum idle time before a model becomes eligible for eviction (5 minutes for production)
@@ -233,9 +317,9 @@ public actor ModelPool {
             if vlmRegistryCache == nil {
                 vlmRegistryCache = [:]
                 for vlmConfigEntry in VLMRegistry.all() {
-                    if case let .id(configIDString) = vlmConfigEntry.id {
-                        vlmRegistryCache![configIDString] = vlmConfigEntry
-                    }
+                    // Extract the model ID string from the identifier
+                    let configIDString: String = vlmConfigEntry.name
+                    vlmRegistryCache![configIDString] = vlmConfigEntry
                 }
                 NSLog("SwamaKit.ModelPool: Built VLM registry cache with \(vlmRegistryCache!.count) entries.")
             }
@@ -339,12 +423,14 @@ public actor ModelPool {
         // Store references to help with cleanup
         let containersToEvict = Array(cache.values)
         let tasksToCancel = Array(tasks.values)
+        let whisperKitTasksToCancel = Array(whisperKitTasks.values)
 
         // Clear all caches to remove strong references
         cache.removeAll()
         modelTypeCache.removeAll() // Clear type cache too
         vlmRegistryCache = nil // Reset VLM registry cache
         embeddingRunnerCache.removeAll() // Clear embedding cache
+        whisperKitRunnerCache.removeAll() // Clear WhisperKit cache
         modelUsageInfo.removeAll() // Clear usage tracking
 
         // Cancel all loading tasks
@@ -352,6 +438,12 @@ public actor ModelPool {
             task.cancel()
         }
         tasks.removeAll()
+
+        // Cancel all WhisperKit loading tasks
+        for task in whisperKitTasksToCancel {
+            task.cancel()
+        }
+        whisperKitTasks.removeAll()
 
         // Explicitly release container references
         _ = containersToEvict
@@ -378,9 +470,21 @@ public actor ModelPool {
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName) // Clear type cache for this model
         embeddingRunnerCache.removeValue(forKey: modelName) // Clear embedding cache for this model
+        whisperKitRunnerCache.removeValue(forKey: modelName) // Clear WhisperKit cache for this model
         modelUsageInfo.removeValue(forKey: modelName) // Clear usage tracking for this model
+
+        var taskCancelled = false
         if let task = tasks.removeValue(forKey: modelName) {
             task.cancel()
+            taskCancelled = true
+        }
+
+        if let whisperKitTask = whisperKitTasks.removeValue(forKey: modelName) {
+            whisperKitTask.cancel()
+            taskCancelled = true
+        }
+
+        if taskCancelled {
             NSLog("SwamaKit.ModelPool: Removed \(modelName) from cache and cancelled its loading task.")
         }
         else {
@@ -399,6 +503,8 @@ public actor ModelPool {
     private var cache: [String: MLXLMCommon.ModelContainer] = .init()
     private var tasks: [String: Task<MLXLMCommon.ModelContainer, Error>] = .init()
     private var embeddingRunnerCache: [String: EmbeddingRunner] = .init()
+    private var whisperKitRunnerCache: [String: WhisperKitRunner] = .init()
+    private var whisperKitTasks: [String: Task<WhisperKitRunner, Error>] = .init()
 
     /// Memory management tracking
     private var modelUsageInfo: [String: ModelUsageInfo] = .init()
@@ -413,9 +519,9 @@ public actor ModelPool {
         if vlmRegistryCache == nil {
             vlmRegistryCache = [:]
             for vlmConfigEntry in VLMRegistry.all() {
-                if case let .id(configIDString) = vlmConfigEntry.id {
-                    vlmRegistryCache![configIDString] = vlmConfigEntry
-                }
+                // Extract the model ID string from the identifier
+                let configIDString: String = vlmConfigEntry.name
+                vlmRegistryCache![configIDString] = vlmConfigEntry
             }
         }
 
@@ -565,11 +671,17 @@ public actor ModelPool {
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName)
         embeddingRunnerCache.removeValue(forKey: modelName)
+        whisperKitRunnerCache.removeValue(forKey: modelName)
         modelUsageInfo.removeValue(forKey: modelName)
 
         // Cancel loading task if active
         if let task = tasks.removeValue(forKey: modelName) {
             task.cancel()
+        }
+
+        // Cancel WhisperKit loading task if active
+        if let whisperKitTask = whisperKitTasks.removeValue(forKey: modelName) {
+            whisperKitTask.cancel()
         }
 
         // Explicitly nil out the container reference to help ARC

@@ -123,3 +123,5 @@ build/
 ExportOptions.plist
 DistributionSummary.plist
 Packaging.log
+
+release/

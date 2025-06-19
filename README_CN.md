@@ -12,10 +12,11 @@
 ## ✨ 特性
 
 - 🚀 **高性能**: 基于 Apple MLX 框架，针对 Apple Silicon 优化
-- 🔌 **OpenAI 兼容 API**: 提供标准的 `/v1/chat/completions` 和 `/v1/embeddings` 端点
+- 🔌 **OpenAI 兼容 API**: 提供标准的 `/v1/chat/completions`、`/v1/embeddings` 和 `/v1/audio/transcriptions` 端点
 - 📱 **菜单栏应用**: 优雅的 macOS 原生菜单栏集成
 - 💻 **命令行工具**: 完整的 CLI 支持用于模型管理和推理
 - 🖼️ **多模态支持**: 同时支持文本和图像输入
+- 🎤 **本地音频转录**: 内置 Whisper 语音识别（无需云服务）
 - 🔍 **文本嵌入**: 内置嵌入生成功能，支持语义搜索和 RAG 应用
 - 📦 **智能模型管理**: 自动下载、缓存和版本管理
 - 🔄 **流式响应**: 支持实时流式文本生成
@@ -114,8 +115,9 @@ swama list
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | Llama 3.2 3B (默认) |
 | `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | Llama 3.2 1B (最快) |
 | `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | DeepSeek R1 (推理型) |
-| `deepseek-coder` | `mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx` | DeepSeek 编程助手 |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Qwen 2.5 7B |
+| `whisper-large` | `openai_whisper-large-v3` | Whisper Large (语音识别) |
+| `whisper-base` | `openai_whisper-base` | Whisper Base (更快，精度较低) |
 
 ### 3. 启动 API 服务
 
@@ -171,6 +173,12 @@ curl -X POST http://localhost:28100/v1/embeddings \
     "input": ["Hello world", "Text embeddings"],
     "model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
   }'
+
+# 音频文件转录（本地处理）
+curl -X POST http://localhost:28100/v1/audio/transcriptions \
+  -F "file=@audio.wav" \
+  -F "model=whisper-large" \
+  -F "response_format=json"
 ```
 
 #### 🛠️ 社区工具集成
@@ -255,6 +263,7 @@ const completion = await openai.chat.completions.create({
 ```bash
 # 下载模型（支持别名和完整名称）
 swama pull qwen3                    # 使用别名
+swama pull whisper-large            # 下载语音识别模型
 swama pull mlx-community/Qwen3-8B-4bit  # 使用完整名称
 
 # 列出本地模型和可用别名
@@ -264,6 +273,9 @@ swama list [--format json]
 swama run qwen3 "你的提示词"              # 使用别名 - 自动下载！
 swama run deepseek-coder "写一个Python函数"  # 另一个别名
 swama run <完整模型名> <提示词> [选项]      # 使用完整名称
+
+# 转录音频文件
+swama transcribe audio.wav --model whisper-large --language zh
 ```
 
 ### 服务器

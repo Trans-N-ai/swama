@@ -18,7 +18,19 @@ public enum ModelAliasResolver {
         if let resolvedName = aliases[lowercasedName] {
             return resolvedName
         }
+        // Check WhisperKit aliases
+        if let resolvedName = whisperKitAliases[lowercasedName] {
+            return resolvedName
+        }
         return name
+    }
+
+    /// Check if a model name is a WhisperKit model
+    public static func isWhisperKitModel(_ modelName: String) -> Bool {
+        let lowercasedName = modelName.lowercased()
+        return lowercasedName.hasPrefix("whisper-") ||
+            lowercasedName.hasPrefix("whisperkit-") ||
+            whisperKitAliases.values.contains(modelName)
     }
 
     // MARK: Internal
@@ -59,6 +71,22 @@ public enum ModelAliasResolver {
         "llama3.3-70b": "mlx-community/Llama-3.3-70B-Instruct-4bit-DWQ",
 
         // SmolLM Family
-        "smollm": "mlx-community/SmolLM-135M-Instruct-4bit"
+        "smollm": "mlx-community/SmolLM-135M-Instruct-4bit",
+    ]
+
+    /// WhisperKit model aliases mapping user-friendly names to HuggingFace folder names
+    static let whisperKitAliases: [String: String] = [
+        // OpenAI standard naming (primary)
+        "whisper-tiny": "openai_whisper-tiny",
+        "whisper-tiny.en": "openai_whisper-tiny.en",
+        "whisper-base": "openai_whisper-base",
+        "whisper-base.en": "openai_whisper-base.en",
+        "whisper-small": "openai_whisper-small",
+        "whisper-small.en": "openai_whisper-small.en",
+        "whisper-medium": "openai_whisper-medium",
+        "whisper-medium.en": "openai_whisper-medium.en",
+        "whisper-large-v2": "openai_whisper-large-v2",
+        "whisper-large-v3": "openai_whisper-large-v3",
+        "whisper-large": "openai_whisper-large-v3", // Latest large model alias
     ]
 }
