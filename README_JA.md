@@ -12,10 +12,11 @@
 ## ✨ 特徴
 
 - 🚀 **高性能**: Apple MLXフレームワーク上に構築、Apple Silicon向けに最適化
-- 🔌 **OpenAI互換API**: 標準の `/v1/chat/completions` と `/v1/embeddings` エンドポイントをサポート
+- 🔌 **OpenAI互換API**: 標準の `/v1/chat/completions`、`/v1/embeddings`、および `/v1/audio/transcriptions` エンドポイントをサポート
 - 📱 **メニューバーアプリ**: エレガントなmacOSネイティブメニューバー統合
 - 💻 **コマンドラインツール**: モデル管理と推論のための完全なCLIサポート
 - 🖼️ **マルチモーダルサポート**: テキストと画像の両方の入力をサポート
+- 🎤 **ローカル音声文字起こし**: Whisper内蔵音声認識（クラウド不要）
 - 🔍 **テキスト埋め込み**: セマンティック検索とRAGアプリケーション用の組み込み埋め込み生成
 - 📦 **スマートモデル管理**: 自動ダウンロード、キャッシュ、バージョン管理
 - 🔄 **ストリーミングレスポンス**: リアルタイムストリーミングテキスト生成をサポート
@@ -114,8 +115,9 @@ swama list
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | Llama 3.2 3B (デフォルト) |
 | `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | Llama 3.2 1B (最高速) |
 | `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | DeepSeek R1 (推論型) |
-| `deepseek-coder` | `mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx` | DeepSeek Coder |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Qwen 2.5 7B |
+| `whisper-large` | `openai_whisper-large-v3` | Whisper Large (音声認識) |
+| `whisper-base` | `openai_whisper-base` | Whisper Base (高速、低精度) |
 
 ### 3. APIサービスの開始
 
@@ -171,6 +173,12 @@ curl -X POST http://localhost:28100/v1/embeddings \
     "input": ["Hello world", "Text embeddings"],
     "model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
   }'
+
+# 音声ファイルの文字起こし（ローカル処理）
+curl -X POST http://localhost:28100/v1/audio/transcriptions \
+  -F "file=@audio.wav" \
+  -F "model=whisper-large" \
+  -F "response_format=json"
 ```
 
 #### 🛠️ コミュニティツール統合
@@ -253,14 +261,21 @@ const completion = await openai.chat.completions.create({
 ### モデル管理
 
 ```bash
-# モデルのダウンロード
-swama pull <model-name>
+# モデルのダウンロード（エイリアスと完全な名前の両方をサポート）
+swama pull qwen3                    # エイリアスを使用
+swama pull whisper-large            # 音声認識モデルをダウンロード
+swama pull mlx-community/Qwen3-8B-4bit  # 完全な名前を使用
 
-# ローカルモデルの一覧表示
+# ローカルモデルと利用可能なエイリアスの一覧表示
 swama list [--format json]
 
-# 推論の実行
-swama run <model-name> <prompt> [options]
+# 推論の実行（ローカルでモデルが見つからない場合は自動ダウンロード）
+swama run qwen3 "あなたのプロンプト"              # エイリアスを使用 - 自動ダウンロード！
+swama run deepseek-coder "Python関数を書いて"  # 別のエイリアス
+swama run <完全なモデル名> <プロンプト> [オプション]      # 完全な名前を使用
+
+# 音声ファイルの文字起こし
+swama transcribe audio.wav --model whisper-large --language ja
 ```
 
 ### サーバー
