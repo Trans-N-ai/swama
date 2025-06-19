@@ -97,6 +97,18 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
                 }
             }
 
+        case (.POST, "/v1/audio/transcriptions"):
+            let channel = context.channel
+            channel.eventLoop.execute {
+                Task {
+                    await TranscriptionsHandler.handle(
+                        requestHead: request,
+                        body: bodyBuffer,
+                        channel: channel
+                    )
+                }
+            }
+
         default:
             respond404(context: context, request: request)
         }

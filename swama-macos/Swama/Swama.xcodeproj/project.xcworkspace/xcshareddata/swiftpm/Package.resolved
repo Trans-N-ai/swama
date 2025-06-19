@@ -34,7 +34,7 @@
       "location" : "https://github.com/ml-explore/mlx-swift-examples/",
       "state" : {
         "branch" : "main",
-        "revision" : "8e41311a3c17e902441cfcaa46629244c9758afd"
+        "revision" : "e9dfa74fdec98b9855dbf0c859a58a4ef279deeb"
       }
     },
     {
@@ -107,6 +107,15 @@
       "state" : {
         "revision" : "c2f302a74cca59cbde683b1425ab43c05685515a",
         "version" : "0.1.21"
+      }
+    },
+    {
+      "identity" : "whisperkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/argmaxinc/WhisperKit.git",
+      "state" : {
+        "revision" : "b3c412aa7520069f6c71f7cc217fbcf850ba31a1",
+        "version" : "0.13.0"
       }
     }
   ],
