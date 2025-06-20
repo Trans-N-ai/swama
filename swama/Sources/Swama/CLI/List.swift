@@ -152,26 +152,29 @@ struct List: AsyncParsableCommand {
         if let dict = value as? [String: Any] {
             let wrappedDict = dict.mapValues { wrapAnyCodable($0) }
             return AnyCodable(wrappedDict)
-        } else if let array = value as? [Any] {
+        }
+        else if let array = value as? [Any] {
             let wrappedArray = array.map { wrapAnyCodable($0) }
             return AnyCodable(wrappedArray)
-        } else if isBasicType(value) {
+        }
+        else if isBasicType(value) {
             return AnyCodable(value)
-        } else {
+        }
+        else {
             // Convert unsupported types to string description
             return AnyCodable(String(describing: value))
         }
     }
-    
+
     private func isBasicType(_ value: Any) -> Bool {
-        return value is Int || 
-               value is Int64 || 
-               value is UInt ||
-               value is String || 
-               value is Double || 
-               value is Float ||
-               value is Bool ||
-               value is NSNull
+        value is Int ||
+            value is Int64 ||
+            value is UInt ||
+            value is String ||
+            value is Double ||
+            value is Float ||
+            value is Bool ||
+            value is NSNull
     }
 }
 

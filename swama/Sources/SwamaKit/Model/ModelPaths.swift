@@ -4,11 +4,11 @@ import Foundation
 
 /// Centralized configuration for model storage paths
 public enum ModelPaths {
-
     /// The custom path for storing models
     public static let customModelsDirectory: URL? = {
         if let customPath = ProcessInfo.processInfo.environment["SWAMA_MODELS"],
-           !customPath.isEmpty {
+           !customPath.isEmpty
+        {
             return URL(fileURLWithPath: customPath)
         }
         return nil
@@ -34,7 +34,9 @@ public enum ModelPaths {
         let legacyPath = legacyModelsDirectory.appendingPathComponent(modelName)
 
         // Check if model exists in custom location first
-        if let customPath, FileManager.default.fileExists(atPath: customPath.appendingPathComponent(".swama-meta.json").path) {
+        if let customPath,
+           FileManager.default.fileExists(atPath: customPath.appendingPathComponent(".swama-meta.json").path)
+        {
             return customPath
         }
 
@@ -62,7 +64,8 @@ public enum ModelPaths {
         let preferredPath = preferredModelsDirectory.appendingPathComponent(modelName)
         let legacyPath = legacyModelsDirectory.appendingPathComponent(modelName)
 
-        return FileManager.default.fileExists(atPath: customPath?.appendingPathComponent(".swama-meta.json").path ?? "") ||
+        return FileManager.default
+            .fileExists(atPath: customPath?.appendingPathComponent(".swama-meta.json").path ?? "") ||
             FileManager.default.fileExists(atPath: preferredPath.appendingPathComponent(".swama-meta.json").path) ||
             FileManager.default.fileExists(atPath: legacyPath.appendingPathComponent(".swama-meta.json").path)
     }
