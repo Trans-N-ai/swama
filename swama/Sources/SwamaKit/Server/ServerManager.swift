@@ -72,17 +72,16 @@ public class ServerManager {
     /// Returns the default port, reading from SWAMA_PORT environment variable if available
     public static func defaultPort() -> Int {
         let defaultPort = 28100
-        
+
         guard let portString = ProcessInfo.processInfo.environment["SWAMA_PORT"] else {
             NSLog("SwamaKit.ServerManager: Using default port \(defaultPort) (SWAMA_PORT not set)")
             return defaultPort
         }
-        
         guard let port = Int(portString), port > 0, port <= 65535 else {
             NSLog("SwamaKit.ServerManager: Invalid SWAMA_PORT value '\(portString)', using default port \(defaultPort)")
             return defaultPort
         }
-        
+
         NSLog("SwamaKit.ServerManager: Using port \(port) from SWAMA_PORT environment variable")
         return port
     }
