@@ -11,8 +11,8 @@ struct Serve: AsyncParsableCommand {
     @Option(name: .long, help: "Host to bind to (default: 0.0.0.0)")
     var host: String = "0.0.0.0"
 
-    @Option(name: .long, help: "Port to bind to (default: 28100)")
-    var port: Int = 28100
+    @Option(name: .long, help: "Port to bind to (default: from SWAMA_PORT env var or 28100)")
+    var port: Int?
 
     func run() async throws {
         // Use the ServerManager from SwamaKit to run the server in CLI mode.
@@ -22,8 +22,11 @@ struct Serve: AsyncParsableCommand {
         let serverManager = SwamaKit.ServerManager()
         print("CLI Serve: Initialized SwamaKit.ServerManager for CLI operation.")
 
+        // Use provided port or fallback to environment variable/default
+        let actualPort = port ?? SwamaKit.ServerManager.defaultPort()
+        
         // The runForCLI method now encapsulates the NIO server setup and lifecycle for the CLI.
-        try await serverManager.runForCLI(host: host, port: port)
+        try await serverManager.runForCLI(host: host, port: actualPort)
 
         print("CLI Serve: Server (via SwamaKit.ServerManager.runForCLI) has shut down.")
     }

@@ -19,16 +19,16 @@ public class ServerManager {
     // MARK: Lifecycle
 
     /// Initializer for when ServerManager is used for a background server (e.g., by TestApp)
-    public init(host: String = "0.0.0.0", port: Int = 28100) {
+    public init(host: String = "0.0.0.0", port: Int? = nil) {
         self.hostForBackground = host
-        self.portForBackground = port
-        NSLog("SwamaKit.ServerManager: Initialized for background server at \(host):\(port)")
+        self.portForBackground = port ?? Self.defaultPort()
+        NSLog("SwamaKit.ServerManager: Initialized for background server at \(host):\(self.portForBackground)")
     }
 
     /// Convenience initializer for CLI or other uses where background host/port are not pre-defined
     public convenience init() {
-        self.init(host: "0.0.0.0", port: 28100) // Default values
-        NSLog("SwamaKit.ServerManager: Initialized (default)")
+        self.init(host: "0.0.0.0", port: nil) // Uses environment variable or default
+        NSLog("SwamaKit.ServerManager: Initialized (using environment configuration)")
     }
 
     deinit {
@@ -68,6 +68,24 @@ public class ServerManager {
     }
 
     // MARK: Public
+
+    /// Returns the default port, reading from SWAMA_PORT environment variable if available
+    public static func defaultPort() -> Int {
+        let defaultPort = 28100
+        
+        guard let portString = ProcessInfo.processInfo.environment["SWAMA_PORT"] else {
+            NSLog("SwamaKit.ServerManager: Using default port \(defaultPort) (SWAMA_PORT not set)")
+            return defaultPort
+        }
+        
+        guard let port = Int(portString), port > 0, port <= 65535 else {
+            NSLog("SwamaKit.ServerManager: Invalid SWAMA_PORT value '\(portString)', using default port \(defaultPort)")
+            return defaultPort
+        }
+        
+        NSLog("SwamaKit.ServerManager: Using port \(port) from SWAMA_PORT environment variable")
+        return port
+    }
 
     @MainActor // Ensures UI-related calls or state updates are safe if any; primarily for Task setup
     public func startInBackground() throws { // Renamed from startServer, uses host/port from init
