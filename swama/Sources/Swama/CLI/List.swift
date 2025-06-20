@@ -137,7 +137,7 @@ struct List: AsyncParsableCommand {
                 "source": AnyCodable(modelInfo.source == .metaFile ? "metaFile" : "directoryScan")
             ]
             if let rawMetadata = modelInfo.rawMetadata {
-                dict["raw_metadata"] = AnyCodable(rawMetadata.mapValues(AnyCodable.init))
+                dict["raw_metadata"] = wrapAnyCodable(rawMetadata)
             }
             return dict
         }
@@ -146,6 +146,35 @@ struct List: AsyncParsableCommand {
         if let jsonString = String(data: data, encoding: .utf8) {
             print(jsonString)
         }
+    }
+
+    private func wrapAnyCodable(_ value: Any) -> AnyCodable {
+        if let dict = value as? [String: Any] {
+            let wrappedDict = dict.mapValues { wrapAnyCodable($0) }
+            return AnyCodable(wrappedDict)
+        }
+        else if let array = value as? [Any] {
+            let wrappedArray = array.map { wrapAnyCodable($0) }
+            return AnyCodable(wrappedArray)
+        }
+        else if isBasicType(value) {
+            return AnyCodable(value)
+        }
+        else {
+            // Convert unsupported types to string description
+            return AnyCodable(String(describing: value))
+        }
+    }
+
+    private func isBasicType(_ value: Any) -> Bool {
+        value is Int ||
+            value is Int64 ||
+            value is UInt ||
+            value is String ||
+            value is Double ||
+            value is Float ||
+            value is Bool ||
+            value is NSNull
     }
 }
 
@@ -177,24 +206,24 @@ struct AnyCodable: Encodable {
         else if let boolValue = value as? Bool {
             try container.encode(boolValue)
         }
-        else if let arrayValue = value as? [Any] {
-            try container.encode(arrayValue.map { AnyCodable($0) })
+        else if let arrayValue = value as? [AnyCodable] {
+            try container.encode(arrayValue)
         }
-        else if let dictionaryValue = value as? [String: Any] {
-            try container.encode(dictionaryValue.mapValues { AnyCodable($0) })
+        else if let dictionaryValue = value as? [String: AnyCodable] {
+            try container.encode(dictionaryValue)
         }
         else if let int64Value = value as? Int64 {
             try container.encode(int64Value)
         }
+        else if let uintValue = value as? UInt {
+            try container.encode(uintValue)
+        }
+        else if let floatValue = value as? Float {
+            try container.encode(floatValue)
+        }
         else {
-            // Fallback or error for unhandled types
-            throw EncodingError.invalidValue(
-                value,
-                EncodingError.Context(
-                    codingPath: container.codingPath,
-                    debugDescription: "AnyCodable value could not be encoded"
-                )
-            )
+            // Convert unsupported types to string description
+            try container.encode(String(describing: value))
         }
     }
 }

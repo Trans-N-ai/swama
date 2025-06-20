@@ -24,7 +24,7 @@ struct Serve: AsyncParsableCommand {
 
         // Use provided port or fallback to environment variable/default
         let actualPort = port ?? SwamaKit.ServerManager.defaultPort()
-        
+
         // The runForCLI method now encapsulates the NIO server setup and lifecycle for the CLI.
         try await serverManager.runForCLI(host: host, port: actualPort)
 
