@@ -90,7 +90,7 @@ public enum ModelDownloader {
     }
 
     public static func downloadWhisperKitModel(alias: String) async throws {
-        guard let huggingFaceFolderName = ModelAliasResolver.whisperKitAliases[alias.lowercased()] else {
+        guard let modelFolderName = ModelAliasResolver.whisperKitAliases[alias.lowercased()] else {
             throw NSError(
                 domain: "ModelDownloader",
                 code: 13,
@@ -98,83 +98,29 @@ public enum ModelDownloader {
             )
         }
 
-        let whisperKitModelsDirectory = FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent(".swama/models/whisperkit")
-        let modelDir = whisperKitModelsDirectory.appendingPathComponent(huggingFaceFolderName)
+        let swamaRegistry = ProcessInfo.processInfo.environment["SWAMA_REGISTRY"] ?? "HUGGING_FACE"
 
+        let modelDir = ModelPaths.getModelDirectory(for: "whisperkit/\(modelFolderName)")
         // Create the directory if it doesn't exist
         try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
-
         printMessage("Pulling model: \(alias)")
-
-        // Base URLs for different repositories
-        let whisperKitBaseURL = "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/main"
-
-        // Collect all files to download with their info
-        var allFiles: [(url: String, localPath: URL, fileName: String)] = []
-
-        // Config files
-        let configFiles = ["config.json", "generation_config.json"]
-        for fileName in configFiles {
-            let url = "\(whisperKitBaseURL)/\(huggingFaceFolderName)/\(fileName)"
-            let localPath = modelDir.appendingPathComponent(fileName)
-            allFiles.append((url: url, localPath: localPath, fileName: fileName))
+        let openaiModelName = getOpenAIModelNameFromFolderName(modelFolderName)
+        guard let downloaderClass: IDownloader.Type = Downloaders[swamaRegistry] as? IDownloader.Type else {
+            throw NSError(
+                domain: "ModelDownloader",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid registry: \(swamaRegistry). Supported: MODEL_SCOPE, HUGGING_FACE"
+                ]
+            )
         }
 
-        // Tokenizer files from OpenAI's original model (required by WhisperKit)
-        let openaiModelName = getOpenAIModelNameFromFolderName(huggingFaceFolderName)
-        let tokenizerFiles = [
-            "tokenizer.json",
-            "vocab.json",
-            "merges.txt",
-            "special_tokens_map.json",
-            "tokenizer_config.json"
-        ]
-        for fileName in tokenizerFiles {
-            let url = "https://huggingface.co/\(openaiModelName)/resolve/main/\(fileName)"
-            let localPath = modelDir.appendingPathComponent(fileName)
-            allFiles.append((url: url, localPath: localPath, fileName: fileName))
-        }
-
-        // MLModelC directories and their files
-        let mlmodelcDirs = ["AudioEncoder.mlmodelc", "TextDecoder.mlmodelc", "MelSpectrogram.mlmodelc"]
-        for dirName in mlmodelcDirs {
-            let modelcDir = modelDir.appendingPathComponent(dirName)
-            try FileManager.default.createDirectory(at: modelcDir, withIntermediateDirectories: true)
-
-            // Main files in .mlmodelc directory
-            let files = ["coremldata.bin", "metadata.json", "model.mil", "model.mlmodel"]
-            for fileName in files {
-                let url = "\(whisperKitBaseURL)/\(huggingFaceFolderName)/\(dirName)/\(fileName)"
-                let localPath = modelcDir.appendingPathComponent(fileName)
-                allFiles.append((url: url, localPath: localPath, fileName: "\(dirName)/\(fileName)"))
-            }
-
-            // Subdirectories
-            let subdirs = ["analytics", "weights"]
-            for subdir in subdirs {
-                let subdirLocal = modelcDir.appendingPathComponent(subdir)
-                try FileManager.default.createDirectory(at: subdirLocal, withIntermediateDirectories: true)
-
-                let potentialFiles: [String] =
-                    if subdir == "analytics" {
-                        ["coremldata.bin", "metadata.json"]
-                    }
-                    else if subdir == "weights" {
-                        ["weight.bin", "data.bin", "metadata.json"]
-                    }
-                    else {
-                        ["data.bin", "metadata.json"]
-                    }
-
-                for fileName in potentialFiles {
-                    let url = "\(whisperKitBaseURL)/\(huggingFaceFolderName)/\(dirName)/\(subdir)/\(fileName)"
-                    let localPath = subdirLocal.appendingPathComponent(fileName)
-                    allFiles.append((url: url, localPath: localPath, fileName: "\(dirName)/\(subdir)/\(fileName)"))
-                }
-            }
-        }
+        let downloader = downloaderClass.init()
+        let allFiles = try await downloader.listWhisperKitModelFile(
+            modelDir: modelDir,
+            modelFolderName: modelFolderName,
+            openaiModelName: openaiModelName
+        )
 
         // Download all files with unified progress display and resume support
         let totalFiles = allFiles.count
@@ -182,7 +128,7 @@ public enum ModelDownloader {
             let fileIndex = index + 1
             do {
                 // Get remote file size first
-                let remoteSize = try await getWhisperKitFileSize(from: fileInfo.url)
+                let remoteSize = try await downloader.getWhisperKitFileSize(url: fileInfo.url)
 
                 // Check local file size
                 var localSize: Int64 = 0
@@ -276,35 +222,6 @@ public enum ModelDownloader {
             }
         }
         return total
-    }
-
-    static func getWhisperKitFileSize(from urlString: String) async throws -> Int64 {
-        guard let url = URL(string: urlString) else {
-            throw NSError(
-                domain: "ModelDownloader",
-                code: 14,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid URL: \(urlString)"]
-            )
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
-
-        let (_, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            return 0
-        }
-
-        if httpResponse.statusCode == 404 {
-            throw NSError(
-                domain: "ModelDownloader",
-                code: 404,
-                userInfo: [NSLocalizedDescriptionKey: "HTTP 404 for file"]
-            )
-        }
-
-        return httpResponse.expectedContentLength > 0 ? httpResponse.expectedContentLength : 0
     }
 
     static func downloadWhisperKitFileWithResume(

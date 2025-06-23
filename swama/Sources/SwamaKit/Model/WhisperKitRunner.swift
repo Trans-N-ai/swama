@@ -222,10 +222,7 @@ extension WhisperKitRunner {
     /// Get the local directory path for a WhisperKit model
     private func getWhisperKitModelDirectory(for modelName: String) -> URL {
         let resolvedName = ModelAliasResolver.whisperKitAliases[modelName.lowercased()] ?? modelName
-        let whisperKitModelsDirectory = FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent(".swama/models/whisperkit")
-        return whisperKitModelsDirectory.appendingPathComponent(resolvedName)
+        return ModelPaths.getModelDirectory(for: "whisperkit/\(resolvedName)")
     }
 
     /// Check if a WhisperKit model exists locally
@@ -241,9 +238,7 @@ extension WhisperKitRunner {
 
     /// List all locally available WhisperKit models
     private func availableWhisperKitModels() -> [String] {
-        let whisperKitModelsDirectory = FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent(".swama/models/whisperkit")
+        let whisperKitModelsDirectory = ModelPaths.getModelDirectory(for: "whisperkit")
 
         guard FileManager.default.fileExists(atPath: whisperKitModelsDirectory.path) else {
             return []
