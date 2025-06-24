@@ -19,27 +19,16 @@ struct SwamaApp: App {
     }
 
     var body: some Scene {
-        // This application is primarily a menu bar app that runs a background server.
-        // A traditional WindowGroup for a main window is not needed.
-        // Using a Settings scene ensures the app stays running without a visible main window.
-        // An EmptyView can be used if no settings UI is currently required.
-        Settings {
-            // Optionally, a simple view could be provided here for status or basic settings.
-            EmptyView()
+        MenuBarExtra("Swama", image: "MenuBarIcon") {
+            Button("Install Command Line Tool…") {
+                appDelegate.installCLITool()
+            }
+            .keyboardShortcut("I", modifiers: [.command])
+            Divider()
+            Button("Quit Swama") {
+                NSApplication.shared.terminate(nil)
+            }
+            .keyboardShortcut("Q", modifiers: [.command])
         }
     }
 }
-
-// The default ContentView is not used in this menu-bar-focused application.
-// It can be removed or commented out if no main window UI is intended.
-// struct ContentView: View {
-//     var body: some View {
-//         VStack {
-//             Image(systemName: "globe")
-//                 .imageScale(.large)
-//                 .foregroundStyle(.tint)
-//             Text("Hello, world!")
-//         }
-//         .padding()
-//     }
-// }

@@ -25,15 +25,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.setActivationPolicy(.accessory)
         }
 
-        // create status‑bar item
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let button = statusItem.button {
-            button.image = NSImage(named: "MenuBarIcon")
-            button.image?.accessibilityDescription = "Swama Control"
-            button.image?.isTemplate = true
-        }
-        buildMenu()
-
         // start backend server
         Task {
             do { try serverManager?.startInBackground() }
@@ -47,18 +38,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Private
 
-    private var statusItem: NSStatusItem!
     private var serverManager: ServerManager?
-
-    // MARK: ‑ Menu
-
-    private func buildMenu() {
-        let menu = NSMenu()
-        menu.addItem(withTitle: "Install Command Line Tool…", action: #selector(installCLITool), keyEquivalent: "")
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(withTitle: "Quit Swama", action: #selector(quitApplication), keyEquivalent: "q")
-        statusItem.menu = menu
-    }
 
     // MARK: ‑ Helper utils
 
@@ -79,7 +59,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Installs a small wrapper script to `/usr/local/bin/swama`.
     /// The real Mach‑O binary is named **swama‑bin** inside `Contents/Helpers` to avoid name collision.
-    @objc private func installCLITool() {
+    public func installCLITool() {
         let cliBinName = "swama-bin" // real executable
         let wrapperPath = "/usr/local/bin/swama" // destination wrapper
         let binDir = "/usr/local/bin"
@@ -139,8 +119,4 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             manualMsg(tmp: tmpURL.path, dest: wrapperPath, why: why)
         }
     }
-
-    // MARK: ‑ Quit
-
-    @objc private func quitApplication() { NSApp.terminate(nil) }
 }
