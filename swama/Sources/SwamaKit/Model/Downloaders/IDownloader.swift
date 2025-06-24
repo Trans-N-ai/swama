@@ -9,6 +9,11 @@ public protocol IDownloader {
     /// - Parameter repo: model repo
     func listModelFilesWithSize(repo: String) async throws -> [(path: String, size: Int64)]
 
+    /// list model files with size
+    /// - Parameter repo: model repo
+    /// - Parameter subDir: sub directory
+    func listModelFilesWithSize(repo: String, subDir: String) async throws -> [(path: String, size: Int64)]
+
     /// download with resume
     /// - Parameters:
     ///   - repo: model repo
@@ -32,4 +37,12 @@ public protocol IDownloader {
     /// - Parameters:
     ///   - url: url
     func getWhisperKitFileSize(url: String) async throws -> Int64
+    
+    /// download whisperkit file with resume
+    /// - Parameters:
+    ///   - urlString: url string
+    ///   - localFile: local file url
+    ///   - totalSize: total size
+    ///   - localSize: local size
+    func downloadWhisperKitFileWithResume(from urlString: String, to localFile: URL, totalSize: Int64, localSize: Int64) async throws
 }
