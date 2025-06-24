@@ -7,15 +7,14 @@
 import Foundation
 
 public class BaseDownloader: IDownloader {
-    
     public required init() {}
-    
+
     /// get list model files with size api
     /// - Parameters:
     ///   - repo: model repo
     ///   - subDir: sub directory
     /// - Returns: api url
-    public func getListModelFilesWithSizeApi(repo: String, subDir: String) -> String {
+    public func getListModelFilesWithSizeApi(repo _: String, subDir _: String) -> String {
         fatalError("Must be implemented by subclass")
     }
 
@@ -23,45 +22,53 @@ public class BaseDownloader: IDownloader {
     /// - Parameters:
     ///   - data: data
     /// - Returns: [(path: String, size: Int64)]
-    public func modelFilesResponseAdapter(data: Data) throws -> [(path: String, size: Int64)] {
+    public func modelFilesResponseAdapter(data _: Data) throws -> [(path: String, size: Int64)] {
         fatalError("Must be implemented by subclass")
     }
-    
+
     /// get download url
     /// - Parameters:
     ///   - repo: model repo
     ///   - file: file name
     /// - Returns: download url
-    public func getDownloadUrl(repo: String, file: String) -> String {
+    public func getDownloadUrl(repo _: String, file _: String) -> String {
         fatalError("Must be implemented by subclass")
     }
-    
+
     /// list whisperkit model file
     /// - Parameters:
     ///   - modelDir: model directory
     ///   - modelFolderName: model folder name
     ///   - openaiModelName: openai model name
     /// - Returns: [(url: String, localPath: URL, fileName: String)]
-    public func listWhisperKitModelFile(modelDir: URL, modelFolderName: String, openaiModelName: String) async throws -> [(url: String, localPath: URL, fileName: String)] {
+    public func listWhisperKitModelFile(
+        modelDir _: URL,
+        modelFolderName _: String,
+        openaiModelName _: String
+    ) async throws -> [(
+        url: String,
+        localPath: URL,
+        fileName: String
+    )] {
         fatalError("Must be implemented by subclass")
     }
-    
+
     /// get whisperkit file size
     /// - Parameters:
     ///   - url: url
     /// - Returns: file size
-    public func getWhisperKitFileSize(url: String) async throws -> Int64 {
+    public func getWhisperKitFileSize(url _: String) async throws -> Int64 {
         fatalError("Must be implemented by subclass")
     }
-    
+
     /// list model files with size
     /// - Parameters:
     ///   - repo: model repo
     /// - Returns: [(path: String, size: Int64)]
     public func listModelFilesWithSize(repo: String) async throws -> [(path: String, size: Int64)] {
-        return try await listModelFilesWithSize(repo: repo, subDir: "")
+        try await listModelFilesWithSize(repo: repo, subDir: "")
     }
-    
+
     public func listModelFilesWithSize(repo: String, subDir: String) async throws -> [(path: String, size: Int64)] {
         guard let url = URL(string: getListModelFilesWithSizeApi(repo: repo, subDir: subDir)) else {
             throw NSError(
@@ -109,8 +116,14 @@ public class BaseDownloader: IDownloader {
             )
         }
     }
-    
-    public func downloadWithResume(repo: String, file: String, dest: URL, totalSize: Int64, localSize: Int64) async throws {
+
+    public func downloadWithResume(
+        repo: String,
+        file: String,
+        dest: URL,
+        totalSize: Int64,
+        localSize: Int64
+    ) async throws {
         guard let url = URL(string: getDownloadUrl(repo: repo, file: file))
         else {
             throw NSError(
@@ -203,8 +216,13 @@ public class BaseDownloader: IDownloader {
 
         progressBar.finish()
     }
-    
-    public func downloadWhisperKitFileWithResume(from urlString: String, to localFile: URL, totalSize: Int64, localSize: Int64) async throws {
+
+    public func downloadWhisperKitFileWithResume(
+        from urlString: String,
+        to localFile: URL,
+        totalSize: Int64,
+        localSize: Int64
+    ) async throws {
         guard let url = URL(string: urlString) else {
             throw NSError(
                 domain: "BaseDownloader",
@@ -279,5 +297,4 @@ public class BaseDownloader: IDownloader {
 
         progressBar.finish()
     }
-    
 }

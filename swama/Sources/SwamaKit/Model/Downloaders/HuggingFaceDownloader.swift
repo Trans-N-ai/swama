@@ -7,12 +7,12 @@ public class HuggingFaceDownloader: BaseDownloader {
     // MARK: - Public
 
     public required init() {}
-    
-    public override func getListModelFilesWithSizeApi(repo: String, subDir: String) -> String {
-        return "https://huggingface.co/api/models/\(repo)/tree/main"
+
+    override public func getListModelFilesWithSizeApi(repo: String, subDir _: String) -> String {
+        "https://huggingface.co/api/models/\(repo)/tree/main"
     }
-    
-    public override func modelFilesResponseAdapter(data: Data) throws -> [(path: String, size: Int64)] {
+
+    override public func modelFilesResponseAdapter(data: Data) throws -> [(path: String, size: Int64)] {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             throw NSError(
                 domain: "BaseDownloader",
@@ -28,12 +28,16 @@ public class HuggingFaceDownloader: BaseDownloader {
             return (path, size)
         }
     }
-    
-    public override func getDownloadUrl(repo: String, file: String) -> String {
-        return "https://huggingface.co/\(repo)/resolve/main/\(file.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file)"
+
+    override public func getDownloadUrl(repo: String, file: String) -> String {
+        "https://huggingface.co/\(repo)/resolve/main/\(file.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file)"
     }
 
-    public override func listWhisperKitModelFile(modelDir: URL, modelFolderName: String, openaiModelName: String) async throws -> [(
+    override public func listWhisperKitModelFile(
+        modelDir: URL,
+        modelFolderName: String,
+        openaiModelName: String
+    ) async throws -> [(
         url: String,
         localPath: URL,
         fileName: String
@@ -107,8 +111,8 @@ public class HuggingFaceDownloader: BaseDownloader {
 
         return allFiles
     }
-    
-    public override func getWhisperKitFileSize(url: String) async throws -> Int64 {
+
+    override public func getWhisperKitFileSize(url: String) async throws -> Int64 {
         guard let url = URL(string: url) else {
             throw NSError(
                 domain: "ModelDownloader",

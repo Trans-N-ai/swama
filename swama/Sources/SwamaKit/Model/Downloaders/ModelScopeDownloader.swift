@@ -7,13 +7,16 @@ public class ModelScopeDownloader: BaseDownloader {
     // MARK: - Public
 
     public required init() {}
-    
-    public override func getListModelFilesWithSizeApi(repo: String, subDir: String) -> String {
-        return "https://www.modelscope.cn/api/v1/models/\(repo)/repo/files?Revision=master&Root=\(subDir.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? subDir)"
+
+    override public func getListModelFilesWithSizeApi(repo: String, subDir: String) -> String {
+        "https://www.modelscope.cn/api/v1/models/\(repo)/repo/files?Revision=master&Root=\(subDir.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? subDir)"
     }
-    
-    public override func modelFilesResponseAdapter(data: Data) throws -> [(path: String, size: Int64)] {
-        guard let json = try ((JSONSerialization.jsonObject(with: data) as? [String: Any])?["Data"] as? [String: Any])?["Files"] as? [[String: Any]]
+
+    override public func modelFilesResponseAdapter(data: Data) throws -> [(path: String, size: Int64)] {
+        guard let json =
+            try ((JSONSerialization
+                    .jsonObject(with: data) as? [String: Any]
+            )?["Data"] as? [String: Any])?["Files"] as? [[String: Any]]
         else {
             throw NSError(
                 domain: "ModelScopeDownloader",
@@ -29,12 +32,16 @@ public class ModelScopeDownloader: BaseDownloader {
             return (path, size)
         }
     }
-    
-    public override func getDownloadUrl(repo: String, file: String) -> String {
-        return "https://www.modelscope.cn/api/v1/models/\(repo)/repo?Revision=master&FilePath=\(file.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file)"
+
+    override public func getDownloadUrl(repo: String, file: String) -> String {
+        "https://www.modelscope.cn/api/v1/models/\(repo)/repo?Revision=master&FilePath=\(file.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file)"
     }
-    
-    public override func listWhisperKitModelFile(modelDir: URL, modelFolderName: String, openaiModelName: String) async throws -> [(
+
+    override public func listWhisperKitModelFile(
+        modelDir: URL,
+        modelFolderName: String,
+        openaiModelName: String
+    ) async throws -> [(
         url: String,
         localPath: URL,
         fileName: String
@@ -110,23 +117,31 @@ public class ModelScopeDownloader: BaseDownloader {
 
         return allFiles
     }
-    
-    public override func getWhisperKitFileSize(url: String) async throws -> Int64 {
+
+    override public func getWhisperKitFileSize(url: String) async throws -> Int64 {
         // https://www.modelscope.cn/models/AI-ModelScope/whisperkit-coreml/resolve/master/openai_whisper-base/config.json
         // https:/www.modelscope.cn/models/openai-mirror/whisper-base/resolve/master/merges.txt
         // regex match the repo name, folder name, file name from the url
         let regex = try! NSRegularExpression(pattern: "^https://www.modelscope.cn/models/(.*)/resolve/master/(.*)$")
         let matches = regex.matches(in: url, range: NSRange(location: 0, length: url.utf16.count))
         guard let match = matches.first else {
-            throw NSError(domain: "ModelScopeDownloader", code: 8, userInfo: [NSLocalizedDescriptionKey: "Invalid URL for downloading file \(url)."])
+            throw NSError(
+                domain: "ModelScopeDownloader",
+                code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid URL for downloading file \(url)."]
+            )
         }
+
         let repo = (url as NSString).substring(with: match.range(at: 1))
-        let fileName = (url as NSString).substring(with: match.range(at: 2))        
+        let fileName = (url as NSString).substring(with: match.range(at: 2))
         // the last part after the last / is the file name, the part before the last / is the folder name
         let fileFolderName = fileName.split(separator: "/").dropLast().joined(separator: "/")
 
         do {
-            let files: [(path: String, size: Int64)] = try await listModelFilesWithSize(repo: repo, subDir: fileFolderName)
+            let files: [(path: String, size: Int64)] = try await listModelFilesWithSize(
+                repo: repo,
+                subDir: fileFolderName
+            )
 
             // match the file name is [fileName], return the file size
             let file = files.first { $0.path == fileName }

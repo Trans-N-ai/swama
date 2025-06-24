@@ -37,12 +37,17 @@ public protocol IDownloader {
     /// - Parameters:
     ///   - url: url
     func getWhisperKitFileSize(url: String) async throws -> Int64
-    
+
     /// download whisperkit file with resume
     /// - Parameters:
     ///   - urlString: url string
     ///   - localFile: local file url
     ///   - totalSize: total size
     ///   - localSize: local size
-    func downloadWhisperKitFileWithResume(from urlString: String, to localFile: URL, totalSize: Int64, localSize: Int64) async throws
+    func downloadWhisperKitFileWithResume(
+        from urlString: String,
+        to localFile: URL,
+        totalSize: Int64,
+        localSize: Int64
+    ) async throws
 }
