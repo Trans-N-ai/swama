@@ -277,7 +277,6 @@ public class ModelScopeDownloader: IDownloader {
         let fileName = (url as NSString).substring(with: match.range(at: 2))        
         // the last part after the last / is the file name, the part before the last / is the folder name
         let fileFolderName = fileName.split(separator: "/").dropLast().joined(separator: "/")
-        let fileRealName = fileName.split(separator: "/").last ?? ""
         
         guard let url = URL(string: "https://www.modelscope.cn/api/v1/models/\(repo)/repo/files?Revision=master&Root=\(fileFolderName)") else {
             throw NSError(
