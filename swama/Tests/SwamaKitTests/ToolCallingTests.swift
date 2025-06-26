@@ -252,6 +252,75 @@ final class ToolCallingTests {
         #expect(message.content.imageURLs.first == "https://example.com/image.jpg")
     }
 
+    @Test func messageContent_ToolRole() throws {
+        let json = """
+        {
+            "role": "tool",
+            "content": "The weather in Tokyo is 22°C and sunny.",
+            "tool_call_id": "call_123"
+        }
+        """
+        
+        let data = json.data(using: .utf8)!
+        let message = try JSONDecoder().decode(CompletionsHandler.Message.self, from: data)
+        
+        #expect(message.role == "tool")
+        #expect(message.content.textContent == "The weather in Tokyo is 22°C and sunny.")
+        #expect(message.content.imageURLs.isEmpty)
+    }
+    
+    @Test func completionRequest_WithToolMessages() throws {
+        let json = """
+        {
+            "model": "llama-3.1-8b-instruct",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What's the weather like in Tokyo?"
+                },
+                {
+                    "role": "assistant",
+                    "content": "I'll check the weather for you.",
+                    "tool_calls": [
+                        {
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": "{\\"location\\": \\"Tokyo\\"}"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "role": "tool",
+                    "content": "The weather in Tokyo is 22°C and sunny.",
+                    "tool_call_id": "call_123"
+                },
+                {
+                    "role": "assistant",
+                    "content": "The weather in Tokyo is currently 22°C and sunny."
+                }
+            ]
+        }
+        """
+        
+        let data = json.data(using: .utf8)!
+        let request = try JSONDecoder().decode(CompletionsHandler.CompletionRequest.self, from: data)
+        
+        #expect(request.model == "llama-3.1-8b-instruct")
+        #expect(request.messages.count == 4)
+        
+        // Check that we have all the expected roles
+        let roles = request.messages.map { $0.role }
+        #expect(roles == ["user", "assistant", "tool", "assistant"])
+        
+        // Check the tool message specifically
+        let toolMessage = request.messages[2]
+        #expect(toolMessage.role == "tool")
+        #expect(toolMessage.content.textContent == "The weather in Tokyo is 22°C and sunny.")
+    }
+
     // MARK: - CompletionResponse Tests
 
     @Test func completionResponse_WithToolCalls() throws {

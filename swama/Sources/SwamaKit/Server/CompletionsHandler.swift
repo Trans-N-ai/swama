@@ -462,6 +462,8 @@ public enum CompletionsHandler {
                 role = .user
             case "assistant":
                 role = .assistant
+            case "tool":
+                role = .tool
             default:
                 throw CompletionsError.invalidRole(message.role)
             }
