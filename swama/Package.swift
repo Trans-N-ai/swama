@@ -20,7 +20,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.25.4"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-examples", from: "2.25.4"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-examples", branch: "main"),
         .package(url: "https://github.com/mzbac/mlx.embeddings.git", branch: "main"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.13.0"),
     ],
