@@ -61,6 +61,13 @@ public enum ModelAliasResolver {
         "qwen3-32b": "mlx-community/Qwen3-32B-4bit",
         "qwen3-235b": "mlx-community/Qwen3-235B-A22B-4bit",
 
+        // Gemma3 Famaly
+        "gemma3": "mlx-community/gemma-3-4b-it-4bit", // Default for "gemma3"
+        "gemma3-1b": "mlx-community/gemma-3-1b-it-4bit",
+        "gemma3-4b": "mlx-community/gemma-3-4b-it-4bit",
+        "gemma3-12b": "mlx-community/gemma-3-12b-it-4bit",
+        "gemma3-27b": "mlx-community/gemma-3-27b-it-4bit", 
+
         // Llama 3.x Family
         "llama3": "mlx-community/Llama-3-8B-Instruct-4bit", // Default for "llama3"
         "llama3-8b": "mlx-community/Llama-3-8B-Instruct-4bit",

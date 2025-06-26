@@ -539,6 +539,7 @@ public actor ModelPool {
     /// Helper method to detect VLM models by name pattern (heuristic for models not in registry)
     private func isVLMModelByName(_ modelName: String) -> Bool {
         let vlmPatterns = [
+            "gemma", // Gemma models
             "-VL-", // Common VLM naming pattern (e.g., Qwen2.5-VL-32B)
             "-vl-", // Lowercase variant
             "VL-", // Prefix variant
