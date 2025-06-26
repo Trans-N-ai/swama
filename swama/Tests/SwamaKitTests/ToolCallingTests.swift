@@ -260,15 +260,15 @@ final class ToolCallingTests {
             "tool_call_id": "call_123"
         }
         """
-        
+
         let data = json.data(using: .utf8)!
         let message = try JSONDecoder().decode(CompletionsHandler.Message.self, from: data)
-        
+
         #expect(message.role == "tool")
         #expect(message.content.textContent == "The weather in Tokyo is 22°C and sunny.")
         #expect(message.content.imageURLs.isEmpty)
     }
-    
+
     @Test func completionRequest_WithToolMessages() throws {
         let json = """
         {
@@ -304,17 +304,17 @@ final class ToolCallingTests {
             ]
         }
         """
-        
+
         let data = json.data(using: .utf8)!
         let request = try JSONDecoder().decode(CompletionsHandler.CompletionRequest.self, from: data)
-        
+
         #expect(request.model == "llama-3.1-8b-instruct")
         #expect(request.messages.count == 4)
-        
+
         // Check that we have all the expected roles
-        let roles = request.messages.map { $0.role }
+        let roles = request.messages.map(\.role)
         #expect(roles == ["user", "assistant", "tool", "assistant"])
-        
+
         // Check the tool message specifically
         let toolMessage = request.messages[2]
         #expect(toolMessage.role == "tool")
