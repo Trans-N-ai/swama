@@ -5,14 +5,14 @@
 [![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> [中文](README_CN.md) | [日本語](README_JA.md) | English
+> English | [中文](README_CN.md) | [日本語](README_JA.md)
 
 **Swama** is a high-performance machine learning runtime written in pure Swift, designed specifically for macOS and built on Apple's MLX framework. It provides a powerful and easy-to-use solution for local LLM (Large Language Model) and VLM (Vision Language Model) inference.
 
 ## ✨ Features
 
 - 🚀 **High Performance**: Built on Apple MLX framework, optimized for Apple Silicon
-- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/embeddings`, and `/v1/audio/transcriptions` endpoint support
+- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/embeddings`, and `/v1/audio/transcriptions` endpoint support with tool calling
 - 📱 **Menu Bar App**: Elegant macOS native menu bar integration
 - 💻 **Command Line Tools**: Complete CLI support for model management and inference
 - 🖼️ **Multimodal Support**: Support for both text and image inputs
@@ -33,7 +33,7 @@ Swama features a modular architecture design:
 ## 📋 System Requirements
 
 - macOS 14.0 or later
-- Apple Silicon (M1/M2/M3)
+- Apple Silicon (M1/M2/M3/M4)
 - Xcode 15.0+ (for compilation)
 - Swift 6.1+
 
@@ -43,17 +43,12 @@ Swama features a modular architecture design:
 
 1. **Download the latest release**
    - Go to [Releases](https://github.com/Trans-N-ai/swama/releases)
-   - Download `Swama.zip` from the latest release
-   - Extract the zip file
+   - Download `Swama.dmg` from the latest release
 
 2. **Install the app**
-   ```bash
-   # Move to Applications folder
-   mv Swama.app /Applications/
-   
-   # Launch the app
-   open /Applications/Swama.app
-   ```
+   - Double-click `Swama.dmg` to mount the disk image
+   - Drag `Swama.app` to the `Applications` folder
+   - Launch Swama from Applications or Spotlight
    
    **Note**: On first launch, macOS may show a security warning. If this happens:
    - Go to **System Preferences > Security & Privacy > General**
@@ -74,11 +69,12 @@ git clone https://github.com/Trans-N-ai/swama.git
 cd swama
 
 # Build CLI tool
+cd swama
 swift build -c release
-sudo cp .build/release/swama /usr/local/bin/
+mv .build/release/swama .build/release/swama-bin
 
 # Build macOS app (requires Xcode)
-cd swama-macos/Swama
+cd ../swama-macos/Swama
 xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 ```
 
@@ -92,7 +88,7 @@ After installing Swama.app, you can use either the menu bar app or command line:
 # Use short aliases instead of full model names - auto-downloads if needed!
 swama run qwen3 "Hello, AI"
 swama run llama3.2 "Tell me a joke"
-swama run deepseek-r1 "Explain quantum computing"
+swama run gemma3 "What's in this image?" -i /path/to/image.jpg
 
 # Traditional way (also works)
 swama run mlx-community/Llama-3.2-1B-Instruct-4bit "Hello, how are you?"
@@ -113,7 +109,7 @@ swama list
 | `qwen3` | `mlx-community/Qwen3-8B-4bit` | Qwen3 8B (default) |
 | `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | Qwen3 1.7B (lightweight) |
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | Llama 3.2 3B (default) |
-| `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | Llama 3.2 1B (fastest) |
+| `gemma3` | `mlx-community/gemma-3-27b-it-4bit` | Gemma 3 (VLM - vision language model) |
 | `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | DeepSeek R1 (reasoning) |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Qwen 2.5 7B |
 | `whisper-large` | `openai_whisper-large-v3` | Whisper Large (speech recognition) |
@@ -124,13 +120,6 @@ swama list
 ```bash
 # Or start without specifying model (can switch via API)
 swama serve --host 0.0.0.0 --port 28100
-```
-
-### 4. Menu Bar App
-
-```bash
-# Launch menu bar application
-swama menubar
 ```
 
 ### 5. API Usage
@@ -179,82 +168,48 @@ curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "file=@audio.wav" \
   -F "model=whisper-large" \
   -F "response_format=json"
-```
 
-#### 🛠️ Community Tool Integration
-
-Since Swama provides OpenAI-compatible endpoints, you can easily integrate it with popular community tools:
-
-**🤖 AI Coding Assistants:**
-```bash
-# Continue.dev - Add to config.json
-{
-  "models": [{
-    "title": "Swama Local",
-    "provider": "openai",
+# Tool calling (function calling)
+curl -X POST http://localhost:28100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
     "model": "qwen3",
-    "apiBase": "http://localhost:28100/v1"
-  }]
-}
+    "messages": [{"role": "user", "content": "What is the weather in Tokyo?"}],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get current weather",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "location": {"type": "string", "description": "City name"}
+            },
+            "required": ["location"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto"
+  }'
 
-# Cursor - Set custom API endpoint
-# API Base URL: http://localhost:28100/v1
-# Model: qwen3 or deepseek-coder
+# Multimodal support (vision language models)
+curl -X POST http://localhost:28100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemma3",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "What do you see in this image?"},
+          {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}
+        ]
+      }
+    ]
+  }'
 ```
-
-**💬 Chat Interfaces:**
-```bash
-# Open WebUI (formerly Ollama WebUI)
-# Add OpenAI API connection:
-# Base URL: http://localhost:28100/v1
-# API Key: not-required
-
-# LibreChat
-# Add to .env file:
-OPENAI_API_KEY=not-required
-OPENAI_REVERSE_PROXY=http://localhost:28100/v1
-
-# ChatBox
-# Add OpenAI API provider with base URL: http://localhost:28100/v1
-```
-
-**🔧 Development Tools:**
-```python
-# Python with OpenAI library
-import openai
-
-client = openai.OpenAI(
-    base_url="http://localhost:28100/v1",
-    api_key="not-required"  # Swama doesn't require API keys
-)
-
-response = client.chat.completions.create(
-    model="qwen3",
-    messages=[{"role": "user", "content": "Hello from Python!"}]
-)
-```
-
-```javascript
-// Node.js with OpenAI library
-import OpenAI from 'openai';
-
-const openai = new OpenAI({
-  baseURL: 'http://localhost:28100/v1',
-  apiKey: 'not-required'
-});
-
-const completion = await openai.chat.completions.create({
-  model: 'deepseek-coder',
-  messages: [{ role: 'user', content: 'Write a hello world function' }]
-});
-```
-
-**📊 Popular Integrations:**
-- **Langchain/LlamaIndex**: Use OpenAI provider with custom base URL
-- **AutoGen**: Configure as OpenAI endpoint for multi-agent conversations  
-- **Semantic Kernel**: Add as OpenAI chat completion service
-- **Flowise/Langflow**: Connect via OpenAI node with custom endpoint
-- **Anything**: Any tool supporting OpenAI API can connect to Swama!
 
 ## 📚 Command Reference
 
@@ -283,9 +238,6 @@ swama transcribe audio.wav --model whisper-large --language en
 ```bash
 # Start API server
 swama serve [--host HOST] [--port PORT] [--model MODEL_ALIAS]
-
-# Start menu bar app
-swama menubar
 ```
 
 ### Model Aliases
@@ -305,27 +257,6 @@ swama run deepseek-r1 "Think step by step: 2+2*3"    # DeepSeek R1 (reasoning)
 - `--top-p <value>`: Nucleus sampling parameter (0.0-1.0)
 - `--max-tokens <number>`: Maximum number of tokens to generate
 - `--repetition-penalty <value>`: Repetition penalty factor
-
-## 🖼️ Multimodal Support
-
-Swama supports vision language models and can process image inputs:
-
-```bash
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mlx-community/llava-v1.6-mistral-7b-hf-4bit",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {"type": "text", "text": "What do you see in this image?"},
-          {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}
-        ]
-      }
-    ]
-  }'
-```
 
 ## 🔧 Development
 

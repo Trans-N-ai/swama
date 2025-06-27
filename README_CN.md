@@ -5,14 +5,14 @@
 [![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> 中文版本 | [日本語](README_JA.md) | [English](README.md)
+> [English](README.md) |  中文版本 | [日本語](README_JA.md) 
 
 **Swama** 是一个用纯 Swift 编写的高性能机器学习运行时，专为 macOS 设计，基于 Apple 的 MLX 框架。它为本地 LLM（大语言模型）和 VLM（视觉语言模型）推理提供了强大且易用的解决方案。
 
 ## ✨ 特性
 
 - 🚀 **高性能**: 基于 Apple MLX 框架，针对 Apple Silicon 优化
-- 🔌 **OpenAI 兼容 API**: 提供标准的 `/v1/chat/completions`、`/v1/embeddings` 和 `/v1/audio/transcriptions` 端点
+- 🔌 **OpenAI 兼容 API**: 提供标准的 `/v1/chat/completions`、`/v1/embeddings` 和 `/v1/audio/transcriptions` 端点，支持工具调用
 - 📱 **菜单栏应用**: 优雅的 macOS 原生菜单栏集成
 - 💻 **命令行工具**: 完整的 CLI 支持用于模型管理和推理
 - 🖼️ **多模态支持**: 同时支持文本和图像输入
@@ -33,7 +33,7 @@ Swama 采用模块化架构设计：
 ## 📋 系统要求
 
 - macOS 14.0 或更高版本
-- Apple Silicon (M1/M2/M3)
+- Apple Silicon (M1/M2/M3/M4)
 - Xcode 15.0+ (用于编译)
 - Swift 6.1+
 
@@ -43,17 +43,12 @@ Swama 采用模块化架构设计：
 
 1. **下载最新版本**
    - 访问 [Releases](https://github.com/Trans-N-ai/swama/releases) 页面
-   - 从最新版本中下载 `Swama.zip`
-   - 解压 zip 文件
+   - 从最新版本中下载 `Swama.dmg`
 
 2. **安装应用**
-   ```bash
-   # 移动到应用程序文件夹
-   mv Swama.app /Applications/
-   
-   # 启动应用
-   open /Applications/Swama.app
-   ```
+   - 双击 `Swama.dmg` 挂载磁盘镜像
+   - 将 `Swama.app` 拖拽到 `Applications` 文件夹
+   - 从应用程序或聚焦搜索启动 Swama
    
    **注意**: 首次启动时，macOS 可能会显示安全警告。如果出现此情况：
    - 前往 **系统偏好设置 > 安全性与隐私 > 通用**
@@ -74,11 +69,12 @@ git clone https://github.com/Trans-N-ai/swama.git
 cd swama
 
 # 构建 CLI 工具
+cd swama
 swift build -c release
-sudo cp .build/release/swama /usr/local/bin/
+mv .build/release/swama .build/release/swama-bin
 
 # 构建 macOS 应用（需要 Xcode）
-cd swama-macos/Swama
+cd ../swama-macos/Swama
 xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 ```
 
@@ -92,7 +88,7 @@ xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 # 使用简短的别名而不是完整模型名 - 需要时自动下载！
 swama run qwen3 "你好，AI"
 swama run llama3.2 "给我讲个笑话"
-swama run deepseek-r1 "解释一下量子计算"
+swama run gemma3 "这张图片里有什么？" -i /path/to/image.jpg
 
 # 传统方式（同样有效）
 swama run mlx-community/Llama-3.2-1B-Instruct-4bit "Hello, how are you?"
@@ -113,7 +109,7 @@ swama list
 | `qwen3` | `mlx-community/Qwen3-8B-4bit` | Qwen3 8B (默认) |
 | `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | Qwen3 1.7B (轻量级) |
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | Llama 3.2 3B (默认) |
-| `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | Llama 3.2 1B (最快) |
+| `gemma3` | `mlx-community/gemma-3-27b-it-4bit` | Gemma 3 (VLM - 视觉语言模型) |
 | `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | DeepSeek R1 (推理型) |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Qwen 2.5 7B |
 | `whisper-large` | `openai_whisper-large-v3` | Whisper Large (语音识别) |
@@ -124,13 +120,6 @@ swama list
 ```bash
 # 或不指定模型启动（可通过 API 切换）
 swama serve --host 0.0.0.0 --port 28100
-```
-
-### 4. 菜单栏应用
-
-```bash
-# 启动菜单栏应用
-swama menubar
 ```
 
 ### 5. API 使用
@@ -179,82 +168,48 @@ curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "file=@audio.wav" \
   -F "model=whisper-large" \
   -F "response_format=json"
-```
 
-#### 🛠️ 社区工具集成
-
-由于 Swama 提供 OpenAI 兼容的端点，您可以轻松地将其与流行的社区工具集成：
-
-**🤖 AI 编程助手:**
-```bash
-# Continue.dev - 添加到 config.json
-{
-  "models": [{
-    "title": "Swama 本地",
-    "provider": "openai",
+# 工具调用（函数调用）
+curl -X POST http://localhost:28100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
     "model": "qwen3",
-    "apiBase": "http://localhost:28100/v1"
-  }]
-}
+    "messages": [{"role": "user", "content": "东京的天气如何？"}],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "获取当前天气",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "location": {"type": "string", "description": "城市名称"}
+            },
+            "required": ["location"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto"
+  }'
 
-# Cursor - 设置自定义 API 端点
-# API Base URL: http://localhost:28100/v1
-# Model: qwen3 或 deepseek-coder
+# 多模态支持（视觉语言模型）
+curl -X POST http://localhost:28100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemma3",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "你在这张图片中看到了什么？"},
+          {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}
+        ]
+      }
+    ]
+  }'
 ```
-
-**💬 聊天界面:**
-```bash
-# Open WebUI (之前的 Ollama WebUI)
-# 添加 OpenAI API 连接:
-# Base URL: http://localhost:28100/v1
-# API Key: not-required
-
-# LibreChat
-# 添加到 .env 文件:
-OPENAI_API_KEY=not-required
-OPENAI_REVERSE_PROXY=http://localhost:28100/v1
-
-# ChatBox
-# 添加 OpenAI API 提供商，使用 base URL: http://localhost:28100/v1
-```
-
-**🔧 开发工具:**
-```python
-# Python 使用 OpenAI 库
-import openai
-
-client = openai.OpenAI(
-    base_url="http://localhost:28100/v1",
-    api_key="not-required"  # Swama 不需要 API 密钥
-)
-
-response = client.chat.completions.create(
-    model="qwen3",
-    messages=[{"role": "user", "content": "来自 Python 的问候！"}]
-)
-```
-
-```javascript
-// Node.js 使用 OpenAI 库
-import OpenAI from 'openai';
-
-const openai = new OpenAI({
-  baseURL: 'http://localhost:28100/v1',
-  apiKey: 'not-required'
-});
-
-const completion = await openai.chat.completions.create({
-  model: 'deepseek-coder',
-  messages: [{ role: 'user', content: '写一个 hello world 函数' }]
-});
-```
-
-**📊 热门集成:**
-- **Langchain/LlamaIndex**: 使用自定义 base URL 的 OpenAI 提供商
-- **AutoGen**: 配置为 OpenAI 端点进行多智能体对话  
-- **Semantic Kernel**: 添加为 OpenAI 聊天补全服务
-- **Flowise/Langflow**: 通过自定义端点的 OpenAI 节点连接
-- **任何工具**: 任何支持 OpenAI API 的工具都可以连接到 Swama！
 
 ## 📚 命令参考
 
@@ -283,9 +238,6 @@ swama transcribe audio.wav --model whisper-large --language zh
 ```bash
 # 启动 API 服务器
 swama serve [--host HOST] [--port PORT] [--model MODEL_ALIAS]
-
-# 启动菜单栏应用
-swama menubar
 ```
 
 ### 模型别名
@@ -305,27 +257,6 @@ swama run deepseek-r1 "逐步思考：2+2*3"    # DeepSeek R1 (推理型)
 - `--top-p <value>`: 核采样参数 (0.0-1.0)
 - `--max-tokens <number>`: 最大生成令牌数
 - `--repetition-penalty <value>`: 重复惩罚因子
-
-## 🖼️ 多模态支持
-
-Swama 支持视觉语言模型，可以处理图像输入：
-
-```bash
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mlx-community/llava-v1.6-mistral-7b-hf-4bit",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {"type": "text", "text": "What do you see in this image?"},
-          {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}
-        ]
-      }
-    ]
-  }'
-```
 
 ## 🔧 开发
 
