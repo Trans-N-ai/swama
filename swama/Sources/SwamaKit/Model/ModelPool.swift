@@ -76,9 +76,6 @@ public actor ModelPool {
 
         runningInferences += 1
         runningModels.insert(modelName)
-        NSLog(
-            "SwamaKit.ModelPool: Acquired inference slot for WhisperKit \(modelName). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)"
-        )
 
         do {
             // Get or load the WhisperKit runner
@@ -89,18 +86,12 @@ public actor ModelPool {
 
             runningInferences = max(0, runningInferences - 1)
             runningModels.remove(modelName)
-            NSLog(
-                "SwamaKit.ModelPool: Released inference slot for WhisperKit \(modelName). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)"
-            )
 
             return result
         }
         catch {
             runningInferences = max(0, runningInferences - 1)
             runningModels.remove(modelName)
-            NSLog(
-                "SwamaKit.ModelPool: Released inference slot for WhisperKit \(modelName) (error). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)"
-            )
             throw error
         }
     }
@@ -113,19 +104,15 @@ public actor ModelPool {
         if let runner = whisperKitRunnerCache[modelName] {
             // Record usage for existing cached runner
             modelUsageInfo[modelName]?.recordUsage()
-            NSLog("SwamaKit.ModelPool: WhisperKit cache hit for \(modelName).")
             return runner
         }
 
         if let task = whisperKitTasks[modelName] {
-            NSLog("SwamaKit.ModelPool: Joining existing WhisperKit loading task for \(modelName).")
             let runner = try await task.value
             // Record usage for newly loaded runner
             modelUsageInfo[modelName]?.recordUsage()
             return runner
         }
-
-        NSLog("SwamaKit.ModelPool: WhisperKit cache miss for \(modelName). Starting new loading task.")
 
         // Check if we need to free up memory before loading a new model
         await performMemoryPressureCheck()
@@ -139,7 +126,6 @@ public actor ModelPool {
             whisperKitRunnerCache[modelName] = runner
             // Initialize usage tracking for new runner
             modelUsageInfo[modelName] = ModelUsageInfo()
-            NSLog("SwamaKit.ModelPool: Successfully loaded and cached WhisperKit \(modelName).")
             return runner
         }
         whisperKitTasks[modelName] = task
@@ -180,9 +166,6 @@ public actor ModelPool {
 
         runningInferences += 1
         runningModels.insert(modelName)
-        NSLog(
-            "SwamaKit.ModelPool: Acquired inference slot for \(modelName). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)"
-        )
 
         do {
             // Get or load the model container
@@ -196,18 +179,12 @@ public actor ModelPool {
 
             runningInferences = max(0, runningInferences - 1)
             runningModels.remove(modelName)
-            NSLog(
-                "SwamaKit.ModelPool: Released inference slot for \(modelName). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)"
-            )
 
             return result
         }
         catch {
             runningInferences = max(0, runningInferences - 1)
             runningModels.remove(modelName)
-            NSLog(
-                "SwamaKit.ModelPool: Released inference slot for \(modelName) (error). Running: \(runningInferences)/\(maxConcurrentInferences), Active models: \(runningModels)"
-            )
             throw error
         }
     }
@@ -223,9 +200,6 @@ public actor ModelPool {
         }
 
         runningInferences += 1
-        NSLog(
-            "SwamaKit.ModelPool: Acquired inference slot (embedding). Running: \(runningInferences)/\(maxConcurrentInferences)"
-        )
 
         do {
             // Get or create embedding runner
@@ -238,24 +212,17 @@ public actor ModelPool {
                 let container = try await loadEmbeddingModelContainer(modelName: modelName)
                 runner = EmbeddingRunner(container: container)
                 embeddingRunnerCache[modelName] = runner
-                NSLog("SwamaKit.ModelPool: Cached embedding runner for \(modelName).")
             }
 
             // Execute the operation
             let result = try await operation(runner)
 
             runningInferences = max(0, runningInferences - 1)
-            NSLog(
-                "SwamaKit.ModelPool: Released inference slot (embedding). Running: \(runningInferences)/\(maxConcurrentInferences)"
-            )
 
             return result
         }
         catch {
             runningInferences = max(0, runningInferences - 1)
-            NSLog(
-                "SwamaKit.ModelPool: Released inference slot (embedding error). Running: \(runningInferences)/\(maxConcurrentInferences)"
-            )
             throw error
         }
     }
@@ -268,19 +235,15 @@ public actor ModelPool {
         if let container = cache[modelName] {
             // Record usage for existing cached model
             modelUsageInfo[modelName]?.recordUsage()
-            NSLog("SwamaKit.ModelPool: Cache hit for \(modelName).")
             return container
         }
 
         if let task = tasks[modelName] {
-            NSLog("SwamaKit.ModelPool: Joining existing loading task for \(modelName).")
             let container = try await task.value
             // Record usage for newly loaded model
             modelUsageInfo[modelName]?.recordUsage()
             return container
         }
-
-        NSLog("SwamaKit.ModelPool: Cache miss for \(modelName). Starting new loading task.")
 
         // Check if we need to free up memory before loading a new model
         await performMemoryPressureCheck()
@@ -294,19 +257,16 @@ public actor ModelPool {
                 if isVLM {
                     // We know it's a VLM, load directly
                     let vlmConfig = try getVLMConfiguration(modelName: modelName)
-                    NSLog("SwamaKit.ModelPool: Fast path - Loading VLM model \(modelName) using VLMModelFactory.")
                     container = try await VLMModelFactory.shared.loadContainer(configuration: vlmConfig)
                 }
                 else {
                     // We know it's an LLM, load directly
-                    NSLog("SwamaKit.ModelPool: Fast path - Loading LLM model \(modelName) using LLMModelFactory.")
                     let llmConfig = MLXLMCommon.ModelConfiguration(id: modelName)
                     container = try await LLMModelFactory.shared.loadContainer(configuration: llmConfig)
                 }
                 cache[modelName] = container
                 // Initialize usage tracking for new model
                 modelUsageInfo[modelName] = ModelUsageInfo()
-                NSLog("SwamaKit.ModelPool: Successfully loaded and cached \(modelName) via fast path.")
                 return container
             }
 
@@ -321,7 +281,6 @@ public actor ModelPool {
                     let configIDString: String = vlmConfigEntry.name
                     vlmRegistryCache![configIDString] = vlmConfigEntry
                 }
-                NSLog("SwamaKit.ModelPool: Built VLM registry cache with \(vlmRegistryCache!.count) entries.")
             }
 
             // Fast lookup in cached registry
@@ -332,14 +291,11 @@ public actor ModelPool {
                 // If it's a directory-based config, use it; otherwise use registry config
                 if case .directory = localConfig.id {
                     configToLoad = localConfig
-                    NSLog("SwamaKit.ModelPool: Using local directory configuration for VLM: \(modelName)")
                 }
                 else {
                     configToLoad = vlmConfig
-                    NSLog("SwamaKit.ModelPool: VLM model \(modelName) not found locally, using registry configuration")
                 }
                 modelTypeCache[modelName] = true // Cache for future fast path
-                NSLog("SwamaKit.ModelPool: Found \(modelName) in VLMRegistry.")
             }
             else if isVLMModelByName(modelName) {
                 // Heuristic detection: model name suggests it's a VLM but not in registry
@@ -349,33 +305,21 @@ public actor ModelPool {
                 if case .directory = localConfig.id {
                     configToLoad = localConfig
                     modelTypeCache[modelName] = true // Cache for future fast path
-                    NSLog(
-                        "SwamaKit.ModelPool: Model \(modelName) detected as VLM by name pattern. Using local directory configuration."
-                    )
                 }
                 else {
                     // VLM model not available locally and not in registry - this will likely fail
                     // Create a basic VLM configuration and let VLMModelFactory handle it
                     configToLoad = MLXLMCommon.ModelConfiguration(id: modelName)
                     modelTypeCache[modelName] = true // Cache for future fast path
-                    NSLog(
-                        "SwamaKit.ModelPool: Model \(modelName) detected as VLM by name pattern but not found locally. Attempting registry fallback."
-                    )
                 }
             }
             else {
                 // It's an LLM - use the shared loadModelContainer function
-                NSLog(
-                    "SwamaKit.ModelPool: \(modelName) not found in VLMRegistry and not detected as VLM by name. Loading as LLM using shared loadModelContainer."
-                )
                 let container = try await loadModelContainer(modelName: modelName)
 
                 cache[modelName] = container
                 modelUsageInfo[modelName] = ModelUsageInfo()
                 modelTypeCache[modelName] = false // Cache for future fast path
-                NSLog(
-                    "SwamaKit.ModelPool: Successfully loaded and cached LLM \(modelName) via shared loadModelContainer."
-                )
                 return container
             }
 
@@ -391,13 +335,12 @@ public actor ModelPool {
 
             // Only VLM models reach this point
             let container: MLXLMCommon.ModelContainer
-            NSLog("SwamaKit.ModelPool: Loading VLM model \(finalConfig.name) using VLMModelFactory.")
             container = try await VLMModelFactory.shared.loadContainer(configuration: finalConfig)
 
             cache[modelName] = container
             // Initialize usage tracking for new model
             modelUsageInfo[modelName] = ModelUsageInfo()
-            NSLog("SwamaKit.ModelPool: Successfully loaded and cached \(modelName) (resolved as \(finalConfig.name)).")
+            NSLog("SwamaKit.ModelPool: Successfully loaded \(modelName)")
             return container
         }
         tasks[modelName] = task
@@ -412,7 +355,6 @@ public actor ModelPool {
     /// Sets an embedding model runner for the given model name.
     public func setEmbeddingRunner(_ runner: EmbeddingRunner, for modelName: String) async {
         embeddingRunnerCache[modelName] = runner
-        NSLog("SwamaKit.ModelPool: Cached embedding runner for \(modelName).")
     }
 
     /// Clears the entire model cache and cancels any ongoing loading tasks.
@@ -473,22 +415,12 @@ public actor ModelPool {
         whisperKitRunnerCache.removeValue(forKey: modelName) // Clear WhisperKit cache for this model
         modelUsageInfo.removeValue(forKey: modelName) // Clear usage tracking for this model
 
-        var taskCancelled = false
         if let task = tasks.removeValue(forKey: modelName) {
             task.cancel()
-            taskCancelled = true
         }
 
         if let whisperKitTask = whisperKitTasks.removeValue(forKey: modelName) {
             whisperKitTask.cancel()
-            taskCancelled = true
-        }
-
-        if taskCancelled {
-            NSLog("SwamaKit.ModelPool: Removed \(modelName) from cache and cancelled its loading task.")
-        }
-        else {
-            NSLog("SwamaKit.ModelPool: Removed \(modelName) from cache (no active loading task).")
         }
 
         // Release container reference
