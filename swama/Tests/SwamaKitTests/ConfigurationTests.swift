@@ -4,12 +4,6 @@ import Testing
 
 @MainActor @Suite(.serialized)
 final class ConfigurationTests {
-    @Test func modelAliasesExist() {
-        // Test that we can access model aliases functionality
-        // This is a basic test to ensure the module is accessible
-        #expect(true, "Configuration tests module loaded successfully")
-    }
-
     @Test func fileManagerOperations() {
         // Test basic file manager operations that the app uses
         let fileManager = FileManager.default

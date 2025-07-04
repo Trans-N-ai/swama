@@ -413,7 +413,7 @@ public enum CompletionsHandler {
             try? await respondError(
                 channel: channel,
                 status: .internalServerError,
-                message: "Completions request failed"
+                message: error.localizedDescription
             )
         }
     }
@@ -609,58 +609,87 @@ public enum CompletionsHandler {
         ]
         try await writeSSEJSON(channel: channel, payload: initialJSON)
 
-        let result = try await modelPool.run(
-            modelName: modelName
-        ) { runner in
-            try await runner.runChat(
-                userInput: userInput,
-                parameters: parameters,
-                onToken: { chunk in
-                    let deltaJSON: [String: Any] = [
-                        "id": chunkId,
-                        "object": "chat.completion.chunk",
-                        "created": timestamp,
-                        "model": model,
-                        "choices": [["index": 0, "delta": ["content": chunk], "finish_reason": NSNull()]]
-                    ]
-                    Task {
-                        try? await writeSSEJSON(channel: channel, payload: deltaJSON)
-                    }
-                },
-                onToolCall: { toolCall in
-                    let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
-                    let argumentsJSON: String =
-                        if let jsonData = try? JSONSerialization
-                            .data(withJSONObject: argumentsDict),
-                            let jsonString = String(data: jsonData, encoding: .utf8)
-                        {
-                            jsonString
-                        }
-                        else {
-                            "{}"
-                        }
+        // Execute model with error handling
+        let result: (
+            output: String,
+            promptTokens: Int,
+            completionInfo: GenerateCompletionInfo?,
+            toolCalls: [MLXLMCommon.ToolCall]
+        )
 
-                    let toolCallDict: [String: Any] = [
-                        "id": "call_\(UUID().uuidString)",
-                        "type": "function",
-                        "function": [
-                            "name": toolCall.function.name,
-                            "arguments": argumentsJSON
+        do {
+            result = try await modelPool.run(
+                modelName: modelName
+            ) { runner in
+                try await runner.runChat(
+                    userInput: userInput,
+                    parameters: parameters,
+                    onToken: { chunk in
+                        let deltaJSON: [String: Any] = [
+                            "id": chunkId,
+                            "object": "chat.completion.chunk",
+                            "created": timestamp,
+                            "model": model,
+                            "choices": [["index": 0, "delta": ["content": chunk], "finish_reason": NSNull()]]
                         ]
-                    ]
+                        Task {
+                            try? await writeSSEJSON(channel: channel, payload: deltaJSON)
+                        }
+                    },
+                    onToolCall: { toolCall in
+                        let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
+                        let argumentsJSON: String =
+                            if let jsonData = try? JSONSerialization
+                                .data(withJSONObject: argumentsDict),
+                                let jsonString = String(data: jsonData, encoding: .utf8)
+                            {
+                                jsonString
+                            }
+                            else {
+                                "{}"
+                            }
 
-                    let toolCallDelta: [String: Any] = [
-                        "id": chunkId,
-                        "object": "chat.completion.chunk",
-                        "created": timestamp,
-                        "model": model,
-                        "choices": [["index": 0, "delta": ["tool_calls": [toolCallDict]], "finish_reason": NSNull()]]
-                    ]
-                    Task {
-                        try? await writeSSEJSON(channel: channel, payload: toolCallDelta)
+                        let toolCallDict: [String: Any] = [
+                            "id": "call_\(UUID().uuidString)",
+                            "type": "function",
+                            "function": [
+                                "name": toolCall.function.name,
+                                "arguments": argumentsJSON
+                            ]
+                        ]
+
+                        let toolCallDelta: [String: Any] = [
+                            "id": chunkId,
+                            "object": "chat.completion.chunk",
+                            "created": timestamp,
+                            "model": model,
+                            "choices": [["index": 0, "delta": ["tool_calls": [toolCallDict]],
+                                         "finish_reason": NSNull()]]
+                        ]
+                        Task {
+                            try? await writeSSEJSON(channel: channel, payload: toolCallDelta)
+                        }
                     }
-                }
-            )
+                )
+            }
+        }
+        catch {
+            // Send error through SSE instead of trying to change HTTP status
+            let errorJSON: [String: Any] = [
+                "id": chunkId,
+                "object": "chat.completion.chunk",
+                "created": timestamp,
+                "model": model,
+                "choices": [["index": 0, "delta": [:], "finish_reason": "error"]],
+                "error": [
+                    "message": error.localizedDescription,
+                    "type": "request_error"
+                ]
+            ]
+            try await writeSSEJSON(channel: channel, payload: errorJSON)
+            try await writeSSELine(channel: channel, line: "data: [DONE]\n\n")
+            try await channel.writeAndFlush(HTTPServerResponsePart.end(nil))
+            return
         }
 
         // Send final chunk with usage information
