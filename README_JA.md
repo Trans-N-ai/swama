@@ -104,16 +104,17 @@ swama list
 
 ### 2. 利用可能なモデルエイリアス
 
-| エイリアス | 完全なモデル名 | 説明 |
-|-------|----------------|-------------|
-| `qwen3` | `mlx-community/Qwen3-8B-4bit` | Qwen3 8B (デフォルト) |
-| `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | Qwen3 1.7B (軽量) |
-| `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | Llama 3.2 3B (デフォルト) |
-| `gemma3` | `mlx-community/gemma-3-27b-it-4bit` | Gemma 3 (VLM - 視覚言語モデル) |
-| `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | DeepSeek R1 (推論型) |
-| `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Qwen 2.5 7B |
-| `whisper-large` | `openai_whisper-large-v3` | Whisper Large (音声認識) |
-| `whisper-base` | `openai_whisper-base` | Whisper Base (高速、低精度) |
+| エイリアス | 完全なモデル名 | サイズ | 説明 |
+|-------|----------------|-------------|-------------|
+| `qwen3` | `mlx-community/Qwen3-8B-4bit` | 4.3 GB | Qwen3 8B (デフォルト) |
+| `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | 938.4 MB | Qwen3 1.7B (軽量) |
+| `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (デフォルト) |
+| `gemma3` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 (VLM - 視覚言語モデル) |
+| `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` | 4.3 GB | DeepSeek R1（Qwen3-8Bベース・推論型） |
+| `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
+| `whisper-large` | `openai_whisper-large-v3` | 2.9 GB | Whisper Large (音声認識) |
+| `whisper-base` | `openai_whisper-base` | 143.8 MB | Whisper Base (高速、低精度) |
+| `whisper-tiny` | `openai_whisper-tiny` | 77.0 MB | Whisper Tiny |
 
 ### 3. APIサービスの開始
 
