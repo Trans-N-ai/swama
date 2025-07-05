@@ -139,7 +139,7 @@ public class HuggingFaceDownloader: BaseDownloader {
         }
 
         let contentLength = httpResponse.expectedContentLength
-        
+
         // If HEAD request doesn't provide content length (common with compression),
         // try a range request to get the actual file size
         if contentLength <= 0 {
@@ -148,18 +148,18 @@ public class HuggingFaceDownloader: BaseDownloader {
 
         return contentLength
     }
-    
+
     private func getFileSizeWithRangeRequest(url: URL) async throws -> Int64 {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("bytes=0-0", forHTTPHeaderField: "Range") // Request only the first byte
 
         let (_, response) = try await URLSession.shared.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             return 0
         }
-        
+
         // Check Content-Range header for total file size
         if let contentRange = httpResponse.allHeaderFields["Content-Range"] as? String {
             // Content-Range format: "bytes 0-0/1234" where 1234 is the total size
@@ -168,13 +168,13 @@ public class HuggingFaceDownloader: BaseDownloader {
                 return totalSize
             }
         }
-        
+
         // If range request doesn't work, check if we got a Content-Length in the response
         let contentLength = httpResponse.expectedContentLength
         if contentLength > 0 {
             return contentLength
         }
-        
+
         // Could not determine file size
         return 0
     }
