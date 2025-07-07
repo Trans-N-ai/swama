@@ -109,7 +109,7 @@ swama list
 | `qwen3` | `mlx-community/Qwen3-8B-4bit` | 4.3 GB | Qwen3 8B (default) |
 | `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | 938.4 MB | Qwen3 1.7B (lightweight) |
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (default) |
-| `gemma3` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 (VLM - vision language model) |
+| `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 (VLM - vision language model) |
 | `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` | 4.3 GB | DeepSeek R1 based on Qwen3-8B (reasoning model) |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
 | `whisper-large` | `openai_whisper-large-v3` | 2.9 GB | Whisper Large (speech recognition) |
