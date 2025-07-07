@@ -26,7 +26,7 @@ final class ProgressBar {
         }
         if now.timeIntervalSince(lastPrint) >= 0.1 || (total > 0 && downloaded == total) {
             lastPrint = now
-            
+
             // Handle case where total size is unknown (0)
             guard total > 0 else {
                 let downloadedStr = formatBytes(downloaded)
@@ -35,13 +35,13 @@ final class ProgressBar {
                 fflush(stdout)
                 return
             }
-            
-            let percent: Double = Double(downloaded) / Double(total)
+
+            let percent = Double(downloaded) / Double(total)
             // Additional safety check for division result
             guard percent.isFinite else {
                 return
             }
-            
+
             let filled = Int(percent * Double(barWidth))
             let bar =
                 if filled < barWidth {
@@ -58,28 +58,28 @@ final class ProgressBar {
             fflush(stdout)
         }
     }
-    
+
     private func formatSpeed(_ speed: Double) -> String {
         if speed > 1024 * 1024 {
-            return String(format: "%.2f MB/s", speed / 1024 / 1024)
+            String(format: "%.2f MB/s", speed / 1024 / 1024)
         }
         else if speed > 1024 {
-            return String(format: "%.2f KB/s", speed / 1024)
+            String(format: "%.2f KB/s", speed / 1024)
         }
         else {
-            return String(format: "%.0f B/s", speed)
+            String(format: "%.0f B/s", speed)
         }
     }
-    
+
     private func formatBytes(_ bytes: Int64) -> String {
         if bytes > 1024 * 1024 {
-            return String(format: "%.2f MB", Double(bytes) / 1024 / 1024)
+            String(format: "%.2f MB", Double(bytes) / 1024 / 1024)
         }
         else if bytes > 1024 {
-            return String(format: "%.2f KB", Double(bytes) / 1024)
+            String(format: "%.2f KB", Double(bytes) / 1024)
         }
         else {
-            return "\(bytes) B"
+            "\(bytes) B"
         }
     }
 
