@@ -104,16 +104,21 @@ swama list
 
 ### 2. 可用的模型别名
 
-| 别名 | 完整模型名 | 描述 |
-|-------|----------------|-------------|
-| `qwen3` | `mlx-community/Qwen3-8B-4bit` | Qwen3 8B (默认) |
-| `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | Qwen3 1.7B (轻量级) |
-| `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | Llama 3.2 3B (默认) |
-| `gemma3` | `mlx-community/gemma-3-27b-it-4bit` | Gemma 3 (VLM - 视觉语言模型) |
-| `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | DeepSeek R1 (推理型) |
-| `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Qwen 2.5 7B |
-| `whisper-large` | `openai_whisper-large-v3` | Whisper Large (语音识别) |
-| `whisper-base` | `openai_whisper-base` | Whisper Base (更快，精度较低) |
+| 别名 | 完整模型名 | 大小 | 描述 |
+|-------|----------------|-------------|-------------|
+| `qwen3` | `mlx-community/Qwen3-8B-4bit` | 4.3 GB | Qwen3 8B (默认) |
+| `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | 938.4 MB | Qwen3 1.7B (轻量级) |
+| `qwen3-30b` | `mlx-community/Qwen3-30B-A3B-4bit` | 16.0 GB | Qwen3 30B（高容量语言模型） |
+| `qwen3-32b` | `mlx-community/Qwen3-32B-4bit` | 17.2 GB | Qwen3 32B（超大规模模型） |
+| `qwen3-235b` | `mlx-community/Qwen3-235B-A22B-4bit` | 123.2 GB | Qwen3 235B（万亿参数级语言模型） |
+| `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (默认) |
+| `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 (VLM - 视觉语言模型) |
+| `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B（大规模视觉语言模型） |
+| `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` | 4.3 GB | DeepSeek R1 基于 Qwen3-8B（推理模型） |
+| `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
+| `whisper-large` | `openai_whisper-large-v3` | 2.9 GB | Whisper Large (语音识别) |
+| `whisper-base` | `openai_whisper-base` | 143.8 MB | Whisper Base (更快，精度较低) |
+| `whisper-tiny` | `openai_whisper-tiny` | 77.0 MB | Whisper Tiny |
 
 ### 3. 启动 API 服务
 
