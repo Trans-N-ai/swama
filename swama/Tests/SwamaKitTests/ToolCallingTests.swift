@@ -336,10 +336,10 @@ final class ToolCallingTests {
             index: 0,
             message: CompletionsHandler.Message(
                 role: "assistant",
-                content: .text("I'll get the weather for you.")
+                content: .text("I'll get the weather for you."),
+                tool_calls: [toolCall]
             ),
-            finish_reason: "tool_calls",
-            tool_calls: [toolCall]
+            finish_reason: "tool_calls"
         )
 
         let response = CompletionsHandler.CompletionResponse(
@@ -380,10 +380,10 @@ final class ToolCallingTests {
             index: 0,
             message: CompletionsHandler.Message(
                 role: "assistant",
-                content: .text("Hello! How can I help you?")
+                content: .text("Hello! How can I help you?"),
+                tool_calls: nil
             ),
-            finish_reason: "stop",
-            tool_calls: nil
+            finish_reason: "stop"
         )
 
         let response = CompletionsHandler.CompletionResponse(
