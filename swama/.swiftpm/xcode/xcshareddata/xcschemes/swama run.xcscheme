@@ -52,12 +52,20 @@
       </BuildableProductRunnable>
       <CommandLineArguments>
          <CommandLineArgument
-            argument = "run"
+            argument = "run mlx-community/Qwen3-1.7B-4bit &quot;&#x4f60;&#x597d;&quot;"
+            isEnabled = "YES">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "pull mlx-community/Qwen3-1.7B-4bit "
+            isEnabled = "NO">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "list"
             isEnabled = "NO">
          </CommandLineArgument>
          <CommandLineArgument
             argument = "serve"
-            isEnabled = "YES">
+            isEnabled = "NO">
          </CommandLineArgument>
          <CommandLineArgument
             argument = "menubar"
