@@ -28,6 +28,35 @@ public enum CompletionsHandler {
     public struct Message: Decodable, Encodable, Sendable {
         let role: String
         let content: MessageContent
+        let tool_calls: [ResponseToolCall]?
+        
+        private enum CodingKeys: String, CodingKey {
+            case role
+            case content
+            case tool_calls
+        }
+        
+        public init(role: String, content: MessageContent, tool_calls: [ResponseToolCall]? = nil) {
+            self.role = role
+            self.content = content
+            self.tool_calls = tool_calls
+        }
+        
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            role = try container.decode(String.self, forKey: .role)
+            content = try container.decode(MessageContent.self, forKey: .content)
+            tool_calls = try container.decodeIfPresent([ResponseToolCall].self, forKey: .tool_calls)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(role, forKey: .role)
+            try container.encode(content, forKey: .content)
+            if let tool_calls, !tool_calls.isEmpty {
+                try container.encode(tool_calls, forKey: .tool_calls)
+            }
+        }
     }
 
     public enum MessageContent: Decodable, Encodable, Sendable {
@@ -139,13 +168,11 @@ public enum CompletionsHandler {
         let index: Int
         let message: Message
         let finish_reason: String
-        let tool_calls: [ResponseToolCall]?
 
         private enum CodingKeys: String, CodingKey {
             case index
             case message
             case finish_reason
-            case tool_calls
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -153,9 +180,6 @@ public enum CompletionsHandler {
             try container.encode(index, forKey: .index)
             try container.encode(message, forKey: .message)
             try container.encode(finish_reason, forKey: .finish_reason)
-            if let tool_calls, !tool_calls.isEmpty {
-                try container.encode(tool_calls, forKey: .tool_calls)
-            }
         }
     }
 
@@ -178,7 +202,7 @@ public enum CompletionsHandler {
     // MARK: - Tool Calling Support
 
     /// OpenAI-compatible tool call structures for response
-    public struct ResponseToolCall: Encodable, Sendable {
+    public struct ResponseToolCall: Encodable, Decodable, Sendable {
         let id: String
         let type: String
         let function: ResponseFunction
@@ -188,15 +212,28 @@ public enum CompletionsHandler {
             self.type = type
             self.function = function
         }
+        
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            type = try container.decode(String.self, forKey: .type)
+            function = try container.decode(ResponseFunction.self, forKey: .function)
+        }
     }
 
-    public struct ResponseFunction: Encodable, Sendable {
+    public struct ResponseFunction: Encodable, Decodable, Sendable {
         let name: String
         let arguments: String // JSON string
 
         public init(name: String, arguments: String) {
             self.name = name
             self.arguments = arguments
+        }
+        
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            name = try container.decode(String.self, forKey: .name)
+            arguments = try container.decode(String.self, forKey: .arguments)
         }
     }
 
@@ -531,13 +568,12 @@ public enum CompletionsHandler {
 
         // Construct the message content for the response
         let responseMessageContent = MessageContent.text(result.output)
-        let responseMessage = Message(role: "assistant", content: responseMessageContent)
+        let responseMessage = Message(role: "assistant", content: responseMessageContent, tool_calls: toolCalls)
 
         let choice = CompletionChoice(
             index: 0,
             message: responseMessage,
-            finish_reason: toolCalls?.isEmpty == false ? "tool_calls" : "stop",
-            tool_calls: toolCalls
+            finish_reason: toolCalls?.isEmpty == false ? "tool_calls" : "stop"
         )
 
         // Calculate performance metrics
