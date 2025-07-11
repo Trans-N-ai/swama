@@ -1,5 +1,5 @@
 {
-  "originHash" : "e32d6f4ae7c02a535298983667dd697b5e4880a73ba73703d01f15209f40df0e",
+  "originHash" : "9e3fec9f09ab27e8b847caeb4e8394e2faf8b7499c4e002090302ed684d3d7a6",
   "pins" : [
     {
       "identity" : "gzipswift",
@@ -34,7 +34,7 @@
       "location" : "https://github.com/ml-explore/mlx-swift-examples",
       "state" : {
         "branch" : "main",
-        "revision" : "42b0d21a607b97c3b99d1e20626b7d9b14827b81"
+        "revision" : "2cceb87794bcce960dfc17e79a91946f41c02317"
       }
     },
     {
@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
       "state" : {
-        "revision" : "ad6b5f17270a7008f60d35ec5378e6144a575162",
-        "version" : "2.84.0"
+        "revision" : "34d486b01cd891297ac615e40d5999536a1e138d",
+        "version" : "2.83.0"
       }
     },
     {
