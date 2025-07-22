@@ -242,7 +242,7 @@ swama transcribe audio.wav --model whisper-large --language en
 
 ```bash
 # Start API server
-swama serve [--host HOST] [--port PORT] [--model MODEL_ALIAS]
+swama serve [--host HOST] [--port PORT]
 ```
 
 ### Model Aliases
