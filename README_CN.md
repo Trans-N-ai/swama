@@ -242,7 +242,7 @@ swama transcribe audio.wav --model whisper-large --language zh
 
 ```bash
 # 启动 API 服务器
-swama serve [--host HOST] [--port PORT] [--model MODEL_ALIAS]
+swama serve [--host HOST] [--port PORT]
 ```
 
 ### 模型别名
