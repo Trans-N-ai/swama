@@ -178,14 +178,22 @@ public enum ModelDownloader {
         }
 
         let resolved = ModelAliasResolver.resolve(name: modelName)
+        let modelDir = ModelPaths.getModelDirectory(for: resolved)
+        let modelExists = FileManager.default.fileExists(atPath: modelDir.path)
+
         if !silent && resolved != modelName {
             fputs("Info: Resolved model alias '\(modelName)' to '\(resolved)'\n", stdout)
             fflush(stdout)
         }
 
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        let modelDirPath = homeDir.appendingPathComponent(".mlx/models/\(resolved)").path
-        if !FileManager.default.fileExists(atPath: modelDirPath) {
+        if !modelExists {
+            if !silent {
+                fputs("Model not found locally. Starting download: \(resolved)\n", stdout)
+            } else {
+                fputs("Model not found. Will download: \(resolved)\n", stdout)
+            }
+            fflush(stdout)
+
             try await ModelDownloader.downloadModel(resolvedModelName: resolved)
         }
 
