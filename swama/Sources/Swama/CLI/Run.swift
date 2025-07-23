@@ -173,24 +173,8 @@ struct Run: AsyncParsableCommand {
     var serverPort: Int = 28100
 
     func run() async throws {
-        let resolvedModelName: String
 
-        if ModelAliasResolver.isWhisperKitModel(modelName) {
-            try await ModelDownloader.downloadWhisperKitModel(alias: modelName)
-            resolvedModelName = modelName
-        } else {
-            let resolved = ModelAliasResolver.resolve(name: modelName)
-            if resolved != modelName {
-                fputs("Info: Resolved model alias '\(modelName)' to '\(resolved)'\n", stdout)
-                fflush(stdout)
-            }
-            let homeDir = FileManager.default.homeDirectoryForCurrentUser
-            let modelDirPath = homeDir.appendingPathComponent(".mlx/models/\(resolved)").path
-            if !FileManager.default.fileExists(atPath: modelDirPath) {
-                try await ModelDownloader.downloadModel(resolvedModelName: resolved)
-            }
-            resolvedModelName = resolved
-        }
+        let resolvedModelName = try await ModelDownloader.ensureModelAvailable(modelName: modelName)
 
         if !direct {
             if await isServerRunning() {

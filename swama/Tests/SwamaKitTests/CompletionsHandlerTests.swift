@@ -226,8 +226,7 @@ final class CompletionsHandlerTests {
                         role: "assistant",
                         content: .text("Hello! How can I help you today?")
                     ),
-                    finish_reason: "stop",
-                    tool_calls: nil
+                    finish_reason: "stop"
                 )
             ],
             usage: CompletionsHandler.CompletionUsage(
