@@ -171,6 +171,27 @@ public enum ModelDownloader {
         try writeModelMetadata(modelName: alias, modelDir: modelDir)
     }
 
+    public static func ensureModelAvailable(modelName: String, silent: Bool = false) async throws -> String {
+        if ModelAliasResolver.isWhisperKitModel(modelName) {
+            try await ModelDownloader.downloadWhisperKitModel(alias: modelName)
+            return modelName
+        }
+
+        let resolved = ModelAliasResolver.resolve(name: modelName)
+        if !silent && resolved != modelName {
+            fputs("Info: Resolved model alias '\(modelName)' to '\(resolved)'\n", stdout)
+            fflush(stdout)
+        }
+
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser
+        let modelDirPath = homeDir.appendingPathComponent(".mlx/models/\(resolved)").path
+        if !FileManager.default.fileExists(atPath: modelDirPath) {
+            try await ModelDownloader.downloadModel(resolvedModelName: resolved)
+        }
+
+        return resolved
+    }
+
     // MARK: Internal
 
     static func printMessage(_ message: String) {
