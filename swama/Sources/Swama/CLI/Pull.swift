@@ -11,6 +11,8 @@ struct Pull: AsyncParsableCommand {
     var model: String
 
     func run() async throws {
-        _ = try await ModelDownloader.ensureModelAvailable(modelName: model, silent: true)
+
+        _ = try await ModelDownloader.resolveAndDownloadIfNeeded(modelName: model)
+
    }
 }

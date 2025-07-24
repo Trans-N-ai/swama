@@ -171,7 +171,8 @@ public enum ModelDownloader {
         try writeModelMetadata(modelName: alias, modelDir: modelDir)
     }
 
-    public static func ensureModelAvailable(modelName: String, silent: Bool = false) async throws -> String {
+    public static func resolveAndDownloadIfNeeded(modelName: String) async throws -> String {
+
         if ModelAliasResolver.isWhisperKitModel(modelName) {
             try await ModelDownloader.downloadWhisperKitModel(alias: modelName)
             return modelName
@@ -181,24 +182,13 @@ public enum ModelDownloader {
         let modelDir = ModelPaths.getModelDirectory(for: resolved)
         let modelExists = FileManager.default.fileExists(atPath: modelDir.path)
 
-        if !silent && resolved != modelName {
-            fputs("Info: Resolved model alias '\(modelName)' to '\(resolved)'\n", stdout)
-            fflush(stdout)
-        }
-
         if !modelExists {
-            if !silent {
-                fputs("Model not found locally. Starting download: \(resolved)\n", stdout)
-            } else {
-                fputs("Model not found. Will download: \(resolved)\n", stdout)
-            }
-            fflush(stdout)
-
             try await ModelDownloader.downloadModel(resolvedModelName: resolved)
         }
 
         return resolved
     }
+
 
     // MARK: Internal
 
