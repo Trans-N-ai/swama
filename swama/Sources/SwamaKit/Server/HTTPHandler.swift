@@ -25,12 +25,7 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     public typealias OutboundOut = HTTPServerResponsePart
 
     public func channelActive(context: ChannelHandlerContext) {
-        buffer = context.channel.allocator.buffer(capacity: 1024)
-        NSLog("SwamaKit.HTTPHandler: Channel active")
-    }
-
-    public func channelInactive(context _: ChannelHandlerContext) {
-        NSLog("SwamaKit.HTTPHandler: Channel inactive")
+        bodyBuffer = context.channel.allocator.buffer(capacity: 0)
     }
 
     public func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -62,7 +57,6 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
     // MARK: Private
 
-    private var buffer: ByteBuffer!
     private var requestHead: HTTPRequestHead?
     private var bodyBuffer: ByteBuffer = .init()
 
@@ -70,7 +64,6 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         NSLog("SwamaKit.HTTPHandler: Handling request: \(request.method) \(request.uri)")
         switch (request.method, request.uri) {
         case (.GET, "/v1/models"):
-            // Use the logic similar to the old ModelsHandler
             handleModelsRequest(context: context, request: request)
 
         case (.POST, "/v1/chat/completions"):
@@ -117,7 +110,6 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     /// New method based on the old ModelsHandler logic
     private func handleModelsRequest(context: ChannelHandlerContext, request: HTTPRequestHead) {
         do {
-            // Generate model list (logic from old ModelsHandler)
             let modelsList = ModelManager.models().map { model_info -> [String: Any] in
                 return [
                     "id": model_info.id,
@@ -141,7 +133,7 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
             var headers = HTTPHeaders()
             headers.add(name: "Content-Type", value: "application/json")
             headers.add(name: "Content-Length", value: "\(responseBuffer.readableBytes)")
-            headers.add(name: "Connection", value: "close") // Or keep-alive based on request
+            headers.add(name: "Connection", value: "close")
 
             context.write(
                 self.wrapOutboundOut(.head(HTTPResponseHead(version: request.version, status: .ok, headers: headers))),
@@ -190,6 +182,6 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
             promise: nil
         )
         context.write(self.wrapOutboundOut(.body(.byteBuffer(notFoundBuffer))), promise: nil)
-        context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil) // Corrected syntax
+        context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
     }
 }

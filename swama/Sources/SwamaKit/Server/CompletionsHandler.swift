@@ -29,19 +29,19 @@ public enum CompletionsHandler {
         let role: String
         let content: MessageContent
         let tool_calls: [ResponseToolCall]?
-        
+
         private enum CodingKeys: String, CodingKey {
             case role
             case content
             case tool_calls
         }
-        
+
         public init(role: String, content: MessageContent, tool_calls: [ResponseToolCall]? = nil) {
             self.role = role
             self.content = content
             self.tool_calls = tool_calls
         }
-        
+
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             role = try container.decode(String.self, forKey: .role)
@@ -212,7 +212,7 @@ public enum CompletionsHandler {
             self.type = type
             self.function = function
         }
-        
+
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             id = try container.decode(String.self, forKey: .id)
@@ -229,7 +229,7 @@ public enum CompletionsHandler {
             self.name = name
             self.arguments = arguments
         }
-        
+
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             name = try container.decode(String.self, forKey: .name)
