@@ -41,7 +41,8 @@ public enum ModelPaths {
 
         // Check if model exists in custom location first
         if let customPath,
-        FileManager.default.fileExists(atPath: customPath.appendingPathComponent(".swama-meta.json").path) {
+           FileManager.default.fileExists(atPath: customPath.appendingPathComponent(".swama-meta.json").path)
+        {
             return parseModelMetadataPath(from: customPath.appendingPathComponent(".swama-meta.json"))
         }
 
@@ -65,13 +66,14 @@ public enum ModelPaths {
 
     private static func parseModelMetadataPath(from metaURL: URL) -> URL {
         guard let data = try? Data(contentsOf: metaURL),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let path = json["path"] as? String else {
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let path = json["path"] as? String
+        else {
             return metaURL
         }
+
         return URL(fileURLWithPath: path)
     }
-
 
     /// Check if a model exists locally (in either preferred or legacy location)
     public static func modelExistsLocally(_ modelName: String) -> Bool {
@@ -95,19 +97,19 @@ public enum ModelPaths {
     }
 
     private enum ModelMetadataError: Error, CustomStringConvertible {
-    case fileNotFound(URL)
-    case invalidFormat(URL)
-    case jsonDecodingError(URL, Error)
+        case fileNotFound(URL)
+        case invalidFormat(URL)
+        case jsonDecodingError(URL, Error)
 
-    var description: String {
-        switch self {
-        case .fileNotFound(let url):
-            return "Metadata file not found at \(url.path)"
-        case .invalidFormat(let url):
-            return "Invalid JSON format at \(url.path)"
-        case .jsonDecodingError(let url, let error):
-            return "Failed to parse JSON at \(url.path): \(error)"
+        var description: String {
+            switch self {
+            case let .fileNotFound(url):
+                "Metadata file not found at \(url.path)"
+            case let .invalidFormat(url):
+                "Invalid JSON format at \(url.path)"
+            case let .jsonDecodingError(url, error):
+                "Failed to parse JSON at \(url.path): \(error)"
+            }
         }
     }
-}
 }
