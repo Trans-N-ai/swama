@@ -26,6 +26,12 @@ public enum ModelPaths {
         return home.appendingPathComponent("Documents/huggingface/models")
     }()
 
+    /// Local directory for models
+    public static let localModelsDirectory: URL = {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(".swama/models/local")
+    }()
+
     /// Get the local directory path for a specific model, checking both preferred and legacy locations
     /// Returns the first location where the model exists, or the preferred location if neither exists
     public static func getModelDirectory(for modelName: String) -> URL {
@@ -35,14 +41,13 @@ public enum ModelPaths {
 
         // Check if model exists in custom location first
         if let customPath,
-           FileManager.default.fileExists(atPath: customPath.appendingPathComponent(".swama-meta.json").path)
-        {
-            return customPath
+        FileManager.default.fileExists(atPath: customPath.appendingPathComponent(".swama-meta.json").path) {
+            return parseModelMetadataPath(from: customPath.appendingPathComponent(".swama-meta.json"))
         }
 
         // Check if model exists in preferred location
         if FileManager.default.fileExists(atPath: preferredPath.appendingPathComponent(".swama-meta.json").path) {
-            return preferredPath
+            return parseModelMetadataPath(from: preferredPath.appendingPathComponent(".swama-meta.json"))
         }
 
         // Check if model exists in legacy location
@@ -57,6 +62,16 @@ public enum ModelPaths {
         // Else return preferred location for new downloads
         return preferredPath
     }
+
+    private static func parseModelMetadataPath(from metaURL: URL) -> URL {
+        guard let data = try? Data(contentsOf: metaURL),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let path = json["path"] as? String else {
+            return metaURL
+        }
+        return URL(fileURLWithPath: path)
+    }
+
 
     /// Check if a model exists locally (in either preferred or legacy location)
     public static func modelExistsLocally(_ modelName: String) -> Bool {
@@ -78,4 +93,21 @@ public enum ModelPaths {
         }
         return directories
     }
+
+    private enum ModelMetadataError: Error, CustomStringConvertible {
+    case fileNotFound(URL)
+    case invalidFormat(URL)
+    case jsonDecodingError(URL, Error)
+
+    var description: String {
+        switch self {
+        case .fileNotFound(let url):
+            return "Metadata file not found at \(url.path)"
+        case .invalidFormat(let url):
+            return "Invalid JSON format at \(url.path)"
+        case .jsonDecodingError(let url, let error):
+            return "Failed to parse JSON at \(url.path): \(error)"
+        }
+    }
+}
 }
