@@ -6,49 +6,6 @@ import MLXLLM
 import MLXVLM
 import Tokenizers
 
-/// Loads a model container for the given model name.
-/// This function utilizes MLXLMCommon to handle caching or downloading of the model.
-public func loadModelContainer(modelName: String) async throws -> ModelContainer {
-    let config = createModelConfiguration(modelName: modelName)
-
-    let container: ModelContainer
-    do {
-        container = try await LLMModelFactory.shared.loadContainer(configuration: config)
-    }
-    catch {
-        fputs(
-            "SwamaKit.ModelRunner: Error loading model container for '\(modelName)': \(error.localizedDescription)\n",
-            stderr
-        )
-        if let nsError = error as NSError? {
-            fputs("  Error Code: \(nsError.code), Domain: \(nsError.domain)\n", stderr)
-            if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
-                fputs("  Underlying Error: \(underlying.localizedDescription)\n", stderr)
-            }
-        }
-        throw error
-    }
-
-    return container
-}
-
-/// Creates a ModelConfiguration for the given model name, checking for local directory first.
-/// Returns a directory-based configuration if the model exists locally, otherwise returns an ID-based configuration.
-/// Checks both new path and legacy path for compatibility.
-public func createModelConfiguration(modelName: String) -> ModelConfiguration {
-    if ModelPaths.modelExistsLocally(modelName) {
-        let localDir = ModelPaths.getModelDirectory(for: modelName)
-        // Use local directory configuration (offline mode)
-        NSLog("SwamaKit.ModelRunner: Using local model directory: \(localDir.path)")
-        return ModelConfiguration(directory: localDir)
-    }
-    else {
-        // Fall back to HuggingFace Hub ID (online mode)
-        NSLog("SwamaKit.ModelRunner: Model not found locally, will attempt download from HuggingFace Hub")
-        return ModelConfiguration(id: modelName)
-    }
-}
-
 // MARK: - ModelRunner
 
 /// An actor responsible for running model inference.
