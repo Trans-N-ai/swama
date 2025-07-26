@@ -89,21 +89,4 @@ public enum ModelPaths {
         }
         return directories
     }
-
-    private enum ModelMetadataError: Error, CustomStringConvertible {
-        case fileNotFound(URL)
-        case invalidFormat(URL)
-        case jsonDecodingError(URL, Error)
-
-        var description: String {
-            switch self {
-            case let .fileNotFound(url):
-                "Metadata file not found at \(url.path)"
-            case let .invalidFormat(url):
-                "Invalid JSON format at \(url.path)"
-            case let .jsonDecodingError(url, error):
-                "Failed to parse JSON at \(url.path): \(error)"
-            }
-        }
-    }
 }
