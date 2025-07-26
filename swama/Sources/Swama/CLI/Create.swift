@@ -16,8 +16,8 @@ struct Create: AsyncParsableCommand {
     func run() async throws {
         print("Creating model from path: \(path) with name: \(name)")
 
-        try await ModeleCreator.createdModel(from: path, name: name)
+        try await ModelCreator.run(from: path, name: name)
 
-        print("Model created successfully at \(ModelPaths.localModelsDirectory.appendingPathComponent(name).path)")
+        print("Model created successfully at \(ModelPaths.preferredModelsDirectory.appendingPathComponent(name).path)")
     }
 }

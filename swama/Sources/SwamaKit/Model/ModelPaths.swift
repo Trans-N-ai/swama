@@ -26,12 +26,6 @@ public enum ModelPaths {
         return home.appendingPathComponent("Documents/huggingface/models")
     }()
 
-    /// Local directory for models
-    public static let localModelsDirectory: URL = {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".swama/models/local")
-    }()
-
     /// Get the local directory path for a specific model, checking both preferred and legacy locations
     /// Returns the first location where the model exists, or the preferred location if neither exists
     public static func getModelDirectory(for modelName: String) -> URL {
