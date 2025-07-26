@@ -86,7 +86,7 @@ public enum ModelDownloader {
         }
 
         printMessage("✅ Model pull complete: \(resolvedModelName)")
-        try writeModelMetadata(modelName: resolvedModelName, modelDir: modelDir)
+        try writeModelMetadata(modelName: resolvedModelName, modelDir: modelDir, localModel: false)
     }
 
     public static func downloadWhisperKitModel(alias: String) async throws {
@@ -168,34 +168,43 @@ public enum ModelDownloader {
         printMessage("✅ Model pull complete: \(alias)")
 
         // Generate metadata file so the model appears in 'swama list'
-        try writeModelMetadata(modelName: alias, modelDir: modelDir)
+        try writeModelMetadata(modelName: alias, modelDir: modelDir, localModel: false)
     }
 
     // MARK: Internal
 
-    static func printMessage(_ message: String) {
+    public static func printMessage(_ message: String) {
         // Use fputs to stdout to behave like print
         fputs(message + "\n", stdout)
         fflush(stdout)
     }
 
-    static func writeModelMetadata(modelName: String, modelDir: URL) throws {
+    static func writeModelMetadata(modelName: String, modelDir: URL, localModel: Bool) throws {
         let size = try calculateFolderSize(at: modelDir)
         let created = Int(Date().timeIntervalSince1970)
-        let metadata: [String: Any] = [
+        var metaURL: URL
+        var metadata: [String: Any] = [
             "id": modelName,
             "object": "model",
             "created": created,
             "owned_by": "swama",
             "size_in_bytes": size
         ]
-        let metaURL = modelDir.appendingPathComponent(".swama-meta.json")
+        if localModel {
+            metadata["path"] = modelDir.path
+            metaURL = ModelPaths.preferredModelsDirectory
+                .appendingPathComponent(modelName)
+                .appendingPathComponent(".swama-meta.json")
+        }
+        else {
+            metaURL = modelDir.appendingPathComponent(".swama-meta.json")
+        }
         let data = try JSONSerialization.data(withJSONObject: metadata, options: [.prettyPrinted])
         try data.write(to: metaURL)
         printMessage("📝 Metadata written to .swama-meta.json")
     }
 
-    static func calculateFolderSize(at url: URL) throws -> Int64 {
+    public static func calculateFolderSize(at url: URL) throws -> Int64 {
         var total: Int64 = 0
         let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
         guard let enumerator = FileManager.default.enumerator(
