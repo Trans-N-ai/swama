@@ -17,6 +17,7 @@ public enum ModelManager {
 
         return modelInfos
     }
+
     /// Scans a specific models directory and returns ModelInfo array
     private static func scanModelsDirectory(at modelsRootDirectory: URL) -> [ModelInfo] {
         var modelInfos: [ModelInfo] = []
@@ -91,13 +92,12 @@ public enum ModelManager {
         return modelInfos
     }
 
-
     private static func parseModelMetadata(metaURL: URL, modelID: String) -> ModelInfo? {
         do {
             let data = try Data(contentsOf: metaURL)
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                let created = json["created"] as? Int,
-                let size = (json["size_in_bytes"] as? NSNumber)?.int64Value
+                  let created = json["created"] as? Int,
+                  let size = (json["size_in_bytes"] as? NSNumber)?.int64Value
             else {
                 fputs("SwamaKit.ModelManager: Invalid .swama-meta.json for \(modelID)\n", stderr)
                 return nil
@@ -110,8 +110,12 @@ public enum ModelManager {
                 source: .metaFile,
                 rawMetadata: json
             )
-        } catch {
-            fputs("SwamaKit.ModelManager: Error reading .swama-meta.json for \(modelID): \(error.localizedDescription)\n", stderr)
+        }
+        catch {
+            fputs(
+                "SwamaKit.ModelManager: Error reading .swama-meta.json for \(modelID): \(error.localizedDescription)\n",
+                stderr
+            )
             return nil
         }
     }
