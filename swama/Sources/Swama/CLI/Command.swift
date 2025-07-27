@@ -11,7 +11,7 @@ struct Swama: AsyncParsableCommand {
         commandName: "swama",
         abstract: "Swama - The Swift-native LLM runtime for macOS",
         version: "1.4.1",
-        subcommands: [Serve.self, Pull.self, Run.self, MenuBar.self, List.self, Transcribe.self], // Added Transcribe
+        subcommands: [Serve.self, Pull.self, Run.self, MenuBar.self, List.self, Remove.self, Transcribe.self], // Added Remove
         defaultSubcommand: Serve.self
     )
 }
