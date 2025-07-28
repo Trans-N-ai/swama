@@ -8,7 +8,9 @@ struct Remove: AsyncParsableCommand {
         abstract: "Remove a model from local storage"
     )
 
-    @Argument(help: "Model name or alias to remove, e.g. qwen3-30b, whisperkit-base, or mlx-community/Llama-3.2-1B-Instruct-4bit")
+    @Argument(
+        help: "Model name or alias to remove, e.g. qwen3-30b, whisperkit-base, or mlx-community/Llama-3.2-1B-Instruct-4bit"
+    )
     var model: String
 
     @Flag(name: .shortAndLong, help: "Force removal without confirmation prompt")
@@ -32,18 +34,19 @@ struct Remove: AsyncParsableCommand {
         // Get model info for confirmation
         let models = ModelManager.models()
         let modelInfo = models.first { $0.id == resolvedModelName }
-        
+
         // Confirmation prompt (unless --force is used)
         if !force {
             print("Are you sure you want to remove model '\(resolvedModelName)'?")
-            if let modelInfo = modelInfo {
+            if let modelInfo {
                 let sizeStr = ByteCountFormatter.string(fromByteCount: modelInfo.sizeInBytes, countStyle: .file)
                 print("Size: \(sizeStr)")
             }
             print("This action cannot be undone. Type 'y' or 'yes' to confirm:")
-            
+
             guard let input = readLine()?.lowercased(),
-                  input == "y" || input == "yes" else {
+                  input == "y" || input == "yes"
+            else {
                 print("Removal cancelled.")
                 return
             }
@@ -54,14 +57,16 @@ struct Remove: AsyncParsableCommand {
             let wasRemoved = try ModelPaths.removeModel(resolvedModelName)
             if wasRemoved {
                 print("Successfully removed model '\(resolvedModelName)'")
-                
+
                 // Note: ModelPool cleanup is skipped to avoid MLX initialization issues
                 // Models will be automatically evicted from memory when needed
-            } else {
+            }
+            else {
                 print("Error: Model '\(resolvedModelName)' not found on disk.")
                 throw ExitCode.failure
             }
-        } catch {
+        }
+        catch {
             print("Error removing model '\(resolvedModelName)': \(error.localizedDescription)")
             throw ExitCode.failure
         }

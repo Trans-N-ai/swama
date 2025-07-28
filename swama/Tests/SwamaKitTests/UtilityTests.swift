@@ -72,14 +72,14 @@ final class UtilityTests {
         let testModelName = "test-model/TestModel-1B-4bit"
         let testModelDir = tempDir.appendingPathComponent("swama-test-models").appendingPathComponent(testModelName)
         let metadataFile = testModelDir.appendingPathComponent(".swama-meta.json")
-        
+
         // Clean up any existing test directory
         let testRootDir = tempDir.appendingPathComponent("swama-test-models")
         try? FileManager.default.removeItem(at: testRootDir)
-        
+
         // Create test model directory structure
         try FileManager.default.createDirectory(at: testModelDir, withIntermediateDirectories: true)
-        
+
         // Create metadata file to simulate a valid model
         let testMetadata = """
         {
@@ -90,35 +90,36 @@ final class UtilityTests {
         }
         """
         try testMetadata.write(to: metadataFile, atomically: true, encoding: .utf8)
-        
+
         // Verify setup
         #expect(FileManager.default.fileExists(atPath: testModelDir.path))
         #expect(FileManager.default.fileExists(atPath: metadataFile.path))
-        
+
         // Test removal with temporary environment variable
         let originalEnv = ProcessInfo.processInfo.environment["SWAMA_MODELS"]
         setenv("SWAMA_MODELS", testRootDir.path, 1)
-        
+
         defer {
             // Clean up environment
             if let originalEnv {
                 setenv("SWAMA_MODELS", originalEnv, 1)
-            } else {
+            }
+            else {
                 unsetenv("SWAMA_MODELS")
             }
             // Clean up test directory
             try? FileManager.default.removeItem(at: testRootDir)
         }
-        
+
         // Test successful removal
         let wasRemoved = try ModelPaths.removeModel(testModelName)
         #expect(wasRemoved == true)
         #expect(!FileManager.default.fileExists(atPath: testModelDir.path))
-        
+
         // Test removal of non-existent model
         let wasRemovedAgain = try ModelPaths.removeModel(testModelName)
         #expect(wasRemovedAgain == false)
-        
+
         // Test removal of model without metadata file
         try FileManager.default.createDirectory(at: testModelDir, withIntermediateDirectories: true)
         let wasRemovedWithoutMeta = try ModelPaths.removeModel(testModelName)
@@ -131,32 +132,33 @@ final class UtilityTests {
         let testModelName = "test-model/ExistenceTest-1B-4bit"
         let testModelDir = tempDir.appendingPathComponent("swama-test-models").appendingPathComponent(testModelName)
         let metadataFile = testModelDir.appendingPathComponent(".swama-meta.json")
-        
+
         // Clean up any existing test directory
         let testRootDir = tempDir.appendingPathComponent("swama-test-models")
         try? FileManager.default.removeItem(at: testRootDir)
-        
+
         // Set temporary environment variable
         let originalEnv = ProcessInfo.processInfo.environment["SWAMA_MODELS"]
         setenv("SWAMA_MODELS", testRootDir.path, 1)
-        
+
         defer {
             // Clean up environment and directory
             if let originalEnv {
                 setenv("SWAMA_MODELS", originalEnv, 1)
-            } else {
+            }
+            else {
                 unsetenv("SWAMA_MODELS")
             }
             try? FileManager.default.removeItem(at: testRootDir)
         }
-        
+
         // Test non-existent model
         #expect(!ModelPaths.modelExistsLocally(testModelName))
-        
+
         // Create model directory without metadata
         try FileManager.default.createDirectory(at: testModelDir, withIntermediateDirectories: true)
         #expect(!ModelPaths.modelExistsLocally(testModelName))
-        
+
         // Create metadata file
         let testMetadata = """
         {
@@ -165,7 +167,7 @@ final class UtilityTests {
         }
         """
         try testMetadata.write(to: metadataFile, atomically: true, encoding: .utf8)
-        
+
         // Test existing model with metadata
         #expect(ModelPaths.modelExistsLocally(testModelName))
     }
