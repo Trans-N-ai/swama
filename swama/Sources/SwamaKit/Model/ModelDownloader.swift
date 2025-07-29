@@ -171,7 +171,7 @@ public enum ModelDownloader {
         try writeModelMetadata(modelName: alias, modelDir: modelDir)
     }
 
-    public static func resolveAndDownloadIfNeeded(modelName: String) async throws -> String {
+    public static func fetchModel(modelName: String) async throws -> String {
 
         if ModelAliasResolver.isWhisperKitModel(modelName) {
             try await ModelDownloader.downloadWhisperKitModel(alias: modelName)

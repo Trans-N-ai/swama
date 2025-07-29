@@ -5,6 +5,23 @@ import MLXLLM
 import MLXLMCommon
 import MLXVLM
 
+// MARK: - ModelPoolError
+
+/// Errors specific to ModelPool operations
+public enum ModelPoolError: Error, LocalizedError {
+    case modelNotFoundLocally(String)
+    case failedToLoadModel(String, Error)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .modelNotFoundLocally(modelName):
+            "Model '\(modelName)' not found locally. ModelPool only works with locally available models."
+        case let .failedToLoadModel(modelName, underlyingError):
+            "Failed to load model '\(modelName)': \(underlyingError.localizedDescription)"
+        }
+    }
+}
+
 // MARK: - ModelUsageInfo
 
 /// Statistics for tracking model usage patterns
@@ -227,7 +244,7 @@ public actor ModelPool {
         }
     }
 
-    /// Gets or loads a ModelContainer (internal method without concurrency control)
+    /// Gets or loads a ModelContainer
     private func getContainer(modelName: String) async throws -> MLXLMCommon.ModelContainer {
         // Ensure memory management is started
         ensureMemoryManagementStarted()
@@ -240,7 +257,6 @@ public actor ModelPool {
 
         if let task = tasks[modelName] {
             let container = try await task.value
-            // Record usage for newly loaded model
             modelUsageInfo[modelName]?.recordUsage()
             return container
         }
@@ -251,96 +267,43 @@ public actor ModelPool {
         let task = Task {
             defer { tasks[modelName] = nil }
 
-            // Fast path: Check if we already know the model type
             if let isVLM = modelTypeCache[modelName] {
-                let container: MLXLMCommon.ModelContainer
-                if isVLM {
-                    // We know it's a VLM, load directly
-                    let vlmConfig = try getVLMConfiguration(modelName: modelName)
-                    container = try await VLMModelFactory.shared.loadContainer(configuration: vlmConfig)
+                guard ModelPaths.modelExistsLocally(modelName) else {
+                    modelTypeCache.removeValue(forKey: modelName)
+                    throw ModelPoolError.modelNotFoundLocally(modelName)
                 }
-                else {
-                    // We know it's an LLM, load directly
-                    let llmConfig = MLXLMCommon.ModelConfiguration(id: modelName)
-                    container = try await LLMModelFactory.shared.loadContainer(configuration: llmConfig)
-                }
-                cache[modelName] = container
-                // Initialize usage tracking for new model
-                modelUsageInfo[modelName] = ModelUsageInfo()
-                return container
-            }
 
-            // Slow path: First time loading this model - determine type
-            var configToLoad: MLXLMCommon.ModelConfiguration?
-
-            // Lazy load and cache VLM registry for better performance
-            if vlmRegistryCache == nil {
-                vlmRegistryCache = [:]
-                for vlmConfigEntry in VLMRegistry.all() {
-                    // Extract the model ID string from the identifier
-                    let configIDString: String = vlmConfigEntry.name
-                    vlmRegistryCache![configIDString] = vlmConfigEntry
-                }
-            }
-
-            // Fast lookup in cached registry
-            if let vlmConfig = vlmRegistryCache![modelName] {
-                // Check if VLM model exists locally first using shared function
-                let localConfig = createModelConfiguration(modelName: modelName)
-
-                // If it's a directory-based config, use it; otherwise use registry config
-                if case .directory = localConfig.id {
-                    configToLoad = localConfig
-                }
-                else {
-                    configToLoad = vlmConfig
-                }
-                modelTypeCache[modelName] = true // Cache for future fast path
-            }
-            else if isVLMModelByName(modelName) {
-                // Heuristic detection: model name suggests it's a VLM but not in registry
-                // Try to load it as VLM with directory-based configuration
-                let localConfig = createModelConfiguration(modelName: modelName)
-
-                if case .directory = localConfig.id {
-                    configToLoad = localConfig
-                    modelTypeCache[modelName] = true // Cache for future fast path
-                }
-                else {
-                    // VLM model not available locally and not in registry - this will likely fail
-                    // Create a basic VLM configuration and let VLMModelFactory handle it
-                    configToLoad = MLXLMCommon.ModelConfiguration(id: modelName)
-                    modelTypeCache[modelName] = true // Cache for future fast path
-                }
-            }
-            else {
-                // It's an LLM - use the shared loadModelContainer function
-                let container = try await loadModelContainer(modelName: modelName)
-
-                cache[modelName] = container
-                modelUsageInfo[modelName] = ModelUsageInfo()
-                modelTypeCache[modelName] = false // Cache for future fast path
-                return container
-            }
-
-            guard let finalConfig = configToLoad else {
-                throw NSError(
-                    domain: "ModelPoolError",
-                    code: 1,
-                    userInfo: [
-                        NSLocalizedDescriptionKey: "Failed to determine or create a ModelConfiguration for \(modelName)."
-                    ]
+                let container = try await loadModelContainer(
+                    modelName: modelName,
+                    isVLM: isVLM
                 )
+
+                cache[modelName] = container
+                modelUsageInfo[modelName] = ModelUsageInfo()
+                return container
             }
 
-            // Only VLM models reach this point
-            let container: MLXLMCommon.ModelContainer
-            container = try await VLMModelFactory.shared.loadContainer(configuration: finalConfig)
+            guard ModelPaths.modelExistsLocally(modelName) else {
+                throw ModelPoolError.modelNotFoundLocally(modelName)
+            }
+
+            // Determine if this is a VLM model using unified detection logic (registry priority)
+            let isVLMModel = determineIfVLMModel(modelName: modelName)
+
+            // Cache the model type for future fast path
+            modelTypeCache[modelName] = isVLMModel
+
+            // Load container using unified logic
+            let container = try await loadModelContainer(
+                modelName: modelName,
+                isVLM: isVLMModel
+            )
 
             cache[modelName] = container
-            // Initialize usage tracking for new model
             modelUsageInfo[modelName] = ModelUsageInfo()
-            NSLog("SwamaKit.ModelPool: Successfully loaded \(modelName)")
+            NSLog(
+                "SwamaKit.ModelPool: Successfully loaded \(modelName) as \(isVLMModel ? "VLM" : "LLM") from local directory"
+            )
             return container
         }
         tasks[modelName] = task
@@ -441,47 +404,95 @@ public actor ModelPool {
     /// Memory management tracking
     private var modelUsageInfo: [String: ModelUsageInfo] = .init()
 
-    // Performance optimization: Cache model types to avoid repeated Registry lookups
-    private var modelTypeCache: [String: Bool] = .init() // true = VLM, false = LLM
+    private var modelTypeCache: [String: Bool] = .init()
     private var vlmRegistryCache: [String: MLXLMCommon.ModelConfiguration]?
 
-    /// Helper method to get VLM configuration (used in fast path)
-    private func getVLMConfiguration(modelName: String) throws -> MLXLMCommon.ModelConfiguration {
-        // Ensure VLM registry cache is available
-        if vlmRegistryCache == nil {
-            vlmRegistryCache = [:]
-            for vlmConfigEntry in VLMRegistry.all() {
-                // Extract the model ID string from the identifier
-                let configIDString: String = vlmConfigEntry.name
-                vlmRegistryCache![configIDString] = vlmConfigEntry
+    /// Unified VLM detection logic with registry priority
+    private func determineIfVLMModel(modelName: String) -> Bool {
+        // Ensure VLM registry is initialized
+        ensureVLMRegistryInitialized()
+
+        if vlmRegistryCache![modelName] != nil {
+            return true
+        }
+
+        return isVLMModelByName(modelName)
+    }
+
+    private func loadModelContainer(
+        modelName: String,
+        isVLM: Bool
+    ) async throws -> MLXLMCommon.ModelContainer {
+        // Configure extra EOS tokens for models with known issues
+        let extraEOSTokens = getExtraEOSTokens(for: modelName)
+
+        let localConfig = MLXLMCommon.ModelConfiguration(
+            directory: ModelPaths.getModelDirectory(for: modelName),
+            extraEOSTokens: extraEOSTokens
+        )
+
+        do {
+            if isVLM {
+                return try await VLMModelFactory.shared.loadContainer(configuration: localConfig)
+            }
+            else {
+                return try await LLMModelFactory.shared.loadContainer(configuration: localConfig)
             }
         }
+        catch {
+            throw ModelPoolError.failedToLoadModel(modelName, error)
+        }
+    }
 
-        guard let vlmConfig = vlmRegistryCache![modelName] else {
-            throw NSError(
-                domain: "ModelPoolError",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "VLM configuration not found for \(modelName)"]
-            )
+    /// Get extra EOS tokens for models with known tokenization issues
+    private func getExtraEOSTokens(for modelName: String) -> Set<String> {
+        let lowercaseName = modelName.lowercased()
+
+        if lowercaseName.contains("gemma") {
+            return ["<end_of_turn>"]
         }
 
-        return vlmConfig
+        return []
+    }
+
+    private func ensureVLMRegistryInitialized() {
+        guard vlmRegistryCache == nil else {
+            return
+        }
+
+        vlmRegistryCache = [:]
+        for vlmConfigEntry in VLMRegistry.all() {
+            let configIDString: String = vlmConfigEntry.name
+            vlmRegistryCache![configIDString] = vlmConfigEntry
+        }
     }
 
     /// Helper method to detect VLM models by name pattern (heuristic for models not in registry)
     private func isVLMModelByName(_ modelName: String) -> Bool {
+        let lowercaseName = modelName.lowercased()
+
+        if lowercaseName.contains("gemma") {
+            // Gemma models with DWQ are LLM (not VLM)
+            if lowercaseName.contains("dwq") {
+                return false
+            }
+
+            if lowercaseName.contains("3n"), lowercaseName.contains("lm") {
+                return false // Gemma 3n - Text Only (LM) are LLMs
+            }
+            return true
+        }
+
         let vlmPatterns = [
-            "gemma", // Gemma models
-            "-VL-", // Common VLM naming pattern (e.g., Qwen2.5-VL-32B)
             "-vl-", // Lowercase variant
-            "VL-", // Prefix variant
+            "vl-", // Prefix variant
             "vision", // Vision models
-            "Visual", // Visual models
+            "visual", // Visual models
             "multimodal" // Multimodal models
         ]
 
         for pattern in vlmPatterns {
-            if modelName.contains(pattern) {
+            if lowercaseName.contains(pattern) {
                 return true
             }
         }
@@ -664,6 +675,6 @@ public actor ModelPool {
         // Step 8: Restore original cache limit
         MLX.GPU.set(cacheLimit: originalCacheLimit)
 
-        NSLog("SwamaKit.ModelPool: Aggressive memory cleanup completed - forced GC, cache disabled/cleared/restored")
+        NSLog("SwamaKit.ModelPool: memory cleanup completed - forced GC, cache disabled/cleared/restored")
     }
 }

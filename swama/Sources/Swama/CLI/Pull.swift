@@ -12,7 +12,7 @@ struct Pull: AsyncParsableCommand {
 
     func run() async throws {
 
-        _ = try await ModelDownloader.resolveAndDownloadIfNeeded(modelName: model)
+        _ = try await ModelDownloader.fetchModel(modelName: model)
 
    }
 }

@@ -4,15 +4,15 @@ import Foundation
 
 /// Centralized configuration for model storage paths
 public enum ModelPaths {
-    /// The custom path for storing models
-    public static let customModelsDirectory: URL? = {
+    /// The custom path for storing models (dynamically read from environment)
+    public static var customModelsDirectory: URL? {
         if let customPath = ProcessInfo.processInfo.environment["SWAMA_MODELS"],
            !customPath.isEmpty
         {
             return URL(fileURLWithPath: customPath)
         }
         return nil
-    }()
+    }
 
     /// The preferred path for storing models (new installations)
     public static let preferredModelsDirectory: URL = {
@@ -77,5 +77,26 @@ public enum ModelPaths {
             directories.insert(customDirectory, at: 0)
         }
         return directories
+    }
+
+    /// Remove a model from disk
+    /// Returns true if model was found and deleted, false if model wasn't found
+    public static func removeModel(_ modelName: String) throws -> Bool {
+        // Check all possible model locations in priority order
+        let locations = [
+            customModelsDirectory?.appendingPathComponent(modelName),
+            preferredModelsDirectory.appendingPathComponent(modelName),
+            legacyModelsDirectory.appendingPathComponent(modelName)
+        ].compactMap(\.self)
+
+        for location in locations {
+            let metadataFile = location.appendingPathComponent(".swama-meta.json")
+            if FileManager.default.fileExists(atPath: metadataFile.path) {
+                try FileManager.default.removeItem(at: location)
+                return true
+            }
+        }
+
+        return false // Model not found
     }
 }

@@ -174,7 +174,7 @@ struct Run: AsyncParsableCommand {
 
     func run() async throws {
 
-        let resolvedModelName = try await ModelDownloader.resolveAndDownloadIfNeeded(modelName: modelName)
+        let resolvedModelName = try await ModelDownloader.fetchModel(modelName: modelName)
 
         if !direct {
             if await isServerRunning() {
