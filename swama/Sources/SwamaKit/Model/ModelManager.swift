@@ -71,39 +71,53 @@ public enum ModelManager {
                 let metaURL = modelDir.appendingPathComponent(".swama-meta.json")
 
                 if FileManager.default.fileExists(atPath: metaURL.path) {
-                    do {
-                        let data = try Data(contentsOf: metaURL)
-                        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                        if let created = json?["created"] as? Int,
-                           let sizeInBytes = (json?["size_in_bytes"] as? NSNumber)?.int64Value
-                        {
-                            modelInfos.append(ModelInfo(
-                                id: modelID,
-                                created: created,
-                                sizeInBytes: sizeInBytes,
-                                source: .metaFile,
-                                rawMetadata: json
-                            ))
-                        }
-                        else {
-                            // Meta file exists but content is invalid or incomplete. Do not list.
-                            fputs(
-                                "SwamaKit.ModelManager: Invalid or incomplete .swama-meta.json for \(modelID). Model will not be listed.\n",
-                                stderr
-                            )
-                        }
-                    }
-                    catch {
-                        // Error reading or parsing .swama-meta.json. Do not list.
-                        fputs(
-                            "SwamaKit.ModelManager: Error reading or parsing .swama-meta.json for \(modelID): \(error.localizedDescription). Model will not be listed.\n",
-                            stderr
-                        )
+                    if let info = parseModelMetadata(metaURL: metaURL, modelID: modelID) {
+                        modelInfos.append(info)
                     }
                 }
             }
         }
+
+        // Additional: support flat model directories (e.g., ~/.swama/models/llama2/.swama-meta.json)
+        for modelDir in orgDirs {
+            let metaURL = modelDir.appendingPathComponent(".swama-meta.json")
+            if FileManager.default.fileExists(atPath: metaURL.path) {
+                let modelID = modelDir.lastPathComponent
+                if let info = parseModelMetadata(metaURL: metaURL, modelID: modelID) {
+                    modelInfos.append(info)
+                }
+            }
+        }
+
         return modelInfos
+    }
+
+    private static func parseModelMetadata(metaURL: URL, modelID: String) -> ModelInfo? {
+        do {
+            let data = try Data(contentsOf: metaURL)
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let created = json["created"] as? Int,
+                  let size = (json["size_in_bytes"] as? NSNumber)?.int64Value
+            else {
+                fputs("SwamaKit.ModelManager: Invalid .swama-meta.json for \(modelID)\n", stderr)
+                return nil
+            }
+
+            return ModelInfo(
+                id: modelID,
+                created: created,
+                sizeInBytes: size,
+                source: .metaFile,
+                rawMetadata: json
+            )
+        }
+        catch {
+            fputs(
+                "SwamaKit.ModelManager: Error reading .swama-meta.json for \(modelID): \(error.localizedDescription)\n",
+                stderr
+            )
+            return nil
+        }
     }
 }
 
