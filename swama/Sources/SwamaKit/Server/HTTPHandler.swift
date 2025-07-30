@@ -102,6 +102,20 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
                 }
             }
 
+        case (.OPTIONS, _):
+            var headers = HTTPHeaders()
+            HTTPHandler.applyCORSHeaders(&headers)
+            headers.add(name: "Access-Control-Max-Age", value: "86400")
+            headers.add(name: "Content-Length", value: "0")
+            headers.add(name: "Connection", value: "keep-alive")
+
+            context.write(self.wrapOutboundOut(.head(HTTPResponseHead(
+                version: request.version,
+                status: .ok,
+                headers: headers
+            ))), promise: nil)
+            context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
+
         default:
             respond404(context: context, request: request)
         }
@@ -134,6 +148,7 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
             headers.add(name: "Content-Type", value: "application/json")
             headers.add(name: "Content-Length", value: "\(responseBuffer.readableBytes)")
             headers.add(name: "Connection", value: "close")
+            HTTPHandler.applyCORSHeaders(&headers)
 
             context.write(
                 self.wrapOutboundOut(.head(HTTPResponseHead(version: request.version, status: .ok, headers: headers))),
@@ -151,6 +166,7 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
             headers.add(name: "Content-Length", value: "\(errorBuffer.readableBytes)")
             headers.add(name: "Content-Type", value: "text/plain")
             headers.add(name: "Connection", value: "close")
+            HTTPHandler.applyCORSHeaders(&headers)
 
             context.write(
                 self.wrapOutboundOut(.head(HTTPResponseHead(
@@ -172,6 +188,7 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         headers.add(name: "Content-Length", value: "\(notFoundBuffer.readableBytes)")
         headers.add(name: "Content-Type", value: "text/plain")
         headers.add(name: "Connection", value: "close")
+        HTTPHandler.applyCORSHeaders(&headers)
 
         context.write(
             self.wrapOutboundOut(.head(HTTPResponseHead(
@@ -183,5 +200,11 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         )
         context.write(self.wrapOutboundOut(.body(.byteBuffer(notFoundBuffer))), promise: nil)
         context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
+    }
+
+    public static func applyCORSHeaders(_ headers: inout HTTPHeaders) {
+        headers.add(name: "Access-Control-Allow-Origin", value: "*")
+        headers.add(name: "Access-Control-Allow-Headers", value: "Content-Type, Authorization")
+        headers.add(name: "Access-Control-Allow-Methods", value: "GET, POST, OPTIONS")
     }
 }
