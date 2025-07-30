@@ -171,6 +171,25 @@ public enum ModelDownloader {
         try writeModelMetadata(modelName: alias, modelDir: modelDir)
     }
 
+    public static func fetchModel(modelName: String) async throws -> String {
+
+        if ModelAliasResolver.isWhisperKitModel(modelName) {
+            try await ModelDownloader.downloadWhisperKitModel(alias: modelName)
+            return modelName
+        }
+
+        let resolved = ModelAliasResolver.resolve(name: modelName)
+        let modelDir = ModelPaths.getModelDirectory(for: resolved)
+        let modelExists = FileManager.default.fileExists(atPath: modelDir.path)
+
+        if !modelExists {
+            try await ModelDownloader.downloadModel(resolvedModelName: resolved)
+        }
+
+        return resolved
+    }
+
+
     // MARK: Internal
 
     static func printMessage(_ message: String) {

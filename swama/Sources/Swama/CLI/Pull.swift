@@ -11,20 +11,8 @@ struct Pull: AsyncParsableCommand {
     var model: String
 
     func run() async throws {
-        // Check if this is a WhisperKit model
-        if ModelAliasResolver.isWhisperKitModel(model) {
-            try await ModelDownloader.downloadWhisperKitModel(alias: model)
-            return
-        }
 
-        // Handle regular MLX models
-        let resolvedModelName = ModelAliasResolver.resolve(name: model)
-        if model != resolvedModelName {
-            // Use fputs to stdout to behave like print, ensuring it appears on a new line
-            fputs("Info: Resolved model alias '\(model)' to '\(resolvedModelName)'\n", stdout)
-            fflush(stdout)
-        }
-        // The main print "Pulling model..." and completion messages are handled by ModelDownloader
-        try await ModelDownloader.downloadModel(resolvedModelName: resolvedModelName)
-    }
+        _ = try await ModelDownloader.fetchModel(modelName: model)
+
+   }
 }
