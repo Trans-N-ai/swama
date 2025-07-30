@@ -171,4 +171,39 @@ final class UtilityTests {
         // Test existing model with metadata
         #expect(ModelPaths.modelExistsLocally(testModelName))
     }
+
+    @Test func modelCreate() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+        let testModelName = "CreateTest-1B-4bit"
+        let testModelDir = tempDir.appendingPathComponent("swama-test-models")
+
+        // Create fake model directory and file (important!)
+        try? FileManager.default.removeItem(at: testModelDir)
+        try FileManager.default.createDirectory(at: testModelDir, withIntermediateDirectories: true)
+
+        // Add a fake model file to simulate real content
+        let dummyModelFile = testModelDir.appendingPathComponent("weights.bin")
+        let dummyData = Data(repeating: 0xFF, count: 1024 * 1024) // 1MB fake data
+        try dummyData.write(to: dummyModelFile)
+
+        // Delete existing metadata if it exists
+        let createdModelPath = ModelPaths.preferredModelsDirectory.appendingPathComponent(testModelName)
+        try? FileManager.default.removeItem(at: createdModelPath)
+        let metadataFile = createdModelPath.appendingPathComponent(".swama-meta.json")
+
+        // First: should succeed
+        try await ModelCreator.run(from: testModelDir.path, name: testModelName)
+        #expect(FileManager.default.fileExists(atPath: metadataFile.path))
+
+        // Second: should throw
+        do {
+            try await ModelCreator.run(from: testModelDir.path, name: testModelName)
+            Issue.record("Expected error when creating a model that already exists, but got none.")
+        }
+        catch let error as NSError {
+            #expect(error.domain == "ModelCreatorError")
+            #expect(error.code == 1)
+            #expect(error.localizedDescription.contains("already exists"))
+        }
+    }
 }

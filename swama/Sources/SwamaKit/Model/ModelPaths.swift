@@ -37,12 +37,12 @@ public enum ModelPaths {
         if let customPath,
            FileManager.default.fileExists(atPath: customPath.appendingPathComponent(".swama-meta.json").path)
         {
-            return customPath
+            return parseModelMetadataPath(from: customPath.appendingPathComponent(".swama-meta.json"))
         }
 
         // Check if model exists in preferred location
         if FileManager.default.fileExists(atPath: preferredPath.appendingPathComponent(".swama-meta.json").path) {
-            return preferredPath
+            return parseModelMetadataPath(from: preferredPath.appendingPathComponent(".swama-meta.json"))
         }
 
         // Check if model exists in legacy location
@@ -56,6 +56,17 @@ public enum ModelPaths {
         }
         // Else return preferred location for new downloads
         return preferredPath
+    }
+
+    private static func parseModelMetadataPath(from metaURL: URL) -> URL {
+        guard let data = try? Data(contentsOf: metaURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let path = json["path"] as? String
+        else {
+            return metaURL.deletingLastPathComponent()
+        }
+
+        return URL(fileURLWithPath: path)
     }
 
     /// Check if a model exists locally (in either preferred or legacy location)
