@@ -443,10 +443,6 @@ public enum CompletionsHandler {
             }
         }
         catch {
-            // Use structured logging instead of NSLog for better production practices
-            if ProcessInfo.processInfo.environment["DEBUG"] != nil {
-                print("❌ SwamaKit.CompletionsHandler Error: \(error)")
-            }
             try? await respondError(
                 channel: channel,
                 status: .internalServerError,
@@ -643,6 +639,7 @@ public enum CompletionsHandler {
             "model": model,
             "choices": [["index": 0, "delta": ["role": "assistant"], "finish_reason": NSNull()]]
         ]
+
         try await writeSSEJSON(channel: channel, payload: initialJSON)
 
         // Execute model with error handling
@@ -733,12 +730,15 @@ public enum CompletionsHandler {
         let tokensPerSecond = result.completionInfo?.tokensPerSecond ?? 0.0
         let totalDuration = (result.completionInfo?.promptTime ?? 0.0) + (result.completionInfo?.generateTime ?? 0.0)
 
+        // Determine finish reason based on whether tool calls were made
+        let finishReason = result.toolCalls.isEmpty ? "stop" : "tool_calls"
+
         let finishJSON: [String: Any] = [
             "id": chunkId,
             "object": "chat.completion.chunk",
             "created": timestamp,
             "model": model,
-            "choices": [["index": 0, "delta": [:], "finish_reason": "stop"]],
+            "choices": [["index": 0, "delta": [:], "finish_reason": finishReason]],
             "usage": [
                 "prompt_tokens": result.promptTokens,
                 "completion_tokens": finalCompletionTokens,
@@ -799,7 +799,12 @@ public enum CompletionsHandler {
             return nil
         }
 
-        return try? JSONDecoder().decode(CompletionRequest.self, from: Data(data))
+        do {
+            return try JSONDecoder().decode(CompletionRequest.self, from: Data(data))
+        }
+        catch {
+            return nil
+        }
     }
 
     private static func writeSSEJSON(channel: Channel, payload: [String: Any]) async throws {
@@ -839,11 +844,22 @@ enum CompletionsError: Error, LocalizedError {
 
 public extension CompletionsHandler.MessageContent {
     init(from decoder: Decoder) throws {
-        if let text = try? String(from: decoder) {
-            self = .text(text)
+        let container = try decoder.singleValueContainer()
+
+        // Handle null values
+        if container.decodeNil() {
+            self = .text("")
+            return
         }
-        else {
-            let parts = try [CompletionsHandler.ContentPart](from: decoder)
+
+        // Try to decode as string first
+        if let text = try? container.decode(String.self) {
+            self = .text(text)
+            return
+        }
+
+        // Try to decode as array of content parts
+        if let parts = try? container.decode([CompletionsHandler.ContentPart].self) {
             let convertedParts = parts.map { part in
                 if let text = part.text {
                     CompletionsHandler.ContentPartValue.text(text)
@@ -856,7 +872,11 @@ public extension CompletionsHandler.MessageContent {
                 }
             }
             self = .multimodal(convertedParts)
+            return
         }
+
+        // Fallback to empty text if nothing else works
+        self = .text("")
     }
 
     func encode(to encoder: Encoder) throws {
