@@ -173,7 +173,6 @@ struct Run: AsyncParsableCommand {
     var serverPort: Int = 28100
 
     func run() async throws {
-
         let resolvedModelName = try await ModelDownloader.fetchModel(modelName: modelName)
 
         if !direct {
