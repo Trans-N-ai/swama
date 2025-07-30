@@ -57,6 +57,7 @@ public enum ModelAliasResolver {
         // Qwen3 Family
         "qwen3": "mlx-community/Qwen3-8B-4bit", // Default for "qwen3"
         "qwen3-30b": "mlx-community/Qwen3-30B-A3B-4bit",
+        "qwen3-30b-2507": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
         "qwen3-1.7b": "mlx-community/Qwen3-1.7B-4bit",
         "qwen3-32b": "mlx-community/Qwen3-32B-4bit",
         "qwen3-235b": "mlx-community/Qwen3-235B-A22B-4bit",

@@ -172,7 +172,6 @@ public enum ModelDownloader {
     }
 
     public static func fetchModel(modelName: String) async throws -> String {
-
         if ModelAliasResolver.isWhisperKitModel(modelName) {
             try await ModelDownloader.downloadWhisperKitModel(alias: modelName)
             return modelName
@@ -188,7 +187,6 @@ public enum ModelDownloader {
 
         return resolved
     }
-
 
     // MARK: Internal
 
