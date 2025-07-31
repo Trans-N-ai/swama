@@ -103,11 +103,10 @@ public actor ModelRunner {
                     capturedCompletionInfo = info
 
                 case let .toolCall(toolCall):
+                    // Always accumulate tool calls for the return value
+                    toolCalls.append(toolCall)
+                    // Also send to callback if provided (for streaming)
                     onToolCall?(toolCall)
-                    // Only accumulate if no onToolCall callback (for non-streaming)
-                    if onToolCall == nil {
-                        toolCalls.append(toolCall)
-                    }
                 }
             }
 
