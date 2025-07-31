@@ -598,6 +598,7 @@ public enum CompletionsHandler {
         let jsonData = try encoder.encode(response)
         var headers = HTTPHeaders()
         headers.add(name: "Content-Type", value: "application/json")
+        HTTPHandler.applyCORSHeaders(&headers)
 
         let responseHead = HTTPResponseHead(version: .http1_1, status: .ok, headers: headers)
         let responseBody = HTTPServerResponsePart.body(.byteBuffer(ByteBuffer(bytes: jsonData)))
@@ -766,6 +767,7 @@ public enum CompletionsHandler {
         var headers = HTTPHeaders()
         headers.add(name: "Content-Type", value: "application/json")
         headers.add(name: "Content-Length", value: String(data.count))
+        HTTPHandler.applyCORSHeaders(&headers)
 
         let responseHead = HTTPResponseHead(version: version, status: status, headers: headers)
         let responseBody = HTTPServerResponsePart.body(.byteBuffer(ByteBuffer(bytes: data)))
