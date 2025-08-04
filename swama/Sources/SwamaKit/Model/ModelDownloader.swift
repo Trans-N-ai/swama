@@ -181,7 +181,9 @@ public enum ModelDownloader {
         let modelDir = ModelPaths.getModelDirectory(for: resolved)
         let modelExists = FileManager.default.fileExists(atPath: modelDir.path)
 
-        if !modelExists {
+        if modelExists {
+            print("✅ Model already exists: \(resolved)")
+        } else {
             try await ModelDownloader.downloadModel(resolvedModelName: resolved)
         }
 
