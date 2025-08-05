@@ -223,6 +223,7 @@ public enum EmbeddingsHandler {
         headers.add(name: "Content-Type", value: "application/json")
         headers.add(name: "Content-Length", value: "\(buffer.readableBytes)")
         headers.add(name: "Connection", value: "close")
+        HTTPHandler.applyCORSHeaders(&headers)
 
         try await channel.writeAndFlush(
             HTTPServerResponsePart.head(HTTPResponseHead(
@@ -263,6 +264,7 @@ public enum EmbeddingsHandler {
         headers.add(name: "Content-Type", value: "application/json")
         headers.add(name: "Content-Length", value: "\(buffer.readableBytes)")
         headers.add(name: "Connection", value: "close")
+        HTTPHandler.applyCORSHeaders(&headers)
 
         try await channel.writeAndFlush(
             HTTPServerResponsePart.head(HTTPResponseHead(

@@ -377,6 +377,7 @@ public enum TranscriptionsHandler {
         headers.add(name: "Content-Type", value: contentType)
         headers.add(name: "Content-Length", value: "\(buffer.readableBytes)")
         headers.add(name: "Connection", value: "close")
+        HTTPHandler.applyCORSHeaders(&headers)
 
         channel.write(
             HTTPServerResponsePart.head(HTTPResponseHead(
