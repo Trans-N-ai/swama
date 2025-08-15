@@ -13,6 +13,7 @@ struct SwamaApp: App {
     /// Use NSApplicationDelegateAdaptor to integrate the existing AppDelegate
     /// from SwamaKit for managing the application lifecycle and menu bar.
     @NSApplicationDelegateAdaptor(SwamaKit.AppDelegate.self) var appDelegate
+    @StateObject private var menuDelegate = MenuDelegate()
 
     @State private var cliToolStatus: CLIToolStatus = .notInstalled
 
@@ -26,14 +27,14 @@ struct SwamaApp: App {
                 // Only show CLI tool button if not up to date
                 if cliToolStatus != .upToDate {
                     Button(cliToolButtonTitle) {
-                        appDelegate.installCLITool()
+                        menuDelegate.installCLITool()
                         // Refresh status after installation
-                        cliToolStatus = appDelegate.checkCLIToolStatus()
+                        cliToolStatus = menuDelegate.checkCLIToolStatus()
                     }
                     .keyboardShortcut("I", modifiers: [.command])
                     .onAppear {
                         // Check CLI tool status when menu appears
-                        cliToolStatus = appDelegate.checkCLIToolStatus()
+                        cliToolStatus = menuDelegate.checkCLIToolStatus()
                     }
                     
                     Divider()
@@ -42,7 +43,7 @@ struct SwamaApp: App {
                     Color.clear
                         .frame(height: 0)
                         .onAppear {
-                            cliToolStatus = appDelegate.checkCLIToolStatus()
+                            cliToolStatus = menuDelegate.checkCLIToolStatus()
                         }
                 }
 
