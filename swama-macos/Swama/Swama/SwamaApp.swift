@@ -7,6 +7,7 @@
 
 import SwamaKit
 import SwiftUI
+import Combine
 
 @main
 struct SwamaApp: App {
@@ -23,6 +24,7 @@ struct SwamaApp: App {
         MenuBarExtra("Swama", image: "MenuBarIcon") {
             VStack {
                 ToolStatusView()
+                ModelCacheView()
                 Button("Quit Swama") {
                     NSApplication.shared.terminate(nil)
                 }
@@ -30,7 +32,42 @@ struct SwamaApp: App {
             }
         }
     }
-
+    
+    struct ModelCacheView: View {
+        var menuDelegate: MenuDelegate { .shared }
+        @State private var modelCache: [String] = []
+        @State private var cancellable: AnyCancellable?
+        
+        var body: some View {
+            VStack {
+                if modelCache.isEmpty {
+                    Text("No Models Loaded")
+                } else {
+                    Text("Loaded Models")
+                    ForEach(modelCache, id: \.self) { model in
+                        Text(model).foregroundStyle(.gray)
+                    }
+                    Button("Unload All Models") {
+                        Task { await ModelPool.shared.clearCache() }
+                    }
+                    Divider()
+                }
+            }
+            .onAppear {
+                Task {
+                    self.cancellable = await ModelPool.shared.modelCachePublisher
+                        .receive(on: DispatchQueue.main)
+                        .sink { models in
+                            self.modelCache = models
+                        }
+                }
+            }
+            .onDisappear {
+                cancellable?.cancel()
+            }
+        }
+    }
+    
     struct ToolStatusView: View {
         var menuDelegate: MenuDelegate { .shared }
         @State private var cliToolStatus: CLIToolStatus = .notInstalled
