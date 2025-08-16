@@ -32,8 +32,10 @@ private struct CLIToolPaths {
 // MARK: ‑ MenuDelegate
 
 @MainActor
-public class MenuDelegate: ObservableObject {
+public class MenuDelegate {
     // MARK: Lifecycle
+
+    public static let shared = MenuDelegate()
 
     // MARK: ‑ Init
     public init() {}

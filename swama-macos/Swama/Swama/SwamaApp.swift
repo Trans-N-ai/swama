@@ -13,7 +13,7 @@ struct SwamaApp: App {
     /// Use NSApplicationDelegateAdaptor to integrate the existing AppDelegate
     /// from SwamaKit for managing the application lifecycle and menu bar.
     @NSApplicationDelegateAdaptor(SwamaKit.AppDelegate.self) var appDelegate
-    @StateObject private var menuDelegate = MenuDelegate()
+    var menuDelegate: MenuDelegate { .shared }
 
     @State private var cliToolStatus: CLIToolStatus = .notInstalled
 
