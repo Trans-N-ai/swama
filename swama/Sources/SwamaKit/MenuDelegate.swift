@@ -88,7 +88,7 @@ public class MenuDelegate: ObservableObject {
 
         // locate Helpers directory & binary
         guard FileManager.default.isExecutableFile(atPath: paths.binPath) else {
-            alert("Installation Failed", "Mach‑O binary not found: \(paths.binPath)")
+            alert("Installation failed", "Mach‑O binary not found: \(paths.binPath)")
             return
         }
 
@@ -102,7 +102,7 @@ public class MenuDelegate: ObservableObject {
             try script.write(to: tmpURL, atomically: true, encoding: .utf8)
         }
         catch {
-            alert("Installation Failed", "Unable to write temporary wrapper script: \(error.localizedDescription)")
+            alert("Installation failed", "An error occurred while creating temporary wrapper script. \(error.localizedDescription)")
             return
         }
 
@@ -115,10 +115,10 @@ public class MenuDelegate: ObservableObject {
         if let osa = NSAppleScript(source: osaSrc) {
             let _ = osa.executeAndReturnError(&errDict)
             if errDict == nil {
-                alert("Installation Successful", "'swama' CLI wrapper installed to \(paths.wrapperPath)", info: true)
+                alert("Installation successful", "Installed `swama` command line tools to \(paths.wrapperPath).", info: true)
             }
             else {
-                let why = errDict?["NSAppleScriptErrorMessage"] as? String ?? "AppleScript failed"
+                let why = errDict?["NSAppleScriptErrorMessage"] as? String ?? "AppleScript failed."
                 manualMsg(tmp: tmpURL.path, dest: paths.wrapperPath, why: why)
             }
         }
