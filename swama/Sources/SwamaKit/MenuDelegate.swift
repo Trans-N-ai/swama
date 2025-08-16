@@ -37,7 +37,6 @@ public class MenuDelegate {
 
     public static let shared = MenuDelegate()
 
-    // MARK: ‑ Init
     public init() {}
 
     // MARK: Public

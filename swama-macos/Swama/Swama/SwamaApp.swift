@@ -15,8 +15,6 @@ struct SwamaApp: App {
     @NSApplicationDelegateAdaptor(SwamaKit.AppDelegate.self) var appDelegate
     var menuDelegate: MenuDelegate { .shared }
 
-    @State private var cliToolStatus: CLIToolStatus = .notInstalled
-
     init() {
         NSLog("SwamaApp: init() called. The application is starting.")
     }
@@ -24,29 +22,7 @@ struct SwamaApp: App {
     var body: some Scene {
         MenuBarExtra("Swama", image: "MenuBarIcon") {
             VStack {
-                // Only show CLI tool button if not up to date
-                if cliToolStatus != .upToDate {
-                    Button(cliToolButtonTitle) {
-                        menuDelegate.installCLITool()
-                        // Refresh status after installation
-                        cliToolStatus = menuDelegate.checkCLIToolStatus()
-                    }
-                    .keyboardShortcut("I", modifiers: [.command])
-                    .onAppear {
-                        // Check CLI tool status when menu appears
-                        cliToolStatus = menuDelegate.checkCLIToolStatus()
-                    }
-                    
-                    Divider()
-                } else {
-                    // Still need to check status when menu appears, even when button is hidden
-                    Color.clear
-                        .frame(height: 0)
-                        .onAppear {
-                            cliToolStatus = menuDelegate.checkCLIToolStatus()
-                        }
-                }
-
+                ToolStatusView()
                 Button("Quit Swama") {
                     NSApplication.shared.terminate(nil)
                 }
@@ -55,14 +31,43 @@ struct SwamaApp: App {
         }
     }
 
-    private var cliToolButtonTitle: String {
-        switch cliToolStatus {
-        case .notInstalled:
-            return "Install CLI…"
-        case .needsUpdate:
-            return "Update CLI…"
-        case .upToDate:
-            return ""
+    struct ToolStatusView: View {
+        var menuDelegate: MenuDelegate { .shared }
+        @State private var cliToolStatus: CLIToolStatus = .notInstalled
+
+        var body: some View {
+            // Only show CLI tool button if not up to date
+            if cliToolStatus != .upToDate {
+                Button(cliToolButtonTitle) {
+                    menuDelegate.installCLITool()
+                    // Refresh status after installation
+                    cliToolStatus = menuDelegate.checkCLIToolStatus()
+                }
+                .keyboardShortcut("I", modifiers: [.command])
+                .onAppear {
+                    // Check CLI tool status when menu appears
+                    cliToolStatus = menuDelegate.checkCLIToolStatus()
+                }
+                Divider()
+            } else {
+                // Still need to check status when menu appears, even when button is hidden
+                Color.clear
+                    .frame(height: 0)
+                    .onAppear {
+                        cliToolStatus = menuDelegate.checkCLIToolStatus()
+                    }
+            }
+        }
+
+        private var cliToolButtonTitle: String {
+            switch cliToolStatus {
+            case .notInstalled:
+                return "Install CLI…"
+            case .needsUpdate:
+                return "Update CLI…"
+            case .upToDate:
+                return ""
+            }
         }
     }
 }
