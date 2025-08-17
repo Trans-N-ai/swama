@@ -45,7 +45,7 @@ struct SwamaApp: App {
                 } else {
                     Text("Loaded Models")
                     ForEach(modelCache, id: \.self) { model in
-                        Text(model).foregroundStyle(.gray)
+                        Text(model)
                     }
                     Button("Unload All Models") {
                         Task { await ModelPool.shared.clearCache() }
