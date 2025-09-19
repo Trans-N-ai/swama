@@ -187,8 +187,6 @@ public actor ModelPool {
         do {
             // Get or load the model container
             let container = try await getContainer(modelName: modelName)
-
-            // Create a fresh ModelRunner instance for this request to avoid sharing conflicts
             let runner = ModelRunner(container: container)
 
             // Execute the operation
@@ -301,9 +299,6 @@ public actor ModelPool {
 
             cache[modelName] = container
             modelUsageInfo[modelName] = ModelUsageInfo()
-            NSLog(
-                "SwamaKit.ModelPool: Successfully loaded \(modelName) as \(isVLMModel ? "VLM" : "LLM") from local directory"
-            )
             return container
         }
         tasks[modelName] = task
@@ -423,6 +418,7 @@ public actor ModelPool {
         modelName: String,
         isVLM: Bool
     ) async throws -> MLXLMCommon.ModelContainer {
+        ensureChatTemplateIfNeeded(for: modelName)
         // Configure extra EOS tokens for models with known issues
         let extraEOSTokens = getExtraEOSTokens(for: modelName)
 
@@ -447,12 +443,233 @@ public actor ModelPool {
     /// Get extra EOS tokens for models with known tokenization issues
     private func getExtraEOSTokens(for modelName: String) -> Set<String> {
         let lowercaseName = modelName.lowercased()
+        var tokens = detectEOSTokensFromModelFiles(modelName: modelName)
 
         if lowercaseName.contains("gemma") {
-            return ["<end_of_turn>"]
+            tokens.insert("<end_of_turn>")
         }
 
-        return []
+        if lowercaseName.contains("qwen3-coder") {
+            tokens.insert("<endoftext>")
+        }
+
+        if !tokens.isEmpty {
+            let tokenList = Array(tokens)
+            NSLog(
+                "SwamaKit.ModelPool: extra EOS tokens for %@ -> %@",
+                modelName,
+                tokenList.joined(separator: ",")
+            )
+        }
+
+        return tokens
+    }
+
+    private func detectEOSTokensFromModelFiles(modelName: String) -> Set<String> {
+        let modelDirectory = ModelPaths.getModelDirectory(for: modelName)
+        let configURL = modelDirectory.appendingPathComponent("config.json")
+        let generationConfigURL = modelDirectory.appendingPathComponent("generation_config.json")
+        let tokenizerURL = modelDirectory.appendingPathComponent("tokenizer.json")
+
+        var eosTokenIDs: Set<Int> = []
+
+        if let ids = parseEOSTokenIDs(from: configURL) {
+            eosTokenIDs.formUnion(ids)
+        }
+
+        if let ids = parseEOSTokenIDs(from: generationConfigURL) {
+            eosTokenIDs.formUnion(ids)
+        }
+
+        guard !eosTokenIDs.isEmpty,
+              let tokens = mapTokenIDsToStrings(ids: eosTokenIDs, tokenizerURL: tokenizerURL)
+        else {
+            return []
+        }
+
+        return tokens
+    }
+
+    private func ensureChatTemplateIfNeeded(for modelName: String) {
+        let modelDirectory = ModelPaths.getModelDirectory(for: modelName)
+        let tokenizerConfigURL = modelDirectory.appendingPathComponent("tokenizer_config.json")
+        let templateURL = modelDirectory.appendingPathComponent("chat_template.jinja")
+
+        guard FileManager.default.fileExists(atPath: tokenizerConfigURL.path) else {
+            return
+        }
+        guard let configData = try? Data(contentsOf: tokenizerConfigURL),
+              var jsonObject = try? JSONSerialization.jsonObject(with: configData) as? [String: Any]
+        else {
+            return
+        }
+
+        if let existingTemplate = jsonObject["chat_template"] as? String,
+           !existingTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return
+        }
+
+        guard FileManager.default.fileExists(atPath: templateURL.path),
+              let templateString = try? String(contentsOf: templateURL, encoding: .utf8),
+              !templateString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        jsonObject["chat_template"] = templateString
+
+        guard let updatedData = try? JSONSerialization
+            .data(withJSONObject: jsonObject, options: [.prettyPrinted])
+        else {
+            return
+        }
+
+        let mergedURL = tokenizerConfigURL.deletingLastPathComponent()
+            .appendingPathComponent("tokenizer_config.merged.json")
+
+        do {
+            try updatedData.write(to: mergedURL, options: .atomic)
+        }
+        catch {
+            NSLog(
+                "SwamaKit.ModelPool: failed to write merged chat template for %@ - %@",
+                modelName,
+                error.localizedDescription
+            )
+            return
+        }
+
+        do {
+            try FileManager.default.removeItem(at: tokenizerConfigURL)
+        }
+        catch {
+            NSLog(
+                "SwamaKit.ModelPool: failed to remove original tokenizer config for %@ - %@",
+                modelName,
+                error.localizedDescription
+            )
+        }
+
+        do {
+            try FileManager.default.copyItem(at: mergedURL, to: tokenizerConfigURL)
+        }
+        catch {
+            NSLog(
+                "SwamaKit.ModelPool: failed to install merged tokenizer config for %@ - %@",
+                modelName,
+                error.localizedDescription
+            )
+        }
+    }
+
+    private func parseEOSTokenIDs(from url: URL) -> Set<Int>? {
+        guard let data = try? Data(contentsOf: url),
+              let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        var ids: Set<Int> = []
+        var eosIDs: Set<Int> = []
+
+        if let eosValue = jsonObject["eos_token_id"] {
+            eosIDs = extractIDs(from: eosValue)
+            ids.formUnion(eosIDs)
+        }
+
+        if !eosIDs.isEmpty,
+           let padValue = jsonObject["pad_token_id"]
+        {
+            let padIDs = extractIDs(from: padValue)
+            if !padIDs.isDisjoint(with: eosIDs) {
+                ids.formUnion(padIDs)
+            }
+        }
+
+        return ids
+    }
+
+    private func extractIDs(from value: Any) -> Set<Int> {
+        switch value {
+        case let intValue as Int:
+            [intValue]
+
+        case let number as NSNumber:
+            [number.intValue]
+
+        case let doubleValue as Double:
+            [Int(doubleValue)]
+
+        case let array as [Any]:
+            array.reduce(into: Set<Int>()) { result, element in
+                result.formUnion(extractIDs(from: element))
+            }
+
+        default:
+            []
+        }
+    }
+
+    private func mapTokenIDsToStrings(ids: Set<Int>, tokenizerURL: URL) -> Set<String>? {
+        guard let data = try? Data(contentsOf: tokenizerURL),
+              let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        var remainingIDs = ids
+        var tokens: Set<String> = []
+
+        if let addedTokens = jsonObject["added_tokens"] as? [[String: Any]] {
+            for tokenInfo in addedTokens {
+                guard let idValue = tokenInfo["id"],
+                      let id = extractIDs(from: idValue).first,
+                      remainingIDs.contains(id),
+                      let content = tokenInfo["content"] as? String
+                else {
+                    continue
+                }
+
+                tokens.insert(content)
+                remainingIDs.remove(id)
+            }
+        }
+
+        if !remainingIDs.isEmpty,
+           let modelDict = jsonObject["model"] as? [String: Any],
+           let vocab = modelDict["vocab"] as? [String: Any]
+        {
+            for (token, idValue) in vocab {
+                let idSet = extractIDs(from: idValue)
+                guard let id = idSet.first,
+                      remainingIDs.contains(id)
+                else {
+                    continue
+                }
+
+                tokens.insert(token)
+                remainingIDs.remove(id)
+
+                if remainingIDs.isEmpty {
+                    break
+                }
+            }
+        }
+
+        if remainingIDs.isEmpty {
+            return tokens
+        }
+
+        if !tokens.isEmpty {
+            NSLog(
+                "SwamaKit.ModelPool: Missing tokenizer mappings for EOS token ids: %@",
+                remainingIDs.map(String.init).joined(separator: ",")
+            )
+            return tokens
+        }
+
+        return nil
     }
 
     private func ensureVLMRegistryInitialized() {
@@ -520,8 +737,6 @@ public actor ModelPool {
                 await self.performPeriodicMemoryCleanup()
             }
         }
-
-        NSLog("SwamaKit.ModelPool: Memory management task started (interval: \(memoryCheckInterval)s)")
     }
 
     /// Performs periodic cleanup of idle models
@@ -674,7 +889,5 @@ public actor ModelPool {
 
         // Step 8: Restore original cache limit
         MLX.GPU.set(cacheLimit: originalCacheLimit)
-
-        NSLog("SwamaKit.ModelPool: memory cleanup completed - forced GC, cache disabled/cleared/restored")
     }
 }

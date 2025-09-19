@@ -564,7 +564,11 @@ public enum CompletionsHandler {
 
         // Construct the message content for the response
         let responseMessageContent = MessageContent.text(result.output)
-        let responseMessage = Message(role: "assistant", content: responseMessageContent, tool_calls: toolCalls)
+        let responseMessage = Message(
+            role: "assistant",
+            content: responseMessageContent,
+            tool_calls: toolCalls
+        )
 
         let choice = CompletionChoice(
             index: 0,
@@ -644,12 +648,7 @@ public enum CompletionsHandler {
         try await writeSSEJSON(channel: channel, payload: initialJSON)
 
         // Execute model with error handling
-        let result: (
-            output: String,
-            promptTokens: Int,
-            completionInfo: GenerateCompletionInfo?,
-            toolCalls: [MLXLMCommon.ToolCall]
-        )
+        let result: ModelRunner.ChatRunResult
 
         do {
             result = try await modelPool.run(

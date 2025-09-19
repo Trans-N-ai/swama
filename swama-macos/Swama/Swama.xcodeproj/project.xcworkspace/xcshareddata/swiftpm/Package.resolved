@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/johnmai-dev/Jinja",
       "state" : {
-        "revision" : "fc1233dea1142897d474bda2f1f9a6c3fe7acab6",
-        "version" : "1.2.1"
+        "revision" : "bb238dd96fbe4c18014f3107c00edd6edb15428e",
+        "version" : "1.2.4"
       }
     },
     {
@@ -34,7 +34,7 @@
       "location" : "https://github.com/ml-explore/mlx-swift-examples",
       "state" : {
         "branch" : "main",
-        "revision" : "6a5d1dfa29f27f67f1fd59c9b78d2eac069c9abf"
+        "revision" : "24219cd54bdef95f4693f8743264e3d53ffdc12a"
       }
     },
     {
@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
       "state" : {
-        "revision" : "a5fea865badcb1c993c85b0f0e8d05a4bd2270fb",
-        "version" : "2.85.0"
+        "revision" : "1c30f0f2053b654e3d1302492124aa6d242cdba7",
+        "version" : "2.86.0"
       }
     },
     {
@@ -96,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-system.git",
       "state" : {
-        "revision" : "61e4ca4b81b9e09e2ec863b00c340eb13497dac6",
-        "version" : "1.5.0"
+        "revision" : "890830fff1a577dc83134890c7984020c5f6b43b",
+        "version" : "1.6.2"
       }
     },
     {
@@ -114,8 +114,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/argmaxinc/WhisperKit.git",
       "state" : {
-        "revision" : "b3c412aa7520069f6c71f7cc217fbcf850ba31a1",
-        "version" : "0.13.0"
+        "revision" : "c814caea8876036f0c87a0de29552f028d59832d",
+        "version" : "0.13.1"
       }
     }
   ],
