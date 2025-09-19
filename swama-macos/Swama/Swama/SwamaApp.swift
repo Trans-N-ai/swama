@@ -99,11 +99,11 @@ struct SwamaApp: App {
         private var cliToolButtonTitle: String {
             switch cliToolStatus {
             case .notInstalled:
-                return "Install CLI…"
+                "Install Command Line Tool…"
             case .needsUpdate:
-                return "Update CLI…"
+                "Update Command Line Tool…"
             case .upToDate:
-                return ""
+                ""
             }
         }
     }
