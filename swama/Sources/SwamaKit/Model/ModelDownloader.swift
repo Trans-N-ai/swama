@@ -32,7 +32,7 @@ public enum ModelDownloader {
         printMessage("Using downloader: \(swamaRegistry)")
         let downloader = downloaderClass.init()
         let fileInfos = try await downloader.listModelFilesWithSize(repo: resolvedModelName)
-        let allowedExtensions = ["safetensors", "bin", "json", "model", "txt", "pt", "params", "tiktoken", "vocab"]
+        let allowedExtensions = ["safetensors", "bin", "json", "model", "txt", "pt", "params", "tiktoken", "vocab", "jinja"]
         let filteredFileInfos = fileInfos.filter { info in
             allowedExtensions.contains(where: { info.path.hasSuffix(".\($0)") })
         }
@@ -183,7 +183,8 @@ public enum ModelDownloader {
 
         if modelExists {
             print("✅ Model already exists: \(resolved)")
-        } else {
+        }
+        else {
             try await ModelDownloader.downloadModel(resolvedModelName: resolved)
         }
 

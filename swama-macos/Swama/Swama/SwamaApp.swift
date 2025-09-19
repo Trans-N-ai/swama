@@ -35,9 +35,10 @@ struct SwamaApp: App {
                         // Check CLI tool status when menu appears
                         cliToolStatus = appDelegate.checkCLIToolStatus()
                     }
-                    
+
                     Divider()
-                } else {
+                }
+                else {
                     // Still need to check status when menu appears, even when button is hidden
                     Color.clear
                         .frame(height: 0)
@@ -57,11 +58,11 @@ struct SwamaApp: App {
     private var cliToolButtonTitle: String {
         switch cliToolStatus {
         case .notInstalled:
-            return "Install Command Line Tool…"
+            "Install Command Line Tool…"
         case .needsUpdate:
-            return "Update Command Line Tool…"
+            "Update Command Line Tool…"
         case .upToDate:
-            return ""
+            ""
         }
     }
 }

@@ -80,6 +80,11 @@ public enum ModelAliasResolver {
 
         // SmolLM Family
         "smollm": "mlx-community/SmolLM-135M-Instruct-4bit",
+
+        // GPT-OSS Family
+        "gpt-oss": "lmstudio-community/gpt-oss-20b-MLX-8bit", // Default for "gpt-oss"
+        "gpt-oss-20b": "lmstudio-community/gpt-oss-20b-MLX-8bit",
+        "gpt-oss-120b": "lmstudio-community/gpt-oss-120b-MLX-8bit",
     ]
 
     /// WhisperKit model aliases mapping user-friendly names to HuggingFace folder names
