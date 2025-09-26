@@ -98,7 +98,7 @@ swama list
 ```
 
 **✨ スマート機能:**
-- **モデルエイリアス**: 長いURLの代わりに `qwen3`、`llama3.2`、`deepseek-r1` などの使いやすい名前を使用
+- **モデルエイリアス**: 長いURLの代わりに `qwen3`、`llama3.2`、`deepseek-r1`、`gpt-oss` などの使いやすい名前を使用
 - **自動ダウンロード**: 初回使用時に自動でモデルをダウンロード - 事前に `pull` する必要なし！
 - **キャッシュ管理**: ダウンロードしたモデルは将来の使用のためにキャッシュされます
 
@@ -114,6 +114,8 @@ swama list
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (デフォルト) |
 | `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 (VLM - 視覚言語モデル) |
 | `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B（大規模視覚言語モデル） |
+| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | 約 20 GB | ローカルや専用用途向けの低レイテンシモデル（21B パラメータ、3.6B アクティブ） |
+| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | 約 120 GB | 本番環境向けの高汎用推論モデルで、より高い推論能力を提供（117B パラメータ、5.1B アクティブ） |
 | `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` | 4.3 GB | DeepSeek R1（Qwen3-8Bベース・推論型） |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
 | `whisper-large` | `openai_whisper-large-v3` | 2.9 GB | Whisper Large (音声認識) |

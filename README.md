@@ -98,7 +98,7 @@ swama list
 ```
 
 **✨ Smart Features:**
-- **Model Aliases**: Use friendly names like `qwen3`, `llama3.2`, `deepseek-r1` instead of long URLs
+- **Model Aliases**: Use friendly names like `qwen3`, `llama3.2`, `deepseek-r1`, `gpt-oss` instead of long URLs
 - **Auto-Download**: Models are automatically downloaded on first use - no need to `pull` first!
 - **Cache Management**: Downloaded models are cached for future use
 
@@ -114,6 +114,8 @@ swama list
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (default) |
 | `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 (VLM - vision language model) |
 | `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 (large-scale VLM) |
+| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | ~20 GB | Lower-latency model for local or specialized use (21B params, 3.6B active) |
+| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | ~120 GB | Production-grade general-purpose reasoning model with higher reasoning capacity (117B params, 5.1B active) |
 | `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` | 4.3 GB | DeepSeek R1 based on Qwen3-8B (reasoning model) |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
 | `whisper-large` | `openai_whisper-large-v3` | 2.9 GB | Whisper Large (speech recognition) |
