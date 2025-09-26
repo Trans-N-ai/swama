@@ -98,7 +98,7 @@ swama list
 ```
 
 **✨ 智能特性:**
-- **模型别名**: 使用友好的名称如 `qwen3`、`llama3.2`、`deepseek-r1` 而不是长链接
+- **模型别名**: 使用友好的名称如 `qwen3`、`llama3.2`、`deepseek-r1`、`gpt-oss` 而不是长链接
 - **自动下载**: 首次使用时自动下载模型 - 无需先执行 `pull`！
 - **缓存管理**: 下载的模型会被缓存以供后续使用
 
@@ -114,6 +114,8 @@ swama list
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (默认) |
 | `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 (VLM - 视觉语言模型) |
 | `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B（大规模视觉语言模型） |
+| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | 约 20 GB | 面向本地或定制场景的低延迟模型（21B 参数，3.6B 活跃参数） |
+| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | 约 120 GB | 面向生产的高阶通用推理模型，提供更强推理能力（117B 参数，5.1B 活跃参数） |
 | `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` | 4.3 GB | DeepSeek R1 基于 Qwen3-8B（推理模型） |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
 | `whisper-large` | `openai_whisper-large-v3` | 2.9 GB | Whisper Large (语音识别) |
