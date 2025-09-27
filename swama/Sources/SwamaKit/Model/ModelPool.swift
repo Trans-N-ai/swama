@@ -4,6 +4,7 @@ import mlx_embeddings
 import MLXLLM
 import MLXLMCommon
 import MLXVLM
+import Combine
 
 // MARK: - ModelPoolError
 
@@ -79,6 +80,23 @@ public actor ModelPool {
 
     public static let shared: ModelPool = .init()
 
+    public var modelCachePublisher: AnyPublisher<[String], Never> {
+        modelCacheSubject.eraseToAnyPublisher()
+    }
+
+    // MARK: - Publisher
+
+    private var modelCacheSubject: CurrentValueSubject<[String], Never> = .init([])
+
+    /// Expose names of models currently cached in the model pool to subscribers
+    private func publishModelCache() {
+        let modelCache = Set(cache.keys.map { $0 })
+            .union(embeddingRunnerCache.keys.map { $0 })
+            .union(whisperKitRunnerCache.keys.map { $0 })
+            .sorted()
+        modelCacheSubject.send(modelCache)
+    }
+
     // MARK: - WhisperKit Support
 
     /// Safely run a WhisperKit operation with caching and concurrency control
@@ -143,6 +161,10 @@ public actor ModelPool {
             whisperKitRunnerCache[modelName] = runner
             // Initialize usage tracking for new runner
             modelUsageInfo[modelName] = ModelUsageInfo()
+
+            // Publish names of models in pool cache
+            publishModelCache()
+
             return runner
         }
         whisperKitTasks[modelName] = task
@@ -227,6 +249,9 @@ public actor ModelPool {
                 let container = try await loadEmbeddingModelContainer(modelName: modelName)
                 runner = EmbeddingRunner(container: container)
                 embeddingRunnerCache[modelName] = runner
+
+                // Publish names of models in pool cache
+                publishModelCache()
             }
 
             // Execute the operation
@@ -299,6 +324,10 @@ public actor ModelPool {
 
             cache[modelName] = container
             modelUsageInfo[modelName] = ModelUsageInfo()
+
+            // Publish names of models in pool cache
+            publishModelCache()
+
             return container
         }
         tasks[modelName] = task
@@ -313,6 +342,8 @@ public actor ModelPool {
     /// Sets an embedding model runner for the given model name.
     public func setEmbeddingRunner(_ runner: EmbeddingRunner, for modelName: String) async {
         embeddingRunnerCache[modelName] = runner
+        // Publish names of models in pool cache
+        publishModelCache()
     }
 
     /// Clears the entire model cache and cancels any ongoing loading tasks.
@@ -357,6 +388,9 @@ public actor ModelPool {
             NSLog(
                 "SwamaKit.ModelPool: Cache cleared (\(containersToEvict.count) models). Released \(memoryReleased / (1024 * 1024))MB active memory. Active: \(memoryAfter.activeMemory / (1024 * 1024))MB"
             )
+
+            // Publish names of models in pool cache
+            publishModelCache()
         }
 
         NSLog("SwamaKit.ModelPool: Cache clearing initiated for \(containersToEvict.count) models")
@@ -383,6 +417,9 @@ public actor ModelPool {
 
         // Release container reference
         _ = containerToRemove
+        
+        // Publish names of models in pool cache
+        publishModelCache()
 
         // Clear MLX GPU cache after removing model
         MLX.GPU.clearCache()
@@ -856,6 +893,9 @@ public actor ModelPool {
         NSLog(
             "SwamaKit.ModelPool: Evicted model \(modelName) - \(reason). Released \(memoryReleased / (1024 * 1024))MB active memory. Active: \(memoryAfter.activeMemory / (1024 * 1024))MB"
         )
+
+        // Publish names of models in pool cache
+        publishModelCache()
     }
 
     /// Performs aggressive memory cleanup to actually release GPU memory

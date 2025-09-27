@@ -1,9 +1,15 @@
+//
+//  MenuDelegate.swift
+//  swama
+//
+//  Created by haol-co on 14/08/2025
+//
+
 import AppKit
 import Foundation
 
 // MARK: - CLIToolStatus
 
-/// AppDelegate for Swama menu‑bar application
 public enum CLIToolStatus {
     case notInstalled
     case needsUpdate
@@ -23,45 +29,20 @@ private struct CLIToolPaths {
     }
 }
 
-// MARK: - AppDelegate
+// MARK: ‑ MenuDelegate
 
 @MainActor
-public class AppDelegate: NSObject, NSApplicationDelegate {
+public class MenuDelegate {
     // MARK: Lifecycle
 
-    // MARK: ‑ Init
+    public static let shared = MenuDelegate()
 
-    override public init() {
-        super.init()
-        NSLog("SwamaKit.AppDelegate: init() called.")
-
-        self.serverManager = ServerManager(host: "0.0.0.0", port: 28100)
-    }
+    public init() {}
 
     // MARK: Public
 
-    // MARK: ‑ NSApplicationDelegate
-
-    public func applicationDidFinishLaunching(_: Notification) {
-        // turn app into a menu‑bar‑only application
-        if NSApp.activationPolicy() != .accessory {
-            NSApp.setActivationPolicy(.accessory)
-        }
-
-        // start backend server
-        Task {
-            do { try serverManager?.startInBackground() }
-            catch { NSLog("SwamaKit.AppDelegate: server failed to start → \(error)") }
-        }
-    }
-
-    public func applicationWillTerminate(_: Notification) {
-        Task { await serverManager?.stop() }
-    }
-
     // MARK: Private
 
-    private var serverManager: ServerManager?
 
     // MARK: ‑ CLI Tool Paths
 
@@ -108,7 +89,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
         // locate Helpers directory & binary
         guard FileManager.default.isExecutableFile(atPath: paths.binPath) else {
-            alert("Installation Failed", "Mach‑O binary not found: \(paths.binPath)")
+            alert("Installation failed", "Mach‑O binary not found: \(paths.binPath)")
             return
         }
 
@@ -122,7 +103,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             try script.write(to: tmpURL, atomically: true, encoding: .utf8)
         }
         catch {
-            alert("Installation Failed", "Unable to write temporary wrapper script: \(error.localizedDescription)")
+            alert("Installation failed", "An error occurred while creating temporary wrapper script. \(error.localizedDescription)")
             return
         }
 
@@ -135,10 +116,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         if let osa = NSAppleScript(source: osaSrc) {
             let _ = osa.executeAndReturnError(&errDict)
             if errDict == nil {
-                alert("Installation Successful", "'swama' CLI wrapper installed to \(paths.wrapperPath)", info: true)
+                alert("Installation successful", "Installed `swama` command line tools to \(paths.wrapperPath).", info: true)
             }
             else {
-                let why = errDict?["NSAppleScriptErrorMessage"] as? String ?? "AppleScript failed"
+                let why = errDict?["NSAppleScriptErrorMessage"] as? String ?? "AppleScript failed."
                 manualMsg(tmp: tmpURL.path, dest: paths.wrapperPath, why: why)
             }
         }
