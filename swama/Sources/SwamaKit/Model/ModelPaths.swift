@@ -42,7 +42,7 @@ public enum ModelPaths {
     public static func getModelDirectory(for modelName: String) -> URL {
         // Check if it's an audio model - use audio cache directory
         if modelName.hasPrefix("whisper-") || modelName.hasPrefix("funasr-") || modelName
-            .hasPrefix("mlx-community/whisper") || modelName.hasPrefix("mlx-community/SenseVoice")
+            .hasPrefix("mlx-community/whisper") || modelName.hasPrefix("mlx-community/Fun-ASR")
         {
             // Audio models use standard directory structure: {org}/{model}
             // e.g., mlx-community/whisper-large-v3-turbo-4bit -> mlx-community/whisper-large-v3-turbo-4bit
@@ -110,7 +110,7 @@ public enum ModelPaths {
     public static func removeModel(_ modelName: String) throws -> Bool {
         // Check if it's an audio model
         if modelName.hasPrefix("whisper-") || modelName.hasPrefix("funasr-") || modelName
-            .hasPrefix("mlx-community/whisper") || modelName.hasPrefix("mlx-community/SenseVoice")
+            .hasPrefix("mlx-community/whisper") || modelName.hasPrefix("mlx-community/Fun-ASR")
         {
             // Audio models use HuggingFace Hub format
             let hubFormattedName = modelName.replacingOccurrences(of: "/", with: "--")

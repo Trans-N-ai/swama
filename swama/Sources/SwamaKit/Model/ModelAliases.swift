@@ -72,6 +72,22 @@ public enum ModelAliasResolver {
         "qwen3-32b": "mlx-community/Qwen3-32B-4bit",
         "qwen3-235b": "mlx-community/Qwen3-235B-A22B-4bit",
 
+        // Qwen3-VL Family (Vision-Language)
+        "qwen3-vl": "mlx-community/Qwen3-VL-4B-Instruct-4bit", // Default for "qwen3-vl"
+        "qwen3-vl-2b": "mlx-community/Qwen3-VL-2B-Instruct-4bit",
+        "qwen3-vl-4b": "mlx-community/Qwen3-VL-4B-Instruct-4bit",
+        "qwen3-vl-8b": "mlx-community/Qwen3-VL-8B-Instruct-4bit",
+        "qwen3-vl-32b": "mlx-community/Qwen3-VL-32B-Instruct-4bit",
+        "qwen3-vl-30b": "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
+        "qwen3-vl-235b": "mlx-community/Qwen3-VL-235B-A22B-Instruct-4bit",
+        // Thinking variants
+        "qwen3-vl-2b-thinking": "mlx-community/Qwen3-VL-2B-Thinking-4bit",
+        "qwen3-vl-4b-thinking": "mlx-community/Qwen3-VL-4B-Thinking-4bit",
+        "qwen3-vl-8b-thinking": "mlx-community/Qwen3-VL-8B-Thinking-4bit",
+        "qwen3-vl-32b-thinking": "mlx-community/Qwen3-VL-32B-Thinking-4bit",
+        "qwen3-vl-30b-thinking": "mlx-community/Qwen3-VL-30B-A3B-Thinking-4bit",
+        "qwen3-vl-235b-thinking": "mlx-community/Qwen3-VL-235B-A22B-Thinking-3bit",
+
         // Gemma3 Famaly
         "gemma3": "mlx-community/gemma-3-4b-it-4bit", // Default for "gemma3"
         "gemma3-1b": "mlx-community/gemma-3-1b-it-4bit",
@@ -108,7 +124,7 @@ public enum ModelAliasResolver {
         "whisper-large": "mlx-community/whisper-large-v3-4bit",
         "whisper-large-v3": "mlx-community/whisper-large-v3-4bit",
         "whisper-large-turbo": "mlx-community/whisper-large-v3-turbo-4bit",
-        "whisper": "mlx-community/whisper-large-v3-turbo-4bit", // Default to turbo
+        "whisper": "mlx-community/whisper-large-v3-4bit",
 
         // English-only variants
         "whisper-tiny-en": "mlx-community/whisper-tiny.en-4bit",
@@ -117,7 +133,7 @@ public enum ModelAliasResolver {
         "whisper-medium-en": "mlx-community/whisper-medium.en-4bit",
 
         // FunASR models
-        "funasr": "mlx-community/SenseVoiceSmall-2512-4bit",
-        "funasr-small": "mlx-community/SenseVoiceSmall-2512-4bit",
+        "funasr": "mlx-community/Fun-ASR-Nano-2512-4bit",
+        "funasr-mlt": "mlx-community/Fun-ASR-MLT-Nano-2512-4bit",
     ]
 }
