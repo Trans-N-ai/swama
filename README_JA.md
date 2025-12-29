@@ -1,7 +1,7 @@
 # Swama
 
-[![Swift](https://img.shields.io/badge/Swift-6.1-orange.svg)](https://swift.org)
-[![macOS](https://img.shields.io/badge/macOS-14.0+-blue.svg)](https://www.apple.com/macos/)
+[![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
+[![macOS](https://img.shields.io/badge/macOS-15.0+-blue.svg)](https://www.apple.com/macos/)
 [![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -32,10 +32,10 @@ Swamaはモジュラーアーキテクチャ設計を採用しています：
 
 ## 📋 システム要件
 
-- macOS 14.0以降
+- macOS 15.0以降 (Sequoia)
 - Apple Silicon (M1/M2/M3/M4)
-- Xcode 15.0+（コンパイル用）
-- Swift 6.1+
+- Xcode 16.0+ (コンパイル用)
+- Swift 6.2+
 
 ## 🛠️ インストール
 
@@ -104,23 +104,44 @@ swama list
 
 ### 2. 利用可能なモデルエイリアス
 
+#### 言語モデル (LLM)
+
 | エイリアス | 完全なモデル名 | サイズ | 説明 |
-|-------|----------------|-------------|-------------|
+|-------|-----------------|------|-------------|
 | `qwen3` | `mlx-community/Qwen3-8B-4bit` | 4.3 GB | Qwen3 8B (デフォルト) |
 | `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | 938.4 MB | Qwen3 1.7B (軽量) |
-| `qwen3-30b` | `mlx-community/Qwen3-30B-A3B-4bit` | 16.0 GB | Qwen3 30B（大規模） |
-| `qwen3-32b` | `mlx-community/Qwen3-32B-4bit` | 17.2 GB | Qwen3 32B（超大規模） |
-| `qwen3-235b` | `mlx-community/Qwen3-235B-A22B-4bit` | 123.2 GB | Qwen3 235B（超大規模パラメータモデル） |
+| `qwen3-30b` | `mlx-community/Qwen3-30B-A3B-4bit` | 16.0 GB | Qwen3 30B (大規模) |
+| `qwen3-32b` | `mlx-community/Qwen3-32B-4bit` | 17.2 GB | Qwen3 32B (超大規模) |
+| `qwen3-235b` | `mlx-community/Qwen3-235B-A22B-4bit` | 123.2 GB | Qwen3 235B (超大規模) |
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (デフォルト) |
-| `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 (VLM - 視覚言語モデル) |
-| `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B（大規模視覚言語モデル） |
-| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | 約 20 GB | ローカルや専用用途向けの低レイテンシモデル（21B パラメータ、3.6B アクティブ） |
-| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | 約 120 GB | 本番環境向けの高汎用推論モデルで、より高い推論能力を提供（117B パラメータ、5.1B アクティブ） |
-| `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` | 4.3 GB | DeepSeek R1（Qwen3-8Bベース・推論型） |
+| `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | 876.3 MB | Llama 3.2 1B (最速) |
+| `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | 約 32 GB | DeepSeek R1 (推論モデル) |
+| `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-8bit` | 8.6 GB | DeepSeek R1 (Qwen3-8Bベース) |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
-| `whisper-large` | `openai_whisper-large-v3` | 2.9 GB | Whisper Large (音声認識) |
-| `whisper-base` | `openai_whisper-base` | 143.8 MB | Whisper Base (高速、低精度) |
-| `whisper-tiny` | `openai_whisper-tiny` | 77.0 MB | Whisper Tiny |
+| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | 約 20 GB | GPT-OSS 20B (21B パラメータ、3.6B アクティブ) |
+| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | 約 120 GB | GPT-OSS 120B (117B パラメータ、5.1B アクティブ) |
+
+#### 視覚言語モデル (VLM)
+
+| エイリアス | 完全なモデル名 | サイズ | 説明 |
+|-------|-----------------|------|-------------|
+| `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 4B (デフォルト VLM) |
+| `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B (大規模 VLM) |
+| `qwen3-vl` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 約 4 GB | Qwen3-VL 4B (デフォルト VLM) |
+| `qwen3-vl-2b` | `mlx-community/Qwen3-VL-2B-Instruct-4bit` | 約 2 GB | Qwen3-VL 2B (軽量) |
+| `qwen3-vl-8b` | `mlx-community/Qwen3-VL-8B-Instruct-4bit` | 約 8 GB | Qwen3-VL 8B (バランス型) |
+
+#### 音声モデル (音声認識)
+
+| エイリアス | 完全なモデル名 | サイズ | 説明 |
+|-------|-----------------|------|-------------|
+| `whisper-large` | `mlx-community/whisper-large-v3-4bit` | 1.6 GB | Whisper Large v3 (最高精度) |
+| `whisper-medium` | `mlx-community/whisper-medium-4bit` | 791.1 MB | Whisper Medium (バランス型) |
+| `whisper-small` | `mlx-community/whisper-small-4bit` | 251.7 MB | Whisper Small (高速) |
+| `whisper-base` | `mlx-community/whisper-base-4bit` | 77.2 MB | Whisper Base (より高速) |
+| `whisper-tiny` | `mlx-community/whisper-tiny-4bit` | 40.1 MB | Whisper Tiny (最速) |
+| `funasr` | `mlx-community/Fun-ASR-Nano-2512-4bit` | 約 200 MB | FunASR Nano (多言語) |
+| `funasr-mlt` | `mlx-community/Fun-ASR-MLT-Nano-2512-4bit` | 約 200 MB | FunASR MLT (多言語転写) |
 
 ### 3. APIサービスの開始
 
@@ -129,7 +150,7 @@ swama list
 swama serve --host 0.0.0.0 --port 28100
 ```
 
-### 5. API使用
+### 4. API使用
 
 #### 🔌 OpenAI互換API
 
@@ -261,7 +282,8 @@ swama serve [--host HOST] [--port PORT]
 - [swift-nio](https://github.com/apple/swift-nio) - 高性能ネットワーキングフレームワーク
 - [swift-argument-parser](https://github.com/apple/swift-argument-parser) - コマンドライン引数解析
 - [mlx-swift](https://github.com/ml-explore/mlx-swift) - Apple MLX Swiftバインディング
-- [mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples) - MLX Swiftサンプルとモデル
+- [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) - MLX Swift言語モデル
+- [mlx-swift-audio](https://github.com/DePasqualeOrg/mlx-swift-audio) - MLX Swift音声処理（Whisper、FunASR）
 
 ### ビルド
 
