@@ -3,7 +3,7 @@ import ArgumentParser
 import Foundation
 import MLX
 import MLXLLM
-import MLXLMCommon
+@preconcurrency import MLXLMCommon
 import SwamaKit
 
 // MARK: - CompletionRequest
@@ -435,15 +435,13 @@ struct Run: AsyncParsableCommand {
     private func runDirectly(modelName: String) async throws {
         // Animation for model loading and response generation
         let animatedMessagePrefix = "Generating response"
-        var stopAnimationSignal = false
         let spinnerFrames = ["/", "-", "\\", "|"]
         var animationDisplayTask: Task<Void, Never>?
 
         // Defer block to ensure animation line is cleared if an error occurs or scope is exited prematurely
         defer {
-            if animationDisplayTask != nil, !stopAnimationSignal {
-                stopAnimationSignal = true
-                animationDisplayTask?.cancel() // Request cancellation
+            if let task = animationDisplayTask {
+                task.cancel() // Request cancellation
 
                 // Perform final cleanup of the animation line
                 let cleanupMessageSample =
@@ -457,11 +455,11 @@ struct Run: AsyncParsableCommand {
             }
         }
 
-        animationDisplayTask = Task.detached {
+        animationDisplayTask = Task.detached { @Sendable in
             var frameIndex = 0
             let messagePart = "\(animatedMessagePrefix)... " // e.g., "Generating response... "
 
-            while !stopAnimationSignal, !Task.isCancelled {
+            while !Task.isCancelled {
                 let currentFrameChar = spinnerFrames[frameIndex % spinnerFrames.count]
                 // Print: carriage return, message, spinner char, then a space to clear any previous wider char.
                 fputs("\r\(messagePart)\(currentFrameChar) ", stdout)
@@ -497,9 +495,8 @@ struct Run: AsyncParsableCommand {
         let imagesToUse = processedImages
 
         // Stop animation before starting output
-        if animationDisplayTask != nil {
-            stopAnimationSignal = true
-            animationDisplayTask?.cancel()
+        if let task = animationDisplayTask {
+            task.cancel()
             try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
 
             // Clear animation line

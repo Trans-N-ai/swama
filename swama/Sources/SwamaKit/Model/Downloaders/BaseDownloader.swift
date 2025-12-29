@@ -35,32 +35,6 @@ public class BaseDownloader: IDownloader {
         fatalError("Must be implemented by subclass")
     }
 
-    /// list whisperkit model file
-    /// - Parameters:
-    ///   - modelDir: model directory
-    ///   - modelFolderName: model folder name
-    ///   - openaiModelName: openai model name
-    /// - Returns: [(url: String, localPath: URL, fileName: String)]
-    public func listWhisperKitModelFile(
-        modelDir _: URL,
-        modelFolderName _: String,
-        openaiModelName _: String
-    ) async throws -> [(
-        url: String,
-        localPath: URL,
-        fileName: String
-    )] {
-        fatalError("Must be implemented by subclass")
-    }
-
-    /// get whisperkit file size
-    /// - Parameters:
-    ///   - url: url
-    /// - Returns: file size
-    public func getWhisperKitFileSize(url _: String) async throws -> Int64 {
-        fatalError("Must be implemented by subclass")
-    }
-
     /// list model files with size
     /// - Parameters:
     ///   - repo: model repo
@@ -204,87 +178,6 @@ public class BaseDownloader: IDownloader {
         for try await byte in byteStream {
             buffer.append(byte)
             if buffer.count >= 8192 { // Increased buffer size
-                try handle.write(contentsOf: Data(buffer))
-                progressBar.update(bytes: Int64(buffer.count))
-                buffer.removeAll(keepingCapacity: true)
-            }
-        }
-        if !buffer.isEmpty {
-            try handle.write(contentsOf: Data(buffer))
-            progressBar.update(bytes: Int64(buffer.count))
-        }
-
-        progressBar.finish()
-    }
-
-    public func downloadWhisperKitFileWithResume(
-        from urlString: String,
-        to localFile: URL,
-        totalSize: Int64,
-        localSize: Int64
-    ) async throws {
-        guard let url = URL(string: urlString) else {
-            throw NSError(
-                domain: "BaseDownloader",
-                code: 14,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid URL: \(urlString)"]
-            )
-        }
-
-        var request = URLRequest(url: url)
-        var isResuming = false
-        if localSize > 0, localSize < totalSize {
-            request.setValue("bytes=\(localSize)-", forHTTPHeaderField: "Range")
-            isResuming = true
-        }
-
-        let (byteStream, response) = try await URLSession.shared.bytes(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(
-                domain: "BaseDownloader",
-                code: 9,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid response from server."]
-            )
-        }
-
-        let statusCode = httpResponse.statusCode
-        if !(200 ... 299).contains(statusCode) {
-            if statusCode == 404 {
-                throw NSError(
-                    domain: "BaseDownloader",
-                    code: 404,
-                    userInfo: [NSLocalizedDescriptionKey: "HTTP 404"]
-                )
-            }
-            throw NSError(
-                domain: "BaseDownloader",
-                code: 15,
-                userInfo: [NSLocalizedDescriptionKey: "HTTP error \(statusCode)"]
-            )
-        }
-
-        let shouldResume = isResuming && statusCode == 206 // 206 Partial Content
-
-        if !FileManager.default.fileExists(atPath: localFile.path) {
-            FileManager.default.createFile(atPath: localFile.path, contents: nil)
-        }
-
-        let handle = try FileHandle(forWritingTo: localFile)
-        defer { try? handle.close() }
-
-        if shouldResume {
-            try handle.seekToEnd()
-        }
-        else {
-            try handle.truncate(atOffset: 0)
-        }
-
-        let progressBar = ProgressBar(total: totalSize, initial: shouldResume ? localSize : 0)
-        var buffer: [UInt8] = []
-
-        for try await byte in byteStream {
-            buffer.append(byte)
-            if buffer.count >= 8192 {
                 try handle.write(contentsOf: Data(buffer))
                 progressBar.update(bytes: Int64(buffer.count))
                 buffer.removeAll(keepingCapacity: true)

@@ -187,7 +187,7 @@ final class UtilityTests {
         try dummyData.write(to: dummyModelFile)
 
         // Delete existing metadata if it exists
-        let createdModelPath = ModelPaths.preferredModelsDirectory.appendingPathComponent(testModelName)
+        let createdModelPath = ModelPaths.activeModelsDirectory.appendingPathComponent(testModelName)
         try? FileManager.default.removeItem(at: createdModelPath)
         let metadataFile = createdModelPath.appendingPathComponent(".swama-meta.json")
 

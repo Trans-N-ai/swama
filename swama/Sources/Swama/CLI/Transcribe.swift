@@ -1,9 +1,9 @@
 import ArgumentParser
 import Foundation
 import MLX
+@preconcurrency import MLXAudio
 @preconcurrency import MLXLMCommon
 import SwamaKit
-@preconcurrency import WhisperKit
 
 // MARK: - ResponseFormat
 
@@ -87,19 +87,19 @@ struct Transcribe: AsyncParsableCommand {
             print("💭 Prompt: \(promptText)")
         }
 
-        // Check if this is a WhisperKit model
-        guard ModelAliasResolver.isWhisperKitModel(model) else {
-            print("❌ Error: '\(model)' is not a valid WhisperKit model.")
-            print("   Use whisper-tiny, whisper-base, whisper-small, whisper-medium, or whisper-large")
+        // Check if this is a supported audio model
+        guard ModelAliasResolver.isAudioModel(model) else {
+            print("❌ Error: '\(model)' is not a supported audio model.")
+            print("   Use whisper-* models or funasr variants")
             throw ExitCode.failure
         }
 
         do {
-            // Load WhisperKit model
+            // Load MLXAudio model
             print("📥 Loading model...")
-            let runner = WhisperKitRunner()
+            let runner = await MainActor.run { AudioRunner() }
 
-            // Load using WhisperKit-specific logic
+            // Load using MLXAudio-specific logic
             try await runner.loadModel(model)
             print("✅ Model loaded successfully")
 
