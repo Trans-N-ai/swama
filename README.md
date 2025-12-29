@@ -1,7 +1,7 @@
 # Swama
 
-[![Swift](https://img.shields.io/badge/Swift-6.1-orange.svg)](https://swift.org)
-[![macOS](https://img.shields.io/badge/macOS-14.0+-blue.svg)](https://www.apple.com/macos/)
+[![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
+[![macOS](https://img.shields.io/badge/macOS-15.0+-blue.svg)](https://www.apple.com/macos/)
 [![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -32,10 +32,10 @@ Swama features a modular architecture design:
 
 ## 📋 System Requirements
 
-- macOS 14.0 or later
+- macOS 15.0 or later (Sequoia)
 - Apple Silicon (M1/M2/M3/M4)
-- Xcode 15.0+ (for compilation)
-- Swift 6.1+
+- Xcode 16.0+ (for compilation)
+- Swift 6.2+
 
 ## 🛠️ Installation
 
@@ -104,23 +104,44 @@ swama list
 
 ### 2. Available Model Aliases
 
+#### Language Models (LLM)
+
 | Alias | Full Model Name | Size | Description |
 |-------|-----------------|------|-------------|
 | `qwen3` | `mlx-community/Qwen3-8B-4bit` | 4.3 GB | Qwen3 8B (default) |
 | `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | 938.4 MB | Qwen3 1.7B (lightweight) |
-| `qwen3-30b` | `mlx-community/Qwen3-30B-A3B-4bit` | 16.0 GB | Qwen3 30B(high-capacity) |
-| `qwen3-32b` | `mlx-community/Qwen3-32B-4bit` | 17.2 GB | Qwen3 32B(ultra-scale) |
-| `qwen3-235b` | `mlx-community/Qwen3-235B-A22B-4bit` | 123.2 GB | Qwen3 235B(trillion-scale) |
+| `qwen3-30b` | `mlx-community/Qwen3-30B-A3B-4bit` | 16.0 GB | Qwen3 30B (high-capacity) |
+| `qwen3-32b` | `mlx-community/Qwen3-32B-4bit` | 17.2 GB | Qwen3 32B (ultra-scale) |
+| `qwen3-235b` | `mlx-community/Qwen3-235B-A22B-4bit` | 123.2 GB | Qwen3 235B (trillion-scale) |
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (default) |
-| `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 (VLM - vision language model) |
-| `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 (large-scale VLM) |
-| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | ~20 GB | Lower-latency model for local or specialized use (21B params, 3.6B active) |
-| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | ~120 GB | Production-grade general-purpose reasoning model with higher reasoning capacity (117B params, 5.1B active) |
-| `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` | 4.3 GB | DeepSeek R1 based on Qwen3-8B (reasoning model) |
+| `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | 876.3 MB | Llama 3.2 1B (fastest) |
+| `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | ~32 GB | DeepSeek R1 (reasoning model) |
+| `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-8bit` | 8.6 GB | DeepSeek R1 based on Qwen3-8B |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
-| `whisper-large` | `openai_whisper-large-v3` | 2.9 GB | Whisper Large (speech recognition) |
-| `whisper-base` | `openai_whisper-base` | 143.8 MB | Whisper Base (faster, lower accuracy) |
-| `whisper-tiny` | `openai_whisper-tiny` | 77.0 MB | Whisper tiny |
+| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | ~20 GB | GPT-OSS 20B (21B params, 3.6B active) |
+| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | ~120 GB | GPT-OSS 120B (117B params, 5.1B active) |
+
+#### Vision Language Models (VLM)
+
+| Alias | Full Model Name | Size | Description |
+|-------|-----------------|------|-------------|
+| `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 4B (default VLM) |
+| `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B (large-scale VLM) |
+| `qwen3-vl` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | ~4 GB | Qwen3-VL 4B (default VLM) |
+| `qwen3-vl-2b` | `mlx-community/Qwen3-VL-2B-Instruct-4bit` | ~2 GB | Qwen3-VL 2B (lightweight) |
+| `qwen3-vl-8b` | `mlx-community/Qwen3-VL-8B-Instruct-4bit` | ~8 GB | Qwen3-VL 8B (balanced) |
+
+#### Audio Models (Speech Recognition)
+
+| Alias | Full Model Name | Size | Description |
+|-------|-----------------|------|-------------|
+| `whisper-large` | `mlx-community/whisper-large-v3-4bit` | 1.6 GB | Whisper Large v3 (highest accuracy) |
+| `whisper-medium` | `mlx-community/whisper-medium-4bit` | 791.1 MB | Whisper Medium (balanced) |
+| `whisper-small` | `mlx-community/whisper-small-4bit` | 251.7 MB | Whisper Small (fast) |
+| `whisper-base` | `mlx-community/whisper-base-4bit` | 77.2 MB | Whisper Base (faster) |
+| `whisper-tiny` | `mlx-community/whisper-tiny-4bit` | 40.1 MB | Whisper Tiny (fastest) |
+| `funasr` | `mlx-community/Fun-ASR-Nano-2512-4bit` | ~200 MB | FunASR Nano (multilingual) |
+| `funasr-mlt` | `mlx-community/Fun-ASR-MLT-Nano-2512-4bit` | ~200 MB | FunASR MLT (multilingual transcription) |
 
 ### 3. Start API Service
 
@@ -129,7 +150,7 @@ swama list
 swama serve --host 0.0.0.0 --port 28100
 ```
 
-### 5. API Usage
+### 4. API Usage
 
 #### 🔌 OpenAI Compatible API
 
@@ -272,7 +293,8 @@ swama run deepseek-r1 "Think step by step: 2+2*3"    # DeepSeek R1 (reasoning)
 - [swift-nio](https://github.com/apple/swift-nio) - High-performance networking framework
 - [swift-argument-parser](https://github.com/apple/swift-argument-parser) - Command-line argument parsing
 - [mlx-swift](https://github.com/ml-explore/mlx-swift) - Apple MLX Swift bindings
-- [mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples) - MLX Swift examples and models
+- [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) - MLX Swift language models
+- [mlx-swift-audio](https://github.com/DePasqualeOrg/mlx-swift-audio) - MLX Swift audio processing (Whisper, FunASR)
 
 ### Building
 

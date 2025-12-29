@@ -1,7 +1,7 @@
 # Swama
 
-[![Swift](https://img.shields.io/badge/Swift-6.1-orange.svg)](https://swift.org)
-[![macOS](https://img.shields.io/badge/macOS-14.0+-blue.svg)](https://www.apple.com/macos/)
+[![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
+[![macOS](https://img.shields.io/badge/macOS-15.0+-blue.svg)](https://www.apple.com/macos/)
 [![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -32,10 +32,10 @@ Swama 采用模块化架构设计：
 
 ## 📋 系统要求
 
-- macOS 14.0 或更高版本
+- macOS 15.0 或更高版本 (Sequoia)
 - Apple Silicon (M1/M2/M3/M4)
-- Xcode 15.0+ (用于编译)
-- Swift 6.1+
+- Xcode 16.0+ (用于编译)
+- Swift 6.2+
 
 ## 🛠️ 安装
 
@@ -104,23 +104,44 @@ swama list
 
 ### 2. 可用的模型别名
 
+#### 语言模型 (LLM)
+
 | 别名 | 完整模型名 | 大小 | 描述 |
-|-------|----------------|-------------|-------------|
+|-------|-----------------|------|-------------|
 | `qwen3` | `mlx-community/Qwen3-8B-4bit` | 4.3 GB | Qwen3 8B (默认) |
 | `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | 938.4 MB | Qwen3 1.7B (轻量级) |
-| `qwen3-30b` | `mlx-community/Qwen3-30B-A3B-4bit` | 16.0 GB | Qwen3 30B（高容量语言模型） |
-| `qwen3-32b` | `mlx-community/Qwen3-32B-4bit` | 17.2 GB | Qwen3 32B（超大规模模型） |
-| `qwen3-235b` | `mlx-community/Qwen3-235B-A22B-4bit` | 123.2 GB | Qwen3 235B（万亿参数级语言模型） |
+| `qwen3-30b` | `mlx-community/Qwen3-30B-A3B-4bit` | 16.0 GB | Qwen3 30B (高容量) |
+| `qwen3-32b` | `mlx-community/Qwen3-32B-4bit` | 17.2 GB | Qwen3 32B (超大规模) |
+| `qwen3-235b` | `mlx-community/Qwen3-235B-A22B-4bit` | 123.2 GB | Qwen3 235B (万亿参数级) |
 | `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (默认) |
-| `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 (VLM - 视觉语言模型) |
-| `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B（大规模视觉语言模型） |
-| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | 约 20 GB | 面向本地或定制场景的低延迟模型（21B 参数，3.6B 活跃参数） |
-| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | 约 120 GB | 面向生产的高阶通用推理模型，提供更强推理能力（117B 参数，5.1B 活跃参数） |
-| `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` | 4.3 GB | DeepSeek R1 基于 Qwen3-8B（推理模型） |
+| `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | 876.3 MB | Llama 3.2 1B (最快) |
+| `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | 约 32 GB | DeepSeek R1 (推理模型) |
+| `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-8bit` | 8.6 GB | DeepSeek R1 基于 Qwen3-8B |
 | `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
-| `whisper-large` | `openai_whisper-large-v3` | 2.9 GB | Whisper Large (语音识别) |
-| `whisper-base` | `openai_whisper-base` | 143.8 MB | Whisper Base (更快，精度较低) |
-| `whisper-tiny` | `openai_whisper-tiny` | 77.0 MB | Whisper Tiny |
+| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | 约 20 GB | GPT-OSS 20B (21B 参数，3.6B 活跃) |
+| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | 约 120 GB | GPT-OSS 120B (117B 参数，5.1B 活跃) |
+
+#### 视觉语言模型 (VLM)
+
+| 别名 | 完整模型名 | 大小 | 描述 |
+|-------|-----------------|------|-------------|
+| `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 4B (默认 VLM) |
+| `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B (大规模 VLM) |
+| `qwen3-vl` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 约 4 GB | Qwen3-VL 4B (默认 VLM) |
+| `qwen3-vl-2b` | `mlx-community/Qwen3-VL-2B-Instruct-4bit` | 约 2 GB | Qwen3-VL 2B (轻量级) |
+| `qwen3-vl-8b` | `mlx-community/Qwen3-VL-8B-Instruct-4bit` | 约 8 GB | Qwen3-VL 8B (均衡) |
+
+#### 音频模型 (语音识别)
+
+| 别名 | 完整模型名 | 大小 | 描述 |
+|-------|-----------------|------|-------------|
+| `whisper-large` | `mlx-community/whisper-large-v3-4bit` | 1.6 GB | Whisper Large v3 (最高精度) |
+| `whisper-medium` | `mlx-community/whisper-medium-4bit` | 791.1 MB | Whisper Medium (均衡) |
+| `whisper-small` | `mlx-community/whisper-small-4bit` | 251.7 MB | Whisper Small (快速) |
+| `whisper-base` | `mlx-community/whisper-base-4bit` | 77.2 MB | Whisper Base (更快) |
+| `whisper-tiny` | `mlx-community/whisper-tiny-4bit` | 40.1 MB | Whisper Tiny (最快) |
+| `funasr` | `mlx-community/Fun-ASR-Nano-2512-4bit` | 约 200 MB | FunASR Nano (多语言) |
+| `funasr-mlt` | `mlx-community/Fun-ASR-MLT-Nano-2512-4bit` | 约 200 MB | FunASR MLT (多语言转写) |
 
 ### 3. 启动 API 服务
 
@@ -129,7 +150,7 @@ swama list
 swama serve --host 0.0.0.0 --port 28100
 ```
 
-### 5. API 使用
+### 4. API 使用
 
 #### 🔌 OpenAI 兼容 API
 
@@ -272,7 +293,8 @@ swama run deepseek-r1 "逐步思考：2+2*3"    # DeepSeek R1 (推理型)
 - [swift-nio](https://github.com/apple/swift-nio) - 高性能网络框架
 - [swift-argument-parser](https://github.com/apple/swift-argument-parser) - 命令行参数解析
 - [mlx-swift](https://github.com/ml-explore/mlx-swift) - Apple MLX Swift 绑定
-- [mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples) - MLX Swift 示例和模型
+- [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) - MLX Swift 语言模型
+- [mlx-swift-audio](https://github.com/DePasqualeOrg/mlx-swift-audio) - MLX Swift 音频处理（Whisper、FunASR）
 
 ### 构建
 
