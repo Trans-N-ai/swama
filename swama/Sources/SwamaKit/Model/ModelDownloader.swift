@@ -32,7 +32,18 @@ public enum ModelDownloader {
         printMessage("Using downloader: \(swamaRegistry)")
         let downloader = downloaderClass.init()
         let fileInfos = try await downloader.listModelFilesWithSize(repo: resolvedModelName)
-        let allowedExtensions = ["safetensors", "bin", "json", "model", "txt", "pt", "params", "tiktoken", "vocab", "jinja"]
+        let allowedExtensions = [
+            "safetensors",
+            "bin",
+            "json",
+            "model",
+            "txt",
+            "pt",
+            "params",
+            "tiktoken",
+            "vocab",
+            "jinja"
+        ]
         let filteredFileInfos = fileInfos.filter { info in
             allowedExtensions.contains(where: { info.path.hasSuffix(".\($0)") })
         }
@@ -89,104 +100,37 @@ public enum ModelDownloader {
         try writeModelMetadata(modelName: resolvedModelName, modelDir: modelDir)
     }
 
-    public static func downloadWhisperKitModel(alias: String) async throws {
-        guard let modelFolderName = ModelAliasResolver.whisperKitAliases[alias.lowercased()] else {
-            throw NSError(
-                domain: "ModelDownloader",
-                code: 13,
-                userInfo: [NSLocalizedDescriptionKey: "Unknown WhisperKit model: \(alias)"]
-            )
-        }
-
-        let swamaRegistry = ProcessInfo.processInfo.environment["SWAMA_REGISTRY"] ?? "HUGGING_FACE"
-
-        let modelDir = ModelPaths.getModelDirectory(for: "whisperkit/\(modelFolderName)")
-        // Create the directory if it doesn't exist
-        try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
-        printMessage("Pulling model: \(alias)")
-        let openaiModelName = getOpenAIModelNameFromFolderName(modelFolderName)
-        guard let downloaderClass: IDownloader.Type = Downloaders[swamaRegistry] as? IDownloader.Type else {
-            throw NSError(
-                domain: "ModelDownloader",
-                code: 1,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "Invalid registry: \(swamaRegistry). Supported: MODEL_SCOPE, HUGGING_FACE"
-                ]
-            )
-        }
-
-        let downloader = downloaderClass.init()
-        let allFiles = try await downloader.listWhisperKitModelFile(
-            modelDir: modelDir,
-            modelFolderName: modelFolderName,
-            openaiModelName: openaiModelName
-        )
-
-        // Download all files with unified progress display and resume support
-        let totalFiles = allFiles.count
-        for (index, fileInfo) in allFiles.enumerated() {
-            let fileIndex = index + 1
-            do {
-                // Get remote file size first
-                let remoteSize = try await downloader.getWhisperKitFileSize(url: fileInfo.url)
-
-                // Check local file size
-                var localSize: Int64 = 0
-                if FileManager.default.fileExists(atPath: fileInfo.localPath.path) {
-                    localSize = (try? FileManager.default
-                        .attributesOfItem(atPath: fileInfo.localPath.path)[.size] as? NSNumber
-                    )?
-                        .int64Value ?? 0
-                }
-
-                // Skip if file is complete
-                if localSize == remoteSize, remoteSize > 0 {
-                    printMessage("[\(fileIndex)/\(totalFiles)] Exists: \(fileInfo.fileName), skip")
-                    continue
-                }
-
-                // Download with resume support
-                printMessage("[\(fileIndex)/\(totalFiles)] Downloading: \(fileInfo.fileName)")
-                try await downloader.downloadWhisperKitFileWithResume(
-                    from: fileInfo.url,
-                    to: fileInfo.localPath,
-                    totalSize: remoteSize,
-                    localSize: localSize
-                )
-            }
-            catch {
-                // Check if it's a 404 error
-                let errorDescription = error.localizedDescription
-                if errorDescription.contains("HTTP 404") {
-                    printMessage("[\(fileIndex)/\(totalFiles)] Exists: \(fileInfo.fileName), skip")
-                    continue
-                }
-                throw error
-            }
-        }
-
-        printMessage("✅ Model pull complete: \(alias)")
-
-        // Generate metadata file so the model appears in 'swama list'
-        try writeModelMetadata(modelName: alias, modelDir: modelDir)
-    }
-
     public static func fetchModel(modelName: String) async throws -> String {
-        if ModelAliasResolver.isWhisperKitModel(modelName) {
-            try await ModelDownloader.downloadWhisperKitModel(alias: modelName)
-            return modelName
-        }
-
+        // Resolve alias to actual model name
         let resolved = ModelAliasResolver.resolve(name: modelName)
-        let modelDir = ModelPaths.getModelDirectory(for: resolved)
-        let modelExists = FileManager.default.fileExists(atPath: modelDir.path)
 
-        if modelExists {
-            print("✅ Model already exists: \(resolved)")
+        // Check if model already exists locally (using metadata file)
+        if ModelPaths.modelExistsLocally(resolved) {
+            if ModelAliasResolver.isAudioModel(resolved) {
+                print("✅ Audio model already exists: \(resolved)")
+            }
+            else {
+                print("✅ Model already exists: \(resolved)")
+            }
+            return resolved
         }
-        else {
-            try await ModelDownloader.downloadModel(resolvedModelName: resolved)
+
+        // Handle legacy WhisperKit models (if still needed for compatibility)
+        if resolved.hasPrefix("openai_whisper") {
+            throw ModelPoolError.failedToLoadModel(
+                modelName,
+                NSError(
+                    domain: "SwamaKit.Audio",
+                    code: 0,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "WhisperKit models are no longer supported. Use MLXAudio whisper models instead (e.g., whisper-large-turbo)"
+                    ]
+                )
+            )
         }
+
+        // Download the model (works for both LLM and Audio models)
+        try await ModelDownloader.downloadModel(resolvedModelName: resolved)
 
         return resolved
     }
@@ -202,9 +146,10 @@ public enum ModelDownloader {
     static func writeModelMetadata(modelName: String, modelDir: URL) throws {
         let size = try calculateFolderSize(at: modelDir)
         let created = Int(Date().timeIntervalSince1970)
-        let metaURL = (ModelPaths.customModelsDirectory ?? ModelPaths.preferredModelsDirectory)
-            .appendingPathComponent(modelName)
-            .appendingPathComponent(".swama-meta.json")
+
+        // Write metadata file directly to the model directory
+        let metaURL = modelDir.appendingPathComponent(".swama-meta.json")
+
         let metadata: [String: Any] = [
             "id": modelName,
             "object": "model",
@@ -246,67 +191,6 @@ public enum ModelDownloader {
             }
         }
         return total
-    }
-
-    // MARK: - WhisperKit Helper Functions
-
-    static func getOpenAIModelName(for alias: String) -> String {
-        // Map WhisperKit alias to OpenAI model name
-        let lowercasedAlias = alias.lowercased()
-        switch lowercasedAlias {
-        case "whisper-tiny":
-            return "openai/whisper-tiny"
-        case "whisper-tiny.en":
-            return "openai/whisper-tiny.en"
-        case "whisper-base":
-            return "openai/whisper-base"
-        case "whisper-base.en":
-            return "openai/whisper-base.en"
-        case "whisper-small":
-            return "openai/whisper-small"
-        case "whisper-small.en":
-            return "openai/whisper-small.en"
-        case "whisper-medium":
-            return "openai/whisper-medium"
-        case "whisper-medium.en":
-            return "openai/whisper-medium.en"
-        case "whisper-large":
-            return "openai/whisper-large-v3" // Default to latest
-        case "whisper-large-v2":
-            return "openai/whisper-large-v2"
-        case "whisper-large-v3":
-            return "openai/whisper-large-v3"
-        default:
-            return "openai/whisper-base" // Fallback
-        }
-    }
-
-    static func getOpenAIModelNameFromFolderName(_ folderName: String) -> String {
-        // Map WhisperKit folder name to OpenAI model name
-        switch folderName {
-        case "openai_whisper-tiny":
-            "openai/whisper-tiny"
-        case "openai_whisper-tiny.en":
-            "openai/whisper-tiny.en"
-        case "openai_whisper-base":
-            "openai/whisper-base"
-        case "openai_whisper-base.en":
-            "openai/whisper-base.en"
-        case "openai_whisper-small":
-            "openai/whisper-small"
-        case "openai_whisper-small.en":
-            "openai/whisper-small.en"
-        case "openai_whisper-medium":
-            "openai/whisper-medium"
-        case "openai_whisper-medium.en":
-            "openai/whisper-medium.en"
-        case "openai_whisper-large-v2":
-            "openai/whisper-large-v2"
-        case "openai_whisper-large-v3":
-            "openai/whisper-large-v3"
-        default:
-            "openai/whisper-base" // Fallback
-        }
     }
 
     // MARK: - Main Download Functions

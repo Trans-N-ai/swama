@@ -1,6 +1,6 @@
 import Foundation
 import MLX
-import mlx_embeddings
+import MLXEmbedders
 import MLXLLM
 import MLXLMCommon
 import MLXVLM
@@ -79,12 +79,12 @@ public actor ModelPool {
 
     public static let shared: ModelPool = .init()
 
-    // MARK: - WhisperKit Support
+    // MARK: - Audio Support
 
-    /// Safely run a WhisperKit operation with caching and concurrency control
-    public func runWhisperKit<T: Sendable>(
+    /// Safely run an audio transcription operation with caching and concurrency control
+    public func runAudio<T: Sendable>(
         modelName: String,
-        operation: @Sendable @escaping (WhisperKitRunner) async throws -> T
+        operation: @Sendable @escaping (AudioRunner) async throws -> T
     ) async throws -> T {
         // Wait for available slot AND ensure the specific model is not already running
         while runningInferences >= maxConcurrentInferences || runningModels.contains(modelName) {
@@ -95,8 +95,8 @@ public actor ModelPool {
         runningModels.insert(modelName)
 
         do {
-            // Get or load the WhisperKit runner
-            let runner = try await getWhisperKitRunner(modelName: modelName)
+            // Get or load the audio runner
+            let runner = try await getAudioRunner(modelName: modelName)
 
             // Execute the operation
             let result = try await operation(runner)
@@ -113,18 +113,18 @@ public actor ModelPool {
         }
     }
 
-    /// Gets or loads a WhisperKit runner for the given model name
-    private func getWhisperKitRunner(modelName: String) async throws -> WhisperKitRunner {
+    /// Gets or loads an audio runner for the given model name
+    private func getAudioRunner(modelName: String) async throws -> AudioRunner {
         // Ensure memory management is started
         ensureMemoryManagementStarted()
 
-        if let runner = whisperKitRunnerCache[modelName] {
+        if let runner = audioRunnerCache[modelName] {
             // Record usage for existing cached runner
             modelUsageInfo[modelName]?.recordUsage()
             return runner
         }
 
-        if let task = whisperKitTasks[modelName] {
+        if let task = audioTasks[modelName] {
             let runner = try await task.value
             // Record usage for newly loaded runner
             modelUsageInfo[modelName]?.recordUsage()
@@ -135,18 +135,20 @@ public actor ModelPool {
         await performMemoryPressureCheck()
 
         let task = Task {
-            defer { whisperKitTasks[modelName] = nil }
-
-            let runner = WhisperKitRunner()
+            let runner = await MainActor.run { AudioRunner() }
             try await runner.loadModel(modelName)
 
-            whisperKitRunnerCache[modelName] = runner
-            // Initialize usage tracking for new runner
-            modelUsageInfo[modelName] = ModelUsageInfo()
+            // Update caches back on the actor
+            self.setAudioRunner(runner, forKey: modelName)
             return runner
         }
-        whisperKitTasks[modelName] = task
+        audioTasks[modelName] = task
         return try await task.value
+    }
+
+    private func setAudioRunner(_ runner: AudioRunner, forKey modelName: String) {
+        audioRunnerCache[modelName] = runner
+        modelUsageInfo[modelName] = ModelUsageInfo()
     }
 
     // MARK: - Memory Management Configuration
@@ -318,19 +320,19 @@ public actor ModelPool {
     /// Clears the entire model cache and cancels any ongoing loading tasks.
     public func clearCache() {
         // Get memory snapshot before clearing
-        let memoryBefore = MLX.GPU.snapshot()
+        let memoryBefore = MLX.Memory.snapshot()
 
         // Store references to help with cleanup
         let containersToEvict = Array(cache.values)
         let tasksToCancel = Array(tasks.values)
-        let whisperKitTasksToCancel = Array(whisperKitTasks.values)
+        let audioTasksToCancel = Array(audioTasks.values)
 
         // Clear all caches to remove strong references
         cache.removeAll()
         modelTypeCache.removeAll() // Clear type cache too
         vlmRegistryCache = nil // Reset VLM registry cache
         embeddingRunnerCache.removeAll() // Clear embedding cache
-        whisperKitRunnerCache.removeAll() // Clear WhisperKit cache
+        audioRunnerCache.removeAll() // Clear audio cache
         modelUsageInfo.removeAll() // Clear usage tracking
 
         // Cancel all loading tasks
@@ -339,11 +341,11 @@ public actor ModelPool {
         }
         tasks.removeAll()
 
-        // Cancel all WhisperKit loading tasks
-        for task in whisperKitTasksToCancel {
+        // Cancel all audio loading tasks
+        for task in audioTasksToCancel {
             task.cancel()
         }
-        whisperKitTasks.removeAll()
+        audioTasks.removeAll()
 
         // Explicitly release container references
         _ = containersToEvict
@@ -352,7 +354,7 @@ public actor ModelPool {
         Task {
             await performAggressiveMemoryCleanup()
 
-            let memoryAfter = MLX.GPU.snapshot()
+            let memoryAfter = MLX.Memory.snapshot()
             let memoryReleased = memoryBefore.activeMemory - memoryAfter.activeMemory
             NSLog(
                 "SwamaKit.ModelPool: Cache cleared (\(containersToEvict.count) models). Released \(memoryReleased / (1024 * 1024))MB active memory. Active: \(memoryAfter.activeMemory / (1024 * 1024))MB"
@@ -370,22 +372,22 @@ public actor ModelPool {
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName) // Clear type cache for this model
         embeddingRunnerCache.removeValue(forKey: modelName) // Clear embedding cache for this model
-        whisperKitRunnerCache.removeValue(forKey: modelName) // Clear WhisperKit cache for this model
+        audioRunnerCache.removeValue(forKey: modelName) // Clear audio cache for this model
         modelUsageInfo.removeValue(forKey: modelName) // Clear usage tracking for this model
 
         if let task = tasks.removeValue(forKey: modelName) {
             task.cancel()
         }
 
-        if let whisperKitTask = whisperKitTasks.removeValue(forKey: modelName) {
-            whisperKitTask.cancel()
+        if let audioTask = audioTasks.removeValue(forKey: modelName) {
+            audioTask.cancel()
         }
 
         // Release container reference
         _ = containerToRemove
 
         // Clear MLX GPU cache after removing model
-        MLX.GPU.clearCache()
+        MLX.Memory.clearCache()
     }
 
     // MARK: Private
@@ -393,8 +395,8 @@ public actor ModelPool {
     private var cache: [String: MLXLMCommon.ModelContainer] = .init()
     private var tasks: [String: Task<MLXLMCommon.ModelContainer, Error>] = .init()
     private var embeddingRunnerCache: [String: EmbeddingRunner] = .init()
-    private var whisperKitRunnerCache: [String: WhisperKitRunner] = .init()
-    private var whisperKitTasks: [String: Task<WhisperKitRunner, Error>] = .init()
+    private var audioRunnerCache: [String: AudioRunner] = .init()
+    private var audioTasks: [String: Task<AudioRunner, Error>] = .init()
 
     /// Memory management tracking
     private var modelUsageInfo: [String: ModelUsageInfo] = .init()
@@ -821,7 +823,7 @@ public actor ModelPool {
         }
 
         // Get memory snapshot before eviction
-        let memoryBefore = MLX.GPU.snapshot()
+        let memoryBefore = MLX.Memory.snapshot()
 
         // Get reference to the model container before removing it
         let containerToEvict = cache[modelName]
@@ -830,7 +832,7 @@ public actor ModelPool {
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName)
         embeddingRunnerCache.removeValue(forKey: modelName)
-        whisperKitRunnerCache.removeValue(forKey: modelName)
+        audioRunnerCache.removeValue(forKey: modelName)
         modelUsageInfo.removeValue(forKey: modelName)
 
         // Cancel loading task if active
@@ -838,9 +840,9 @@ public actor ModelPool {
             task.cancel()
         }
 
-        // Cancel WhisperKit loading task if active
-        if let whisperKitTask = whisperKitTasks.removeValue(forKey: modelName) {
-            whisperKitTask.cancel()
+        // Cancel audio loading task if active
+        if let audioTask = audioTasks.removeValue(forKey: modelName) {
+            audioTask.cancel()
         }
 
         // Explicitly nil out the container reference to help ARC
@@ -850,7 +852,7 @@ public actor ModelPool {
         await performAggressiveMemoryCleanup()
 
         // Get memory snapshot after cleanup to measure actual release
-        let memoryAfter = MLX.GPU.snapshot()
+        let memoryAfter = MLX.Memory.snapshot()
         let memoryReleased = memoryBefore.activeMemory - memoryAfter.activeMemory
 
         NSLog(
@@ -867,14 +869,14 @@ public actor ModelPool {
         }
 
         // Step 2: Clear MLX computational cache
-        MLX.GPU.clearCache()
+        MLX.Memory.clearCache()
 
         // Step 3: Temporarily disable cache to force immediate memory release
-        let originalCacheLimit = MLX.GPU.cacheLimit
-        MLX.GPU.set(cacheLimit: 0)
+        let originalCacheLimit = MLX.Memory.cacheLimit
+        MLX.Memory.cacheLimit = 0
 
         // Step 4: Clear cache again with disabled limit
-        MLX.GPU.clearCache()
+        MLX.Memory.clearCache()
 
         // Step 5: Brief pause to allow memory cleanup to propagate
         try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
@@ -885,9 +887,9 @@ public actor ModelPool {
         }
 
         // Step 7: Clear cache one more time to ensure cleanup
-        MLX.GPU.clearCache()
+        MLX.Memory.clearCache()
 
         // Step 8: Restore original cache limit
-        MLX.GPU.set(cacheLimit: originalCacheLimit)
+        MLX.Memory.cacheLimit = originalCacheLimit
     }
 }

@@ -1,16 +1,16 @@
 import Foundation
 import MLX
-import mlx_embeddings
+import MLXEmbedders
 import MLXLMCommon
 import Tokenizers
 
 /// Loads an embedding model container for the given model name.
-public func loadEmbeddingModelContainer(modelName: String) async throws -> mlx_embeddings.ModelContainer {
-    let config = mlx_embeddings.ModelConfiguration(id: modelName)
+public func loadEmbeddingModelContainer(modelName: String) async throws -> MLXEmbedders.ModelContainer {
+    let config = MLXEmbedders.ModelConfiguration(id: modelName)
 
-    let container: mlx_embeddings.ModelContainer
+    let container: MLXEmbedders.ModelContainer
     do {
-        container = try await mlx_embeddings.loadModelContainer(configuration: config)
+        container = try await MLXEmbedders.loadModelContainer(configuration: config)
     }
     catch {
         fputs(
@@ -35,7 +35,7 @@ public func loadEmbeddingModelContainer(modelName: String) async throws -> mlx_e
 public actor EmbeddingRunner {
     // MARK: Lifecycle
 
-    public init(container: mlx_embeddings.ModelContainer) {
+    public init(container: MLXEmbedders.ModelContainer) {
         self.container = container
         self.isRunning = false
     }
@@ -46,7 +46,11 @@ public actor EmbeddingRunner {
     public func generateEmbeddings(inputs: [String]) async throws -> (
         embeddings: [[Float]], usage: EmbeddingUsage
     ) {
-        try await container.perform { (model: any EmbeddingModel, tokenizer: Tokenizer) throws -> (
+        try await container.perform { (
+            model: any EmbeddingModel,
+            tokenizer: Tokenizer,
+            pooler: Pooling
+        ) throws -> (
             embeddings: [[Float]], usage: EmbeddingUsage
         ) in
             var totalTokens = 0
@@ -77,16 +81,26 @@ public actor EmbeddingRunner {
             let attentionMask = paddedInputIds .!= MLXArray(padTokenId)
 
             // Run the model with batched input
-            let output = model(paddedInputIds, positionIds: nil, tokenTypeIds: nil, attentionMask: attentionMask)
+            let output = model(
+                paddedInputIds,
+                positionIds: nil,
+                tokenTypeIds: nil,
+                attentionMask: attentionMask
+            )
 
-            // Extract embeddings from the output
-            let embeddings = output.textEmbeds
+            // Pool hidden states according to the model's configured strategy
+            let pooledEmbeddings = pooler(
+                output,
+                mask: attentionMask,
+                normalize: true,
+                applyLayerNorm: true
+            )
 
             // Convert each embedding to Float array and evaluate
-            eval(embeddings)
+            eval(pooledEmbeddings)
 
             let allEmbeddings = (0 ..< inputs.count).map { i in
-                embeddings[i].asArray(Float.self)
+                pooledEmbeddings[i].asArray(Float.self)
             }
 
             let usage = EmbeddingUsage(
@@ -118,7 +132,7 @@ public actor EmbeddingRunner {
 
     // MARK: Private
 
-    private let container: mlx_embeddings.ModelContainer
+    private let container: MLXEmbedders.ModelContainer
     private var isRunning: Bool
 }
 

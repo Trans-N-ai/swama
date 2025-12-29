@@ -27,7 +27,7 @@ struct Swama: AsyncParsableCommand {
 
 // MARK: - MenuBar
 
-/// 添加新的子命令用于启动菜单栏应用
+/// Common options for run-like commands
 struct MenuBar: AsyncParsableCommand {
     static let configuration: CommandConfiguration = .init(
         commandName: "menubar",
@@ -67,7 +67,7 @@ struct MenuBar: AsyncParsableCommand {
 
 // MARK: - CommonRunOptions
 
-/// 如果有通用选项，定义在这里，例如：
+/// Common options for run-like commands
 struct CommonRunOptions: ParsableArguments {
     // @Flag(help: "Enable verbose output.")
     // var verbose: Bool = false

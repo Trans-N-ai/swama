@@ -18,6 +18,6 @@ struct Create: AsyncParsableCommand {
 
         try await ModelCreator.run(from: path, name: name)
 
-        print("Model created successfully at \(ModelPaths.preferredModelsDirectory.appendingPathComponent(name).path)")
+        print("Model created successfully at \(ModelPaths.activeModelsDirectory.appendingPathComponent(name).path)")
     }
 }

@@ -21,6 +21,10 @@ public enum ModelManager {
     /// Scans a specific models directory and returns ModelInfo array
     private static func scanModelsDirectory(at modelsRootDirectory: URL) -> [ModelInfo] {
         var modelInfos: [ModelInfo] = []
+
+        // Determine if this is the audio models directory (no .swama-meta.json files)
+        let isAudioDirectory = modelsRootDirectory.path.contains("huggingface/models")
+
         let orgDirs: [URL]
         do {
             orgDirs = try FileManager.default.contentsOfDirectory(
@@ -71,6 +75,38 @@ public enum ModelManager {
                 let metaURL = modelDir.appendingPathComponent(".swama-meta.json")
 
                 if FileManager.default.fileExists(atPath: metaURL.path) {
+                    // LLM model with metadata file
+                    if let info = parseModelMetadata(metaURL: metaURL, modelID: modelID) {
+                        modelInfos.append(info)
+                    }
+                }
+                else if isAudioDirectory {
+                    // Audio model without metadata file - create info from directory scan
+                    if let attributes = try? FileManager.default.attributesOfItem(atPath: modelDir.path),
+                       let creationDate = attributes[.creationDate] as? Date
+                    {
+                        let size = directorySize(at: modelDir)
+                        let created = Int(creationDate.timeIntervalSince1970)
+
+                        modelInfos.append(ModelInfo(
+                            id: modelID,
+                            created: created,
+                            sizeInBytes: size,
+                            source: .directoryScan,
+                            rawMetadata: nil
+                        ))
+                    }
+                }
+            }
+        }
+
+        // Additional: support flat model directories (e.g., ~/.swama/models/llama2/.swama-meta.json)
+        // Only for non-audio directories
+        if !isAudioDirectory {
+            for modelDir in orgDirs {
+                let metaURL = modelDir.appendingPathComponent(".swama-meta.json")
+                if FileManager.default.fileExists(atPath: metaURL.path) {
+                    let modelID = modelDir.lastPathComponent
                     if let info = parseModelMetadata(metaURL: metaURL, modelID: modelID) {
                         modelInfos.append(info)
                     }
@@ -78,18 +114,34 @@ public enum ModelManager {
             }
         }
 
-        // Additional: support flat model directories (e.g., ~/.swama/models/llama2/.swama-meta.json)
-        for modelDir in orgDirs {
-            let metaURL = modelDir.appendingPathComponent(".swama-meta.json")
-            if FileManager.default.fileExists(atPath: metaURL.path) {
-                let modelID = modelDir.lastPathComponent
-                if let info = parseModelMetadata(metaURL: metaURL, modelID: modelID) {
-                    modelInfos.append(info)
-                }
-            }
+        return modelInfos
+    }
+
+    /// Calculate total size of a directory recursively
+    private static func directorySize(at url: URL) -> Int64 {
+        var totalSize: Int64 = 0
+
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+        )
+        else {
+            return 0
         }
 
-        return modelInfos
+        for case let fileURL as URL in enumerator {
+            guard let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  let isRegularFile = resourceValues.isRegularFile,
+                  isRegularFile,
+                  let fileSize = resourceValues.fileSize
+            else {
+                continue
+            }
+
+            totalSize += Int64(fileSize)
+        }
+
+        return totalSize
     }
 
     private static func parseModelMetadata(metaURL: URL, modelID: String) -> ModelInfo? {

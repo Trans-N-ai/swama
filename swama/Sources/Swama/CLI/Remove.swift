@@ -9,7 +9,7 @@ struct Remove: AsyncParsableCommand {
     )
 
     @Argument(
-        help: "Model name or alias to remove, e.g. qwen3-30b, whisperkit-base, or mlx-community/Llama-3.2-1B-Instruct-4bit"
+        help: "Model name or alias to remove, e.g. qwen3-30b or mlx-community/Llama-3.2-1B-Instruct-4bit"
     )
     var model: String
 

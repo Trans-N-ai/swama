@@ -1,22 +1,13 @@
 {
-  "originHash" : "9e3fec9f09ab27e8b847caeb4e8394e2faf8b7499c4e002090302ed684d3d7a6",
+  "originHash" : "12b850129adcac428489c08d1c013a224b94fe54e6f40a0c8387515bcedee1ad",
   "pins" : [
     {
-      "identity" : "gzipswift",
+      "identity" : "espeak-ng-spm",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/1024jp/GzipSwift",
+      "location" : "https://github.com/DePasqualeOrg/espeak-ng-spm.git",
       "state" : {
-        "revision" : "731037f6cc2be2ec01562f6597c1d0aa3fe6fd05",
-        "version" : "6.0.1"
-      }
-    },
-    {
-      "identity" : "jinja",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/johnmai-dev/Jinja",
-      "state" : {
-        "revision" : "fc1233dea1142897d474bda2f1f9a6c3fe7acab6",
-        "version" : "1.2.1"
+        "branch" : "fix-path-espeak-data-macro",
+        "revision" : "92ecb6a0b0f622fad8a8eb2afd29f75ebc0fe9d4"
       }
     },
     {
@@ -24,26 +15,25 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ml-explore/mlx-swift",
       "state" : {
-        "revision" : "b79c74ce773440b86a81ef925ea78dd5023a16c0",
-        "version" : "0.25.5"
+        "revision" : "9594dbe2736a6ba03fe0f11514d7265fd2f7ba77"
       }
     },
     {
-      "identity" : "mlx-swift-examples",
+      "identity" : "mlx-swift-audio",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ml-explore/mlx-swift-examples",
+      "location" : "https://github.com/DePasqualeOrg/mlx-swift-audio.git",
       "state" : {
         "branch" : "main",
-        "revision" : "24219cd54bdef95f4693f8743264e3d53ffdc12a"
+        "revision" : "42868aa3d04500da8ce90bcd647085866850780a"
       }
     },
     {
-      "identity" : "mlx.embeddings",
+      "identity" : "mlx-swift-lm",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/mzbac/mlx.embeddings.git",
+      "location" : "https://github.com/ml-explore/mlx-swift-lm",
       "state" : {
         "branch" : "main",
-        "revision" : "aa5cded350f420b32bc637149acc9f59bd0b4cd3"
+        "revision" : "d9f46e3a1fe715d01304372089aba5f39c585327"
       }
     },
     {
@@ -74,6 +64,15 @@
       }
     },
     {
+      "identity" : "swift-jinja",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/huggingface/swift-jinja.git",
+      "state" : {
+        "revision" : "c1ef5963ba4a97a589b9c9583ff4ee3352a86d23",
+        "version" : "2.1.0"
+      }
+    },
+    {
       "identity" : "swift-nio",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
@@ -101,21 +100,21 @@
       }
     },
     {
+      "identity" : "swift-tiktoken",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/DePasqualeOrg/swift-tiktoken",
+      "state" : {
+        "branch" : "main",
+        "revision" : "b4310ee520995ddff45b055de19e6605e0f8e5b6"
+      }
+    },
+    {
       "identity" : "swift-transformers",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-transformers",
       "state" : {
-        "revision" : "e5bf0627bd134cf8ddc407cda403ae84207af959",
-        "version" : "0.1.22"
-      }
-    },
-    {
-      "identity" : "whisperkit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/argmaxinc/WhisperKit.git",
-      "state" : {
-        "revision" : "b3c412aa7520069f6c71f7cc217fbcf850ba31a1",
-        "version" : "0.13.0"
+        "branch" : "573e5c9",
+        "revision" : "573e5c9036c2f136b3a8a071da8e8907322403d0"
       }
     }
   ],

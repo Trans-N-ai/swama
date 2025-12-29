@@ -6,7 +6,6 @@
 import Foundation
 import NIOCore
 import NIOHTTP1
-@preconcurrency import WhisperKit
 
 // MARK: - TranscriptionsHandler
 
@@ -87,8 +86,8 @@ public enum TranscriptionsHandler {
             }
 
             // Validate model
-            guard ModelAliasResolver.isWhisperKitModel(request.model) else {
-                throw TranscriptionError.invalidModel("Model '\(request.model)' is not a valid WhisperKit model")
+            guard ModelAliasResolver.isAudioModel(request.model) else {
+                throw TranscriptionError.invalidModel("Model '\(request.model)' is not a supported audio model")
             }
 
             // Perform transcription
@@ -126,7 +125,7 @@ public enum TranscriptionsHandler {
             try? FileManager.default.removeItem(at: tempURL)
         }
 
-        // Use ModelPool for WhisperKit caching and concurrency control
+        // Use ModelPool for MLXAudio caching and concurrency control
         let transcribedText: String
 
         // Always use DecodingOptions for consistent behavior across all formats
@@ -137,7 +136,7 @@ public enum TranscriptionsHandler {
 
         if responseFormat == .verboseJson {
             // For verbose format, get detailed results with timestamps
-            let transcriptionOutput = try await ModelPool.shared.runWhisperKit(modelName: modelName) { runner in
+            let transcriptionOutput = try await ModelPool.shared.runAudio(modelName: modelName) { runner in
                 try await runner.transcribe(
                     audioFile: tempURL,
                     language: language,
@@ -172,7 +171,7 @@ public enum TranscriptionsHandler {
         }
         else {
             // Simple transcription
-            let transcriptionOutput = try await ModelPool.shared.runWhisperKit(modelName: modelName) { runner in
+            let transcriptionOutput = try await ModelPool.shared.runAudio(modelName: modelName) { runner in
                 try await runner.transcribe(
                     audioFile: tempURL,
                     language: language,
@@ -596,7 +595,7 @@ extension TranscriptionsHandler {
                 seek: segment.seek,
                 start: Double(segment.start),
                 end: Double(segment.end),
-                text: segment.text, // Text is already cleaned by WhisperKitRunner
+                text: segment.text, // Text is already normalized by AudioRunner
                 tokens: segment.tokens,
                 temperature: Double(segment.temperature),
                 avg_logprob: Double(segment.avgLogprob),

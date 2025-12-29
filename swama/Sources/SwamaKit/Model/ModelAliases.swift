@@ -15,22 +15,32 @@ public enum ModelAliasResolver {
     /// - Returns: The resolved full model ID, or the original name if no alias is found.
     public static func resolve(name: String) -> String {
         let lowercasedName = name.lowercased()
+
+        // Check LLM aliases first
         if let resolvedName = aliases[lowercasedName] {
             return resolvedName
         }
-        // Check WhisperKit aliases
-        if let resolvedName = whisperKitAliases[lowercasedName] {
+
+        // Check audio model aliases
+        if let resolvedName = audioAliases[lowercasedName] {
             return resolvedName
         }
+
+        // If it's an audio model format, return as-is
+        if isAudioModel(lowercasedName) {
+            return name
+        }
+
         return name
     }
 
-    /// Check if a model name is a WhisperKit model
-    public static func isWhisperKitModel(_ modelName: String) -> Bool {
+    /// Check if a model name is supported by MLXAudio transcription
+    public static func isAudioModel(_ modelName: String) -> Bool {
         let lowercasedName = modelName.lowercased()
         return lowercasedName.hasPrefix("whisper-") ||
-            lowercasedName.hasPrefix("whisperkit-") ||
-            whisperKitAliases.values.contains(modelName)
+            lowercasedName.hasPrefix("funasr-") ||
+            audioAliases.keys.contains(lowercasedName) ||
+            audioAliases.values.contains(modelName)
     }
 
     // MARK: Internal
@@ -62,6 +72,22 @@ public enum ModelAliasResolver {
         "qwen3-32b": "mlx-community/Qwen3-32B-4bit",
         "qwen3-235b": "mlx-community/Qwen3-235B-A22B-4bit",
 
+        // Qwen3-VL Family (Vision-Language)
+        "qwen3-vl": "mlx-community/Qwen3-VL-4B-Instruct-4bit", // Default for "qwen3-vl"
+        "qwen3-vl-2b": "mlx-community/Qwen3-VL-2B-Instruct-4bit",
+        "qwen3-vl-4b": "mlx-community/Qwen3-VL-4B-Instruct-4bit",
+        "qwen3-vl-8b": "mlx-community/Qwen3-VL-8B-Instruct-4bit",
+        "qwen3-vl-32b": "mlx-community/Qwen3-VL-32B-Instruct-4bit",
+        "qwen3-vl-30b": "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
+        "qwen3-vl-235b": "mlx-community/Qwen3-VL-235B-A22B-Instruct-4bit",
+        // Thinking variants
+        "qwen3-vl-2b-thinking": "mlx-community/Qwen3-VL-2B-Thinking-4bit",
+        "qwen3-vl-4b-thinking": "mlx-community/Qwen3-VL-4B-Thinking-4bit",
+        "qwen3-vl-8b-thinking": "mlx-community/Qwen3-VL-8B-Thinking-4bit",
+        "qwen3-vl-32b-thinking": "mlx-community/Qwen3-VL-32B-Thinking-4bit",
+        "qwen3-vl-30b-thinking": "mlx-community/Qwen3-VL-30B-A3B-Thinking-4bit",
+        "qwen3-vl-235b-thinking": "mlx-community/Qwen3-VL-235B-A22B-Thinking-3bit",
+
         // Gemma3 Famaly
         "gemma3": "mlx-community/gemma-3-4b-it-4bit", // Default for "gemma3"
         "gemma3-1b": "mlx-community/gemma-3-1b-it-4bit",
@@ -87,19 +113,27 @@ public enum ModelAliasResolver {
         "gpt-oss-120b": "lmstudio-community/gpt-oss-120b-MLX-8bit",
     ]
 
-    /// WhisperKit model aliases mapping user-friendly names to HuggingFace folder names
-    static let whisperKitAliases: [String: String] = [
-        // OpenAI standard naming (primary)
-        "whisper-tiny": "openai_whisper-tiny",
-        "whisper-tiny.en": "openai_whisper-tiny.en",
-        "whisper-base": "openai_whisper-base",
-        "whisper-base.en": "openai_whisper-base.en",
-        "whisper-small": "openai_whisper-small",
-        "whisper-small.en": "openai_whisper-small.en",
-        "whisper-medium": "openai_whisper-medium",
-        "whisper-medium.en": "openai_whisper-medium.en",
-        "whisper-large-v2": "openai_whisper-large-v2",
-        "whisper-large-v3": "openai_whisper-large-v3",
-        "whisper-large": "openai_whisper-large-v3", // Latest large model alias
+    /// Audio model aliases for MLXAudio (Whisper, FunASR)
+    /// All keys should be lowercase for case-insensitive matching.
+    static let audioAliases: [String: String] = [
+        // Whisper models - default to 4bit quantization for balance of quality and size
+        "whisper-tiny": "mlx-community/whisper-tiny-4bit",
+        "whisper-base": "mlx-community/whisper-base-4bit",
+        "whisper-small": "mlx-community/whisper-small-4bit",
+        "whisper-medium": "mlx-community/whisper-medium-4bit",
+        "whisper-large": "mlx-community/whisper-large-v3-4bit",
+        "whisper-large-v3": "mlx-community/whisper-large-v3-4bit",
+        "whisper-large-turbo": "mlx-community/whisper-large-v3-turbo-4bit",
+        "whisper": "mlx-community/whisper-large-v3-4bit",
+
+        // English-only variants
+        "whisper-tiny-en": "mlx-community/whisper-tiny.en-4bit",
+        "whisper-base-en": "mlx-community/whisper-base.en-4bit",
+        "whisper-small-en": "mlx-community/whisper-small.en-4bit",
+        "whisper-medium-en": "mlx-community/whisper-medium.en-4bit",
+
+        // FunASR models
+        "funasr": "mlx-community/Fun-ASR-Nano-2512-4bit",
+        "funasr-mlt": "mlx-community/Fun-ASR-MLT-Nano-2512-4bit",
     ]
 }

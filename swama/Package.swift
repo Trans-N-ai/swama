@@ -1,10 +1,10 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "swama",
     platforms: [
-        .macOS("14.0") // Ensure macOS version is appropriate for dependencies like MLX
+        .macOS("15.4")
     ],
     products: [
         .library(
@@ -19,10 +19,8 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
-        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.25.4"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-examples", branch: "main"),
-        .package(url: "https://github.com/mzbac/mlx.embeddings.git", branch: "main"),
-        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.13.0"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
+        .package(url: "https://github.com/DePasqualeOrg/mlx-swift-audio.git", branch: "main"),
     ],
     targets: [
         .target(
@@ -30,13 +28,12 @@ let package = Package(
             dependencies: [
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
-                .product(name: "MLX", package: "mlx-swift"),
-                .product(name: "MLXLLM", package: "mlx-swift-examples"),
-                .product(name: "MLXVLM", package: "mlx-swift-examples"),
-                .product(name: "MLXLMCommon", package: "mlx-swift-examples"),
-                .product(name: "mlx_embeddings", package: "mlx.embeddings"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXVLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
+                .product(name: "MLXAudio", package: "mlx-swift-audio"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                .product(name: "WhisperKit", package: "WhisperKit"),
             ],
             path: "Sources/SwamaKit",
             resources: []

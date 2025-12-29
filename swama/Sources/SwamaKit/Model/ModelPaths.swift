@@ -26,9 +26,29 @@ public enum ModelPaths {
         return home.appendingPathComponent("Documents/huggingface/models")
     }()
 
+    /// The audio models cache directory (used by MLXAudio/Hub)
+    public static let audioModelsDirectory: URL = {
+        let cachesURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return cachesURL.appendingPathComponent("huggingface/models")
+    }()
+
+    /// The actual directory used for storing new models (respects SWAMA_MODELS environment variable)
+    public static var activeModelsDirectory: URL {
+        customModelsDirectory ?? preferredModelsDirectory
+    }
+
     /// Get the local directory path for a specific model, checking both preferred and legacy locations
     /// Returns the first location where the model exists, or the preferred location if neither exists
     public static func getModelDirectory(for modelName: String) -> URL {
+        // Check if it's an audio model - use audio cache directory
+        if modelName.hasPrefix("whisper-") || modelName.hasPrefix("funasr-") || modelName
+            .hasPrefix("mlx-community/whisper") || modelName.hasPrefix("mlx-community/Fun-ASR")
+        {
+            // Audio models use standard directory structure: {org}/{model}
+            // e.g., mlx-community/whisper-large-v3-turbo-4bit -> mlx-community/whisper-large-v3-turbo-4bit
+            return audioModelsDirectory.appendingPathComponent(modelName)
+        }
+
         let customPath = customModelsDirectory?.appendingPathComponent(modelName)
         let preferredPath = preferredModelsDirectory.appendingPathComponent(modelName)
         let legacyPath = legacyModelsDirectory.appendingPathComponent(modelName)
@@ -69,21 +89,16 @@ public enum ModelPaths {
         return URL(fileURLWithPath: path)
     }
 
-    /// Check if a model exists locally (in either preferred or legacy location)
+    /// Check if a model exists locally by checking for .swama-meta.json file
     public static func modelExistsLocally(_ modelName: String) -> Bool {
-        let customPath = customModelsDirectory?.appendingPathComponent(modelName)
-        let preferredPath = preferredModelsDirectory.appendingPathComponent(modelName)
-        let legacyPath = legacyModelsDirectory.appendingPathComponent(modelName)
-
-        return FileManager.default
-            .fileExists(atPath: customPath?.appendingPathComponent(".swama-meta.json").path ?? "") ||
-            FileManager.default.fileExists(atPath: preferredPath.appendingPathComponent(".swama-meta.json").path) ||
-            FileManager.default.fileExists(atPath: legacyPath.appendingPathComponent(".swama-meta.json").path)
+        let modelDir = getModelDirectory(for: modelName)
+        let metaPath = modelDir.appendingPathComponent(".swama-meta.json").path
+        return FileManager.default.fileExists(atPath: metaPath)
     }
 
     /// Get all directories that should be scanned for models
     public static var allModelsDirectories: [URL] {
-        var directories = [preferredModelsDirectory, legacyModelsDirectory]
+        var directories = [preferredModelsDirectory, legacyModelsDirectory, audioModelsDirectory]
         if let customDirectory = customModelsDirectory {
             directories.insert(customDirectory, at: 0)
         }
@@ -93,7 +108,22 @@ public enum ModelPaths {
     /// Remove a model from disk
     /// Returns true if model was found and deleted, false if model wasn't found
     public static func removeModel(_ modelName: String) throws -> Bool {
-        // Check all possible model locations in priority order
+        // Check if it's an audio model
+        if modelName.hasPrefix("whisper-") || modelName.hasPrefix("funasr-") || modelName
+            .hasPrefix("mlx-community/whisper") || modelName.hasPrefix("mlx-community/Fun-ASR")
+        {
+            // Audio models use HuggingFace Hub format
+            let hubFormattedName = modelName.replacingOccurrences(of: "/", with: "--")
+            let audioModelDir = audioModelsDirectory.appendingPathComponent("models--\(hubFormattedName)")
+
+            if FileManager.default.fileExists(atPath: audioModelDir.path) {
+                try FileManager.default.removeItem(at: audioModelDir)
+                return true
+            }
+            return false
+        }
+
+        // Check all possible model locations in priority order for LLM models
         let locations = [
             customModelsDirectory?.appendingPathComponent(modelName),
             preferredModelsDirectory.appendingPathComponent(modelName),

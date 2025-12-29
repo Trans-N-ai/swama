@@ -455,31 +455,30 @@ public enum CompletionsHandler {
 
     private static func convertToolsToMLX(_ tools: [Tool]?) -> [ToolSpec]? {
         tools?.map { tool in
-            var toolSpec: ToolSpec = [
-                "type": tool.type,
-                "function": [
-                    "name": tool.function.name
-                ]
+            var functionDict: [String: any Sendable] = [
+                "name": tool.function.name
             ]
 
             if let description = tool.function.description {
-                var functionDict = toolSpec["function"] as! [String: Any]
                 functionDict["description"] = description
-                toolSpec["function"] = functionDict
             }
 
             if let parameters = tool.function.parameters {
-                var functionDict = toolSpec["function"] as! [String: Any]
                 // Convert JSON string back to object
                 if let jsonData = parameters.data(using: .utf8),
                    let jsonObject = try? JSONSerialization.jsonObject(with: jsonData)
                 {
-                    functionDict["parameters"] = jsonObject
+                    // JSON objects are always Sendable (they're value types)
+                    // Using as! because JSONSerialization guarantees Sendable types (Dictionary, Array, String, Number,
+                    // etc.)
+                    functionDict["parameters"] = jsonObject as! (any Sendable)
                 }
-                toolSpec["function"] = functionDict
             }
 
-            return toolSpec
+            return [
+                "type": tool.type,
+                "function": functionDict
+            ]
         }
     }
 
