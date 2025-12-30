@@ -143,6 +143,18 @@ swama list
 | `funasr` | `mlx-community/Fun-ASR-Nano-2512-4bit` | 约 200 MB | FunASR Nano (多语言) |
 | `funasr-mlt` | `mlx-community/Fun-ASR-MLT-Nano-2512-4bit` | 约 200 MB | FunASR MLT (多语言转写) |
 
+#### 文本转语音模型 (TTS)
+
+| 别名 | 完整模型名 | 大小 | 描述 |
+|-------|-----------------|------|-------------|
+| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-4bit` | - | - |
+| `marvis` | `Marvis-AI/marvis-tts-100m-v0.2-MLX-6bit` | - | - |
+| `chatterbox` | `mlx-community/Chatterbox-TTS-q4` | - | - |
+| `chatterbox-turbo` | `mlx-community/Chatterbox-Turbo-TTS-q4` | - | - |
+| `outetts` | `mlx-community/Llama-OuteTTS-1.0-1B-4bit` | - | - |
+| `cosyvoice2` | `mlx-community/CosyVoice2-0.5B-4bit` | - | - |
+| `cosyvoice3` | `mlx-community/Fun-CosyVoice3-0.5B-2512-4bit` | - | - |
+
 ### 3. 启动 API 服务
 
 ```bash
