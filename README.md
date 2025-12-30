@@ -12,7 +12,7 @@
 ## ✨ Features
 
 - 🚀 **High Performance**: Built on Apple MLX framework, optimized for Apple Silicon
-- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/embeddings`, and `/v1/audio/transcriptions` endpoint support with tool calling
+- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/embeddings`, `/v1/audio/transcriptions`, and `/v1/audio/speech` (experimental) endpoint support with tool calling
 - 📱 **Menu Bar App**: Elegant macOS native menu bar integration
 - 💻 **Command Line Tools**: Complete CLI support for model management and inference
 - 🖼️ **Multimodal Support**: Support for both text and image inputs
@@ -156,6 +156,8 @@ swama serve --host 0.0.0.0 --port 28100
 
 Swama provides a fully OpenAI-compatible API endpoint, allowing you to use it with existing tools and integrations:
 
+Note: `/v1/audio/speech` is experimental.
+
 ```bash
 # Get available models
 curl http://localhost:28100/v1/models
@@ -197,7 +199,7 @@ curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "model=whisper-large" \
   -F "response_format=json"
 
-# Text-to-speech (TTS)
+# Text-to-speech (TTS, experimental)
 curl -X POST http://localhost:28100/v1/audio/speech \
   -H "Content-Type: application/json" \
   -d '{
@@ -211,7 +213,7 @@ curl -X POST http://localhost:28100/v1/audio/speech \
 # Voice-supported models: orpheus, marvis
 # Orpheus voices: tara, leah, jess, leo, dan, mia, zac, zoe
 # Marvis voices: conversational_a, conversational_b
-# CosyVoice requires explicit reference audio and is not supported by the OpenAI-compatible endpoint
+# CosyVoice uses a cached default reference audio when no reference is provided
 
 # Tool calling (function calling)
 curl -X POST http://localhost:28100/v1/chat/completions \

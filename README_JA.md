@@ -12,7 +12,7 @@
 ## ✨ 特徴
 
 - 🚀 **高性能**: Apple MLXフレームワーク上に構築、Apple Silicon向けに最適化
-- 🔌 **OpenAI互換API**: 標準の `/v1/chat/completions`、`/v1/embeddings`、および `/v1/audio/transcriptions` エンドポイントをサポート、Tool Calling対応
+- 🔌 **OpenAI互換API**: 標準の `/v1/chat/completions`、`/v1/embeddings`、`/v1/audio/transcriptions`、および `/v1/audio/speech`（experimental）エンドポイントをサポート、Tool Calling対応
 - 📱 **メニューバーアプリ**: エレガントなmacOSネイティブメニューバー統合
 - 💻 **コマンドラインツール**: モデル管理と推論のための完全なCLIサポート
 - 🖼️ **マルチモーダルサポート**: テキストと画像の両方の入力をサポート
@@ -156,6 +156,8 @@ swama serve --host 0.0.0.0 --port 28100
 
 SwamaはOpenAI完全互換のAPIエンドポイントを提供し、既存のツールや統合と一緒に使用できます：
 
+注：`/v1/audio/speech` は experimental です。
+
 ```bash
 # 利用可能なモデルの取得
 curl http://localhost:28100/v1/models
@@ -197,7 +199,7 @@ curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "model=whisper-large" \
   -F "response_format=json"
 
-# テキスト読み上げ（TTS）
+# テキスト読み上げ（TTS、experimental）
 curl -X POST http://localhost:28100/v1/audio/speech \
   -H "Content-Type: application/json" \
   -d '{

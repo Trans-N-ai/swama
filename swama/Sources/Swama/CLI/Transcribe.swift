@@ -97,7 +97,7 @@ struct Transcribe: AsyncParsableCommand {
         do {
             // Load MLXAudio model
             print("📥 Loading model...")
-            let runner = await MainActor.run { AudioRunner() }
+            let runner = await MainActor.run { SpeechToTextRunner() }
 
             // Load using MLXAudio-specific logic
             try await runner.loadModel(model)

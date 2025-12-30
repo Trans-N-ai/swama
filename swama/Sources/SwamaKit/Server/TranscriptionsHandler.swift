@@ -136,7 +136,7 @@ public enum TranscriptionsHandler {
 
         if responseFormat == .verboseJson {
             // For verbose format, get detailed results with timestamps
-            let transcriptionOutput = try await ModelPool.shared.runAudio(modelName: modelName) { runner in
+            let transcriptionOutput = try await ModelPool.shared.runSpeechToText(modelName: modelName) { runner in
                 try await runner.transcribe(
                     audioFile: tempURL,
                     language: language,
@@ -171,7 +171,7 @@ public enum TranscriptionsHandler {
         }
         else {
             // Simple transcription
-            let transcriptionOutput = try await ModelPool.shared.runAudio(modelName: modelName) { runner in
+            let transcriptionOutput = try await ModelPool.shared.runSpeechToText(modelName: modelName) { runner in
                 try await runner.transcribe(
                     audioFile: tempURL,
                     language: language,
@@ -595,7 +595,7 @@ extension TranscriptionsHandler {
                 seek: segment.seek,
                 start: Double(segment.start),
                 end: Double(segment.end),
-                text: segment.text, // Text is already normalized by AudioRunner
+                text: segment.text, // Text is already normalized by SpeechToTextRunner
                 tokens: segment.tokens,
                 temperature: Double(segment.temperature),
                 avg_logprob: Double(segment.avgLogprob),

@@ -21,8 +21,8 @@ public enum ModelAliasResolver {
             return resolvedName
         }
 
-        // Check STT (audio transcription) model aliases
-        if let resolvedName = audioAliases[lowercasedName] {
+        // Check STT (speech-to-text) model aliases
+        if let resolvedName = sttAliases[lowercasedName] {
             return resolvedName
         }
 
@@ -31,7 +31,7 @@ public enum ModelAliasResolver {
             return resolvedName
         }
 
-        // If it's an audio/TTS model format, return as-is
+        // If it's an STT/TTS model format, return as-is
         if isAudioModel(lowercasedName) || isTTSModel(lowercasedName) {
             return name
         }
@@ -44,8 +44,8 @@ public enum ModelAliasResolver {
         let lowercasedName = modelName.lowercased()
         return lowercasedName.hasPrefix("whisper-") ||
             lowercasedName.hasPrefix("funasr-") ||
-            audioAliases.keys.contains(lowercasedName) ||
-            audioAliases.values.contains(where: { $0.lowercased() == lowercasedName })
+            sttAliases.keys.contains(lowercasedName) ||
+            sttAliases.values.contains(where: { $0.lowercased() == lowercasedName })
     }
 
     /// Check if a model name is a TTS (Text-to-Speech) model
@@ -55,15 +55,15 @@ public enum ModelAliasResolver {
             ttsAliases.values.contains(where: { $0.lowercased() == lowercasedName })
     }
 
-    /// Resolve an audio model name to an MLXAudio-friendly alias if possible.
+    /// Resolve an STT model name to an MLXAudio-friendly alias if possible.
     public static func resolveAudioModelName(_ modelName: String) -> String {
         let lowercasedName = modelName.lowercased()
 
-        if audioAliases.keys.contains(lowercasedName) {
+        if sttAliases.keys.contains(lowercasedName) {
             return lowercasedName
         }
 
-        if let alias = audioAliases.first(where: { $0.value.lowercased() == lowercasedName })?.key {
+        if let alias = sttAliases.first(where: { $0.value.lowercased() == lowercasedName })?.key {
             return alias
         }
 
@@ -140,9 +140,9 @@ public enum ModelAliasResolver {
         "gpt-oss-120b": "lmstudio-community/gpt-oss-120b-MLX-8bit",
     ]
 
-    /// Audio model aliases for MLXAudio (Whisper, FunASR) - STT only
+    /// STT model aliases for MLXAudio (Whisper, FunASR)
     /// All keys should be lowercase for case-insensitive matching.
-    static let audioAliases: [String: String] = [
+    static let sttAliases: [String: String] = [
         // Whisper models - default to 4bit quantization for balance of quality and size
         "whisper-tiny": "mlx-community/whisper-tiny-4bit",
         "whisper-base": "mlx-community/whisper-base-4bit",
