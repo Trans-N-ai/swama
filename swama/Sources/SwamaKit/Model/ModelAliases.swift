@@ -21,26 +21,53 @@ public enum ModelAliasResolver {
             return resolvedName
         }
 
-        // Check audio model aliases
+        // Check STT (audio transcription) model aliases
         if let resolvedName = audioAliases[lowercasedName] {
             return resolvedName
         }
 
-        // If it's an audio model format, return as-is
-        if isAudioModel(lowercasedName) {
+        // Check TTS model aliases
+        if let resolvedName = ttsAliases[lowercasedName] {
+            return resolvedName
+        }
+
+        // If it's an audio/TTS model format, return as-is
+        if isAudioModel(lowercasedName) || isTTSModel(lowercasedName) {
             return name
         }
 
         return name
     }
 
-    /// Check if a model name is supported by MLXAudio transcription
+    /// Check if a model name is supported by MLXAudio transcription (STT only: Whisper, FunASR)
     public static func isAudioModel(_ modelName: String) -> Bool {
         let lowercasedName = modelName.lowercased()
         return lowercasedName.hasPrefix("whisper-") ||
             lowercasedName.hasPrefix("funasr-") ||
             audioAliases.keys.contains(lowercasedName) ||
-            audioAliases.values.contains(modelName)
+            audioAliases.values.contains(where: { $0.lowercased() == lowercasedName })
+    }
+
+    /// Check if a model name is a TTS (Text-to-Speech) model
+    public static func isTTSModel(_ modelName: String) -> Bool {
+        let lowercasedName = modelName.lowercased()
+        return ttsAliases.keys.contains(lowercasedName) ||
+            ttsAliases.values.contains(where: { $0.lowercased() == lowercasedName })
+    }
+
+    /// Resolve an audio model name to an MLXAudio-friendly alias if possible.
+    public static func resolveAudioModelName(_ modelName: String) -> String {
+        let lowercasedName = modelName.lowercased()
+
+        if audioAliases.keys.contains(lowercasedName) {
+            return lowercasedName
+        }
+
+        if let alias = audioAliases.first(where: { $0.value.lowercased() == lowercasedName })?.key {
+            return alias
+        }
+
+        return modelName
     }
 
     // MARK: Internal
@@ -113,7 +140,7 @@ public enum ModelAliasResolver {
         "gpt-oss-120b": "lmstudio-community/gpt-oss-120b-MLX-8bit",
     ]
 
-    /// Audio model aliases for MLXAudio (Whisper, FunASR)
+    /// Audio model aliases for MLXAudio (Whisper, FunASR) - STT only
     /// All keys should be lowercase for case-insensitive matching.
     static let audioAliases: [String: String] = [
         // Whisper models - default to 4bit quantization for balance of quality and size
@@ -135,5 +162,27 @@ public enum ModelAliasResolver {
         // FunASR models
         "funasr": "mlx-community/Fun-ASR-Nano-2512-4bit",
         "funasr-mlt": "mlx-community/Fun-ASR-MLT-Nano-2512-4bit",
+    ]
+
+    /// TTS (Text-to-Speech) model aliases
+    /// All keys should be lowercase for case-insensitive matching.
+    static let ttsAliases: [String: String] = [
+        // Orpheus
+        "orpheus": "mlx-community/orpheus-3b-0.1-ft-4bit",
+
+        // Marvis
+        "marvis": "Marvis-AI/marvis-tts-100m-v0.2-MLX-6bit",
+
+        // Chatterbox
+        "chatterbox": "mlx-community/Chatterbox-TTS-q4",
+        "chatterbox-turbo": "mlx-community/Chatterbox-Turbo-TTS-q4",
+        "chatterbox_turbo": "mlx-community/Chatterbox-Turbo-TTS-q4",
+
+        // OuteTTS
+        "outetts": "mlx-community/Llama-OuteTTS-1.0-1B-4bit",
+
+        // CosyVoice models
+        "cosyvoice2": "mlx-community/CosyVoice2-0.5B-4bit",
+        "cosyvoice3": "mlx-community/Fun-CosyVoice3-0.5B-2512-4bit",
     ]
 }

@@ -1,5 +1,5 @@
 {
-  "originHash" : "12b850129adcac428489c08d1c013a224b94fe54e6f40a0c8387515bcedee1ad",
+  "originHash" : "c1f4a2120d791e0b4835b71777e8f34003027d1939970f9725354b99cb4b910b",
   "pins" : [
     {
       "identity" : "espeak-ng-spm",
@@ -68,8 +68,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-jinja.git",
       "state" : {
-        "revision" : "c1ef5963ba4a97a589b9c9583ff4ee3352a86d23",
-        "version" : "2.1.0"
+        "revision" : "06a511d5adab5a812852ff972e65702a24b8ce30",
+        "version" : "2.2.0"
       }
     },
     {

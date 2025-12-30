@@ -26,7 +26,7 @@ public enum ModelPaths {
         return home.appendingPathComponent("Documents/huggingface/models")
     }()
 
-    /// The audio models cache directory (used by MLXAudio/Hub)
+    /// The audio/TTS models cache directory (used by MLXAudio/Hub)
     public static let audioModelsDirectory: URL = {
         let cachesURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         return cachesURL.appendingPathComponent("huggingface/models")
@@ -40,10 +40,8 @@ public enum ModelPaths {
     /// Get the local directory path for a specific model, checking both preferred and legacy locations
     /// Returns the first location where the model exists, or the preferred location if neither exists
     public static func getModelDirectory(for modelName: String) -> URL {
-        // Check if it's an audio model - use audio cache directory
-        if modelName.hasPrefix("whisper-") || modelName.hasPrefix("funasr-") || modelName
-            .hasPrefix("mlx-community/whisper") || modelName.hasPrefix("mlx-community/Fun-ASR")
-        {
+        // Check if it's an audio or TTS model - use audio cache directory
+        if isAudioModelName(modelName) || isTTSModelRepo(modelName) {
             // Audio models use standard directory structure: {org}/{model}
             // e.g., mlx-community/whisper-large-v3-turbo-4bit -> mlx-community/whisper-large-v3-turbo-4bit
             return audioModelsDirectory.appendingPathComponent(modelName)
@@ -91,6 +89,19 @@ public enum ModelPaths {
 
     /// Check if a model exists locally by checking for .swama-meta.json file
     public static func modelExistsLocally(_ modelName: String) -> Bool {
+        if let ttsModel = TTSModelResolver.resolve(modelName) {
+            return ttsModelExistsLocally(kind: ttsModel.kind)
+        }
+
+        if isTTSModelRepo(modelName) {
+            return modelMetadataExists(for: modelName) ||
+                FileManager.default.fileExists(atPath: hubCacheDirectory(for: modelName).path)
+        }
+
+        if ModelAliasResolver.isAudioModel(modelName) {
+            return audioModelExistsLocally(modelName)
+        }
+
         let modelDir = getModelDirectory(for: modelName)
         let metaPath = modelDir.appendingPathComponent(".swama-meta.json").path
         return FileManager.default.fileExists(atPath: metaPath)
@@ -108,19 +119,29 @@ public enum ModelPaths {
     /// Remove a model from disk
     /// Returns true if model was found and deleted, false if model wasn't found
     public static func removeModel(_ modelName: String) throws -> Bool {
-        // Check if it's an audio model
-        if modelName.hasPrefix("whisper-") || modelName.hasPrefix("funasr-") || modelName
-            .hasPrefix("mlx-community/whisper") || modelName.hasPrefix("mlx-community/Fun-ASR")
-        {
-            // Audio models use HuggingFace Hub format
-            let hubFormattedName = modelName.replacingOccurrences(of: "/", with: "--")
-            let audioModelDir = audioModelsDirectory.appendingPathComponent("models--\(hubFormattedName)")
+        if let ttsModel = TTSModelResolver.resolve(modelName) {
+            return removeTTSModel(kind: ttsModel.kind)
+        }
 
-            if FileManager.default.fileExists(atPath: audioModelDir.path) {
-                try FileManager.default.removeItem(at: audioModelDir)
-                return true
+        if isTTSModelRepo(modelName) {
+            var removedAny = false
+            if removeModelDirectoryIfPresent(for: modelName) {
+                removedAny = true
             }
-            return false
+
+            let hubDir = hubCacheDirectory(for: modelName)
+            if FileManager.default.fileExists(atPath: hubDir.path) {
+                try FileManager.default.removeItem(at: hubDir)
+                removedAny = true
+            }
+
+            return removedAny
+        }
+
+        // Check if it's an audio model
+        if isAudioModelName(modelName) {
+            // Audio models use HuggingFace Hub format
+            return try removeAudioModel(modelName)
         }
 
         // Check all possible model locations in priority order for LLM models
@@ -139,5 +160,106 @@ public enum ModelPaths {
         }
 
         return false // Model not found
+    }
+
+    private static func ttsModelExistsLocally(kind: TTSModelKind) -> Bool {
+        let repoIds = TTSModelResolver.repoIDs(for: kind)
+        for repoId in repoIds {
+            if modelMetadataExists(for: repoId) || FileManager.default.fileExists(atPath: hubCacheDirectory(for: repoId).path) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func audioModelExistsLocally(_ modelName: String) -> Bool {
+        for dir in audioModelCacheDirectories(modelName: modelName) {
+            let metaPath = dir.appendingPathComponent(".swama-meta.json").path
+            if FileManager.default.fileExists(atPath: metaPath) || FileManager.default.fileExists(atPath: dir.path) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func removeTTSModel(kind: TTSModelKind) -> Bool {
+        let repoIds = TTSModelResolver.repoIDs(for: kind)
+        var removedAny = false
+
+        for repoId in repoIds {
+            if removeModelDirectoryIfPresent(for: repoId) {
+                removedAny = true
+            }
+
+            let hubDir = hubCacheDirectory(for: repoId)
+            if FileManager.default.fileExists(atPath: hubDir.path) {
+                try? FileManager.default.removeItem(at: hubDir)
+                removedAny = true
+            }
+        }
+
+        return removedAny
+    }
+
+    private static func removeAudioModel(_ modelName: String) throws -> Bool {
+        let dirs = audioModelCacheDirectories(modelName: modelName)
+        guard !dirs.isEmpty else {
+            return false
+        }
+
+        var removedAny = false
+        for dir in dirs {
+            if FileManager.default.fileExists(atPath: dir.path) {
+                try FileManager.default.removeItem(at: dir)
+                removedAny = true
+            }
+        }
+
+        return removedAny
+    }
+
+    private static func audioModelCacheDirectories(modelName: String) -> [URL] {
+        guard isAudioModelName(modelName) else {
+            return []
+        }
+
+        return [
+            audioModelsDirectory.appendingPathComponent(modelName),
+            hubCacheDirectory(for: modelName),
+        ]
+    }
+
+    private static func hubCacheDirectory(for repoId: String) -> URL {
+        let hubFormattedName = repoId.replacingOccurrences(of: "/", with: "--")
+        return audioModelsDirectory.appendingPathComponent("models--\(hubFormattedName)")
+    }
+
+    private static func isAudioModelName(_ modelName: String) -> Bool {
+        let normalized = modelName.lowercased()
+        return normalized.hasPrefix("whisper-") || normalized.hasPrefix("funasr-") ||
+            normalized.hasPrefix("mlx-community/whisper") || normalized.hasPrefix("mlx-community/fun-asr")
+    }
+
+    private static func isTTSModelRepo(_ modelName: String) -> Bool {
+        let normalized = modelName.lowercased()
+        let repoIds = TTSModelKind.allCases.flatMap { TTSModelResolver.repoIDs(for: $0) }
+        return repoIds.contains(where: { $0.lowercased() == normalized })
+    }
+
+    private static func modelMetadataExists(for modelName: String) -> Bool {
+        let modelDir = getModelDirectory(for: modelName)
+        let metaPath = modelDir.appendingPathComponent(".swama-meta.json").path
+        return FileManager.default.fileExists(atPath: metaPath)
+    }
+
+    private static func removeModelDirectoryIfPresent(for modelName: String) -> Bool {
+        let modelDir = getModelDirectory(for: modelName)
+        let metaPath = modelDir.appendingPathComponent(".swama-meta.json").path
+        guard FileManager.default.fileExists(atPath: metaPath) else {
+            return false
+        }
+
+        try? FileManager.default.removeItem(at: modelDir)
+        return true
     }
 }

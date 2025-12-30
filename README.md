@@ -197,6 +197,22 @@ curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "model=whisper-large" \
   -F "response_format=json"
 
+# Text-to-speech (TTS)
+curl -X POST http://localhost:28100/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "orpheus",
+    "input": "Hello from Swama TTS",
+    "voice": "tara",
+    "response_format": "wav"
+  }' --output speech.wav
+
+# TTS models: orpheus, marvis, chatterbox, chatterbox-turbo, outetts, cosyvoice2, cosyvoice3
+# Voice-supported models: orpheus, marvis
+# Orpheus voices: tara, leah, jess, leo, dan, mia, zac, zoe
+# Marvis voices: conversational_a, conversational_b
+# CosyVoice requires explicit reference audio and is not supported by the OpenAI-compatible endpoint
+
 # Tool calling (function calling)
 curl -X POST http://localhost:28100/v1/chat/completions \
   -H "Content-Type: application/json" \

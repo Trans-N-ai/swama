@@ -101,17 +101,16 @@ public enum ModelDownloader {
     }
 
     public static func fetchModel(modelName: String) async throws -> String {
-        // Resolve alias to actual model name
         let resolved = ModelAliasResolver.resolve(name: modelName)
-
-        // Check if model already exists locally (using metadata file)
-        if ModelPaths.modelExistsLocally(resolved) {
-            if ModelAliasResolver.isAudioModel(resolved) {
-                print("✅ Audio model already exists: \(resolved)")
-            }
-            else {
-                print("✅ Model already exists: \(resolved)")
-            }
+        let repoIds = resolveRepoIDs(resolvedName: resolved)
+        let allExists = repoIds.allSatisfy { ModelPaths.modelExistsLocally($0) }
+        
+        // Check if model already exists locally
+        if allExists {
+            let label = TTSModelResolver.resolve(resolved) != nil
+                ? "TTS"
+                : (ModelAliasResolver.isAudioModel(resolved) ? "Audio" : "Model")
+            print("✅ \(label) already exists: \(resolved)")
             return resolved
         }
 
@@ -129,10 +128,19 @@ public enum ModelDownloader {
             )
         }
 
-        // Download the model (works for both LLM and Audio models)
-        try await ModelDownloader.downloadModel(resolvedModelName: resolved)
+        // Download the model (works for LLM, Audio, and TTS models)
+        for repoId in repoIds {
+            try await ModelDownloader.downloadModel(resolvedModelName: repoId)
+        }
 
         return resolved
+    }
+
+    private static func resolveRepoIDs(resolvedName: String) -> [String] {
+        if let ttsModel = TTSModelResolver.resolve(resolvedName) {
+            return TTSModelResolver.repoIDs(for: ttsModel.kind)
+        }
+        return [resolvedName]
     }
 
     // MARK: Internal

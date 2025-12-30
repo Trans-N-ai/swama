@@ -197,6 +197,22 @@ curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "model=whisper-large" \
   -F "response_format=json"
 
+# 文本转语音（TTS）
+curl -X POST http://localhost:28100/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "orpheus",
+    "input": "Hello from Swama TTS",
+    "voice": "tara",
+    "response_format": "wav"
+  }' --output speech.wav
+
+# TTS 模型：orpheus, marvis, chatterbox, chatterbox-turbo, outetts, cosyvoice2, cosyvoice3
+# 支持音色的模型：orpheus, marvis
+# Orpheus 音色：tara, leah, jess, leo, dan, mia, zac, zoe
+# Marvis 音色：conversational_a, conversational_b
+# CosyVoice 需要显式参考音频，OpenAI 兼容端点不支持
+
 # 工具调用（函数调用）
 curl -X POST http://localhost:28100/v1/chat/completions \
   -H "Content-Type: application/json" \
