@@ -102,9 +102,31 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
                 }
             }
 
+        case (.POST, "/v1/audio/speech"):
+            let channel = context.channel
+            channel.eventLoop.execute {
+                Task {
+                    await TextToSpeechHandler.handle(
+                        requestHead: request,
+                        body: bodyBuffer,
+                        channel: channel
+                    )
+                }
+            }
+
         case (.OPTIONS, _):
             var headers = HTTPHeaders()
-            HTTPHandler.applyCORSHeaders(&headers)
+
+            // Reflect the requested headers if present (for CORS preflight)
+            if let requestedHeaders = request.headers.first(name: "Access-Control-Request-Headers") {
+                headers.add(name: "Access-Control-Allow-Headers", value: requestedHeaders)
+            }
+            else {
+                headers.add(name: "Access-Control-Allow-Headers", value: "Content-Type, Authorization")
+            }
+
+            headers.add(name: "Access-Control-Allow-Origin", value: "*")
+            headers.add(name: "Access-Control-Allow-Methods", value: "GET, POST, OPTIONS")
             headers.add(name: "Access-Control-Max-Age", value: "86400")
             headers.add(name: "Content-Length", value: "0")
             headers.add(name: "Connection", value: "keep-alive")
@@ -202,9 +224,9 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
     }
 
+    /// Apply basic CORS headers for actual requests (GET/POST).
+    /// For OPTIONS preflight, use the dedicated handling in the OPTIONS case.
     public static func applyCORSHeaders(_ headers: inout HTTPHeaders) {
         headers.add(name: "Access-Control-Allow-Origin", value: "*")
-        headers.add(name: "Access-Control-Allow-Headers", value: "Content-Type, Authorization")
-        headers.add(name: "Access-Control-Allow-Methods", value: "GET, POST, OPTIONS")
     }
 }

@@ -68,11 +68,11 @@ public enum TranscriptionOutput: Sendable {
     case detailed([TranscriptionResult])
 }
 
-// MARK: - AudioRunner
+// MARK: - SpeechToTextRunner
 
 /// MLXAudio-based implementation for speech recognition
 @MainActor
-public class AudioRunner: @unchecked Sendable {
+public class SpeechToTextRunner: @unchecked Sendable {
     private var stt: (any STTEngine)?
     private var isRunning = false
     private var selectedModelName: String?
@@ -236,7 +236,7 @@ public class AudioRunner: @unchecked Sendable {
 }
 
 /// Convenience methods for model integration with Swama
-public extension AudioRunner {
+public extension SpeechToTextRunner {
     /// Load model from Swama's model identifier (e.g. "whisper-base", "funasr")
     func loadModel(_ modelIdentifier: String) async throws {
         guard ModelAliasResolver.isAudioModel(modelIdentifier) else {
@@ -276,7 +276,7 @@ public enum AudioError: Error, LocalizedError {
     }
 }
 
-private extension AudioRunner {
+private extension SpeechToTextRunner {
     enum AudioModelKind {
         case whisper
         case funASR
@@ -304,8 +304,9 @@ private extension AudioRunner {
         let normalized = modelName.lowercased()
         switch normalized {
         case "whisper-large",
-             "whisper-large-turbo",
-             "whisper-large-v3",
+             "whisper-large-v3":
+            return .large
+        case "whisper-large-turbo",
              "whisper-large-v3-turbo":
             return .largeTurbo
         case "whisper-medium":
@@ -317,7 +318,7 @@ private extension AudioRunner {
         case "whisper-tiny":
             return .tiny
         default:
-            return .largeTurbo
+            return .large
         }
     }
 }

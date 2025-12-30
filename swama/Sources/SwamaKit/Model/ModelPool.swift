@@ -79,12 +79,12 @@ public actor ModelPool {
 
     public static let shared: ModelPool = .init()
 
-    // MARK: - Audio Support
+    // MARK: - Speech Recognition Support
 
-    /// Safely run an audio transcription operation with caching and concurrency control
-    public func runAudio<T: Sendable>(
+    /// Safely run a speech-to-text transcription operation with caching and concurrency control
+    public func runSpeechToText<T: Sendable>(
         modelName: String,
-        operation: @Sendable @escaping (AudioRunner) async throws -> T
+        operation: @Sendable @escaping (SpeechToTextRunner) async throws -> T
     ) async throws -> T {
         // Wait for available slot AND ensure the specific model is not already running
         while runningInferences >= maxConcurrentInferences || runningModels.contains(modelName) {
@@ -95,8 +95,8 @@ public actor ModelPool {
         runningModels.insert(modelName)
 
         do {
-            // Get or load the audio runner
-            let runner = try await getAudioRunner(modelName: modelName)
+            // Get or load the speech-to-text runner
+            let runner = try await getSpeechToTextRunner(modelName: modelName)
 
             // Execute the operation
             let result = try await operation(runner)
@@ -113,18 +113,47 @@ public actor ModelPool {
         }
     }
 
-    /// Gets or loads an audio runner for the given model name
-    private func getAudioRunner(modelName: String) async throws -> AudioRunner {
+    /// Safely run a TTS operation with caching and concurrency control
+    public func runTTS<T: Sendable>(
+        modelKey: String,
+        kind: TTSModelKind,
+        operation: @Sendable @escaping (TTSRunner) async throws -> T
+    ) async throws -> T {
+        while runningInferences >= maxConcurrentInferences || runningModels.contains(modelKey) {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        }
+
+        runningInferences += 1
+        runningModels.insert(modelKey)
+
+        do {
+            let runner = try await getTTSRunner(modelKey: modelKey, kind: kind)
+            let result = try await operation(runner)
+
+            runningInferences = max(0, runningInferences - 1)
+            runningModels.remove(modelKey)
+
+            return result
+        }
+        catch {
+            runningInferences = max(0, runningInferences - 1)
+            runningModels.remove(modelKey)
+            throw error
+        }
+    }
+
+    /// Gets or loads a speech-to-text runner for the given model name
+    private func getSpeechToTextRunner(modelName: String) async throws -> SpeechToTextRunner {
         // Ensure memory management is started
         ensureMemoryManagementStarted()
 
-        if let runner = audioRunnerCache[modelName] {
+        if let runner = sttRunnerCache[modelName] {
             // Record usage for existing cached runner
             modelUsageInfo[modelName]?.recordUsage()
             return runner
         }
 
-        if let task = audioTasks[modelName] {
+        if let task = sttTasks[modelName] {
             let runner = try await task.value
             // Record usage for newly loaded runner
             modelUsageInfo[modelName]?.recordUsage()
@@ -135,20 +164,53 @@ public actor ModelPool {
         await performMemoryPressureCheck()
 
         let task = Task {
-            let runner = await MainActor.run { AudioRunner() }
+            let runner = await MainActor.run { SpeechToTextRunner() }
             try await runner.loadModel(modelName)
 
             // Update caches back on the actor
-            self.setAudioRunner(runner, forKey: modelName)
+            self.setSpeechToTextRunner(runner, forKey: modelName)
             return runner
         }
-        audioTasks[modelName] = task
+        sttTasks[modelName] = task
         return try await task.value
     }
 
-    private func setAudioRunner(_ runner: AudioRunner, forKey modelName: String) {
-        audioRunnerCache[modelName] = runner
+    private func setSpeechToTextRunner(_ runner: SpeechToTextRunner, forKey modelName: String) {
+        sttRunnerCache[modelName] = runner
         modelUsageInfo[modelName] = ModelUsageInfo()
+    }
+
+    /// Gets or loads a TTS runner for the given model key
+    private func getTTSRunner(modelKey: String, kind: TTSModelKind) async throws -> TTSRunner {
+        ensureMemoryManagementStarted()
+
+        if let runner = ttsRunnerCache[modelKey] {
+            modelUsageInfo[modelKey]?.recordUsage()
+            return runner
+        }
+
+        if let task = ttsTasks[modelKey] {
+            let runner = try await task.value
+            modelUsageInfo[modelKey]?.recordUsage()
+            return runner
+        }
+
+        await performMemoryPressureCheck()
+
+        let task = Task {
+            let runner = await MainActor.run { TTSRunner(kind: kind) }
+            try await runner.loadModel()
+            self.setTTSRunner(runner, forKey: modelKey)
+            return runner
+        }
+
+        ttsTasks[modelKey] = task
+        return try await task.value
+    }
+
+    private func setTTSRunner(_ runner: TTSRunner, forKey modelKey: String) {
+        ttsRunnerCache[modelKey] = runner
+        modelUsageInfo[modelKey] = ModelUsageInfo()
     }
 
     // MARK: - Memory Management Configuration
@@ -325,14 +387,16 @@ public actor ModelPool {
         // Store references to help with cleanup
         let containersToEvict = Array(cache.values)
         let tasksToCancel = Array(tasks.values)
-        let audioTasksToCancel = Array(audioTasks.values)
+        let sttTasksToCancel = Array(sttTasks.values)
+        let ttsTasksToCancel = Array(ttsTasks.values)
 
         // Clear all caches to remove strong references
         cache.removeAll()
         modelTypeCache.removeAll() // Clear type cache too
         vlmRegistryCache = nil // Reset VLM registry cache
         embeddingRunnerCache.removeAll() // Clear embedding cache
-        audioRunnerCache.removeAll() // Clear audio cache
+        sttRunnerCache.removeAll() // Clear speech-to-text cache
+        ttsRunnerCache.removeAll() // Clear TTS cache
         modelUsageInfo.removeAll() // Clear usage tracking
 
         // Cancel all loading tasks
@@ -341,11 +405,17 @@ public actor ModelPool {
         }
         tasks.removeAll()
 
-        // Cancel all audio loading tasks
-        for task in audioTasksToCancel {
+        // Cancel all speech-to-text loading tasks
+        for task in sttTasksToCancel {
             task.cancel()
         }
-        audioTasks.removeAll()
+        sttTasks.removeAll()
+
+        // Cancel all TTS loading tasks
+        for task in ttsTasksToCancel {
+            task.cancel()
+        }
+        ttsTasks.removeAll()
 
         // Explicitly release container references
         _ = containersToEvict
@@ -372,15 +442,20 @@ public actor ModelPool {
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName) // Clear type cache for this model
         embeddingRunnerCache.removeValue(forKey: modelName) // Clear embedding cache for this model
-        audioRunnerCache.removeValue(forKey: modelName) // Clear audio cache for this model
+        sttRunnerCache.removeValue(forKey: modelName) // Clear speech-to-text cache for this model
+        ttsRunnerCache.removeValue(forKey: modelName) // Clear TTS cache for this model
         modelUsageInfo.removeValue(forKey: modelName) // Clear usage tracking for this model
 
         if let task = tasks.removeValue(forKey: modelName) {
             task.cancel()
         }
 
-        if let audioTask = audioTasks.removeValue(forKey: modelName) {
-            audioTask.cancel()
+        if let sttTask = sttTasks.removeValue(forKey: modelName) {
+            sttTask.cancel()
+        }
+
+        if let ttsTask = ttsTasks.removeValue(forKey: modelName) {
+            ttsTask.cancel()
         }
 
         // Release container reference
@@ -395,8 +470,10 @@ public actor ModelPool {
     private var cache: [String: MLXLMCommon.ModelContainer] = .init()
     private var tasks: [String: Task<MLXLMCommon.ModelContainer, Error>] = .init()
     private var embeddingRunnerCache: [String: EmbeddingRunner] = .init()
-    private var audioRunnerCache: [String: AudioRunner] = .init()
-    private var audioTasks: [String: Task<AudioRunner, Error>] = .init()
+    private var sttRunnerCache: [String: SpeechToTextRunner] = .init()
+    private var sttTasks: [String: Task<SpeechToTextRunner, Error>] = .init()
+    private var ttsRunnerCache: [String: TTSRunner] = .init()
+    private var ttsTasks: [String: Task<TTSRunner, Error>] = .init()
 
     /// Memory management tracking
     private var modelUsageInfo: [String: ModelUsageInfo] = .init()
@@ -832,7 +909,8 @@ public actor ModelPool {
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName)
         embeddingRunnerCache.removeValue(forKey: modelName)
-        audioRunnerCache.removeValue(forKey: modelName)
+        sttRunnerCache.removeValue(forKey: modelName)
+        ttsRunnerCache.removeValue(forKey: modelName)
         modelUsageInfo.removeValue(forKey: modelName)
 
         // Cancel loading task if active
@@ -840,9 +918,13 @@ public actor ModelPool {
             task.cancel()
         }
 
-        // Cancel audio loading task if active
-        if let audioTask = audioTasks.removeValue(forKey: modelName) {
-            audioTask.cancel()
+        // Cancel speech-to-text loading task if active
+        if let sttTask = sttTasks.removeValue(forKey: modelName) {
+            sttTask.cancel()
+        }
+
+        if let ttsTask = ttsTasks.removeValue(forKey: modelName) {
+            ttsTask.cancel()
         }
 
         // Explicitly nil out the container reference to help ARC

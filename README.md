@@ -12,7 +12,7 @@
 ## ✨ Features
 
 - 🚀 **High Performance**: Built on Apple MLX framework, optimized for Apple Silicon
-- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/embeddings`, and `/v1/audio/transcriptions` endpoint support with tool calling
+- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/embeddings`, `/v1/audio/transcriptions`, and `/v1/audio/speech` (experimental) endpoint support with tool calling
 - 📱 **Menu Bar App**: Elegant macOS native menu bar integration
 - 💻 **Command Line Tools**: Complete CLI support for model management and inference
 - 🖼️ **Multimodal Support**: Support for both text and image inputs
@@ -143,6 +143,18 @@ swama list
 | `funasr` | `mlx-community/Fun-ASR-Nano-2512-4bit` | ~200 MB | FunASR Nano (multilingual) |
 | `funasr-mlt` | `mlx-community/Fun-ASR-MLT-Nano-2512-4bit` | ~200 MB | FunASR MLT (multilingual transcription) |
 
+#### Text-to-Speech Models (experimental)
+
+| Alias | Full Model Name | Size | Description |
+|-------|-----------------|------|-------------|
+| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-4bit` | - | - |
+| `marvis` | `Marvis-AI/marvis-tts-100m-v0.2-MLX-6bit` | - | - |
+| `chatterbox` | `mlx-community/Chatterbox-TTS-q4` | - | - |
+| `chatterbox-turbo` | `mlx-community/Chatterbox-Turbo-TTS-q4` | - | - |
+| `outetts` | `mlx-community/Llama-OuteTTS-1.0-1B-4bit` | - | - |
+| `cosyvoice2` | `mlx-community/CosyVoice2-0.5B-4bit` | - | - |
+| `cosyvoice3` | `mlx-community/Fun-CosyVoice3-0.5B-2512-4bit` | - | - |
+
 ### 3. Start API Service
 
 ```bash
@@ -155,6 +167,8 @@ swama serve --host 0.0.0.0 --port 28100
 #### 🔌 OpenAI Compatible API
 
 Swama provides a fully OpenAI-compatible API endpoint, allowing you to use it with existing tools and integrations:
+
+Note: `/v1/audio/speech` is experimental.
 
 ```bash
 # Get available models
@@ -196,6 +210,22 @@ curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "file=@audio.wav" \
   -F "model=whisper-large" \
   -F "response_format=json"
+
+# Text-to-speech (TTS, experimental)
+curl -X POST http://localhost:28100/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "orpheus",
+    "input": "Hello from Swama TTS",
+    "voice": "tara",
+    "response_format": "wav"
+  }' --output speech.wav
+
+# TTS models: orpheus, marvis, chatterbox, chatterbox-turbo, outetts, cosyvoice2, cosyvoice3
+# Voice-supported models: orpheus, marvis
+# Orpheus voices: tara, leah, jess, leo, dan, mia, zac, zoe
+# Marvis voices: conversational_a, conversational_b
+# CosyVoice uses a cached default reference audio when no reference is provided
 
 # Tool calling (function calling)
 curl -X POST http://localhost:28100/v1/chat/completions \

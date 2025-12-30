@@ -12,7 +12,7 @@
 ## ✨ 特徴
 
 - 🚀 **高性能**: Apple MLXフレームワーク上に構築、Apple Silicon向けに最適化
-- 🔌 **OpenAI互換API**: 標準の `/v1/chat/completions`、`/v1/embeddings`、および `/v1/audio/transcriptions` エンドポイントをサポート、Tool Calling対応
+- 🔌 **OpenAI互換API**: 標準の `/v1/chat/completions`、`/v1/embeddings`、`/v1/audio/transcriptions`、および `/v1/audio/speech`（experimental）エンドポイントをサポート、Tool Calling対応
 - 📱 **メニューバーアプリ**: エレガントなmacOSネイティブメニューバー統合
 - 💻 **コマンドラインツール**: モデル管理と推論のための完全なCLIサポート
 - 🖼️ **マルチモーダルサポート**: テキストと画像の両方の入力をサポート
@@ -143,6 +143,18 @@ swama list
 | `funasr` | `mlx-community/Fun-ASR-Nano-2512-4bit` | 約 200 MB | FunASR Nano (多言語) |
 | `funasr-mlt` | `mlx-community/Fun-ASR-MLT-Nano-2512-4bit` | 約 200 MB | FunASR MLT (多言語転写) |
 
+#### テキスト読み上げモデル (TTS)
+
+| エイリアス | 完全なモデル名 | サイズ | 説明 |
+|-------|-----------------|------|-------------|
+| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-4bit` | - | - |
+| `marvis` | `Marvis-AI/marvis-tts-100m-v0.2-MLX-6bit` | - | - |
+| `chatterbox` | `mlx-community/Chatterbox-TTS-q4` | - | - |
+| `chatterbox-turbo` | `mlx-community/Chatterbox-Turbo-TTS-q4` | - | - |
+| `outetts` | `mlx-community/Llama-OuteTTS-1.0-1B-4bit` | - | - |
+| `cosyvoice2` | `mlx-community/CosyVoice2-0.5B-4bit` | - | - |
+| `cosyvoice3` | `mlx-community/Fun-CosyVoice3-0.5B-2512-4bit` | - | - |
+
 ### 3. APIサービスの開始
 
 ```bash
@@ -155,6 +167,8 @@ swama serve --host 0.0.0.0 --port 28100
 #### 🔌 OpenAI互換API
 
 SwamaはOpenAI完全互換のAPIエンドポイントを提供し、既存のツールや統合と一緒に使用できます：
+
+注：`/v1/audio/speech` は experimental です。
 
 ```bash
 # 利用可能なモデルの取得
@@ -196,6 +210,22 @@ curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "file=@audio.wav" \
   -F "model=whisper-large" \
   -F "response_format=json"
+
+# テキスト読み上げ（TTS、experimental）
+curl -X POST http://localhost:28100/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "orpheus",
+    "input": "Hello from Swama TTS",
+    "voice": "tara",
+    "response_format": "wav"
+  }' --output speech.wav
+
+# TTSモデル: orpheus, marvis, chatterbox, chatterbox-turbo, outetts, cosyvoice2, cosyvoice3
+# 音色対応モデル: orpheus, marvis
+# Orpheus音色: tara, leah, jess, leo, dan, mia, zac, zoe
+# Marvis音色: conversational_a, conversational_b
+# CosyVoice は明示的な参照音声が必要なため、OpenAI互換エンドポイントでは未対応
 
 # ツール呼び出し（関数呼び出し）
 curl -X POST http://localhost:28100/v1/chat/completions \

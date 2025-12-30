@@ -12,7 +12,7 @@
 ## ✨ 特性
 
 - 🚀 **高性能**: 基于 Apple MLX 框架，针对 Apple Silicon 优化
-- 🔌 **OpenAI 兼容 API**: 提供标准的 `/v1/chat/completions`、`/v1/embeddings` 和 `/v1/audio/transcriptions` 端点，支持工具调用
+- 🔌 **OpenAI 兼容 API**: 提供标准的 `/v1/chat/completions`、`/v1/embeddings`、`/v1/audio/transcriptions` 和 `/v1/audio/speech`（experimental）端点，支持工具调用
 - 📱 **菜单栏应用**: 优雅的 macOS 原生菜单栏集成
 - 💻 **命令行工具**: 完整的 CLI 支持用于模型管理和推理
 - 🖼️ **多模态支持**: 同时支持文本和图像输入
@@ -143,6 +143,18 @@ swama list
 | `funasr` | `mlx-community/Fun-ASR-Nano-2512-4bit` | 约 200 MB | FunASR Nano (多语言) |
 | `funasr-mlt` | `mlx-community/Fun-ASR-MLT-Nano-2512-4bit` | 约 200 MB | FunASR MLT (多语言转写) |
 
+#### 文本转语音模型 (TTS)
+
+| 别名 | 完整模型名 | 大小 | 描述 |
+|-------|-----------------|------|-------------|
+| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-4bit` | - | - |
+| `marvis` | `Marvis-AI/marvis-tts-100m-v0.2-MLX-6bit` | - | - |
+| `chatterbox` | `mlx-community/Chatterbox-TTS-q4` | - | - |
+| `chatterbox-turbo` | `mlx-community/Chatterbox-Turbo-TTS-q4` | - | - |
+| `outetts` | `mlx-community/Llama-OuteTTS-1.0-1B-4bit` | - | - |
+| `cosyvoice2` | `mlx-community/CosyVoice2-0.5B-4bit` | - | - |
+| `cosyvoice3` | `mlx-community/Fun-CosyVoice3-0.5B-2512-4bit` | - | - |
+
 ### 3. 启动 API 服务
 
 ```bash
@@ -155,6 +167,8 @@ swama serve --host 0.0.0.0 --port 28100
 #### 🔌 OpenAI 兼容 API
 
 Swama 提供完全兼容 OpenAI 的 API 端点，允许您将其与现有工具和集成一起使用：
+
+注意：`/v1/audio/speech` 为 experimental。
 
 ```bash
 # 获取可用模型
@@ -196,6 +210,22 @@ curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "file=@audio.wav" \
   -F "model=whisper-large" \
   -F "response_format=json"
+
+# 文本转语音（TTS，experimental）
+curl -X POST http://localhost:28100/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "orpheus",
+    "input": "Hello from Swama TTS",
+    "voice": "tara",
+    "response_format": "wav"
+  }' --output speech.wav
+
+# TTS 模型：orpheus, marvis, chatterbox, chatterbox-turbo, outetts, cosyvoice2, cosyvoice3
+# 支持音色的模型：orpheus, marvis
+# Orpheus 音色：tara, leah, jess, leo, dan, mia, zac, zoe
+# Marvis 音色：conversational_a, conversational_b
+# CosyVoice 需要显式参考音频，OpenAI 兼容端点不支持
 
 # 工具调用（函数调用）
 curl -X POST http://localhost:28100/v1/chat/completions \
