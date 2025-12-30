@@ -104,7 +104,7 @@ public enum ModelDownloader {
         let resolved = ModelAliasResolver.resolve(name: modelName)
         let repoIds = resolveRepoIDs(resolvedName: resolved)
         let allExists = repoIds.allSatisfy { ModelPaths.modelExistsLocally($0) }
-        
+
         // Check if model already exists locally
         if allExists {
             let label = TTSModelResolver.resolve(resolved) != nil

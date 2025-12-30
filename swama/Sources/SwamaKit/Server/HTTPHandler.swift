@@ -116,14 +116,15 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
         case (.OPTIONS, _):
             var headers = HTTPHeaders()
-            
+
             // Reflect the requested headers if present (for CORS preflight)
             if let requestedHeaders = request.headers.first(name: "Access-Control-Request-Headers") {
                 headers.add(name: "Access-Control-Allow-Headers", value: requestedHeaders)
-            } else {
+            }
+            else {
                 headers.add(name: "Access-Control-Allow-Headers", value: "Content-Type, Authorization")
             }
-            
+
             headers.add(name: "Access-Control-Allow-Origin", value: "*")
             headers.add(name: "Access-Control-Allow-Methods", value: "GET, POST, OPTIONS")
             headers.add(name: "Access-Control-Max-Age", value: "86400")

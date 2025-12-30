@@ -1,7 +1,9 @@
 import Foundation
+@preconcurrency import MLXAudio
 import NIOCore
 import NIOHTTP1
-@preconcurrency import MLXAudio
+
+// MARK: - TextToSpeechHandler
 
 public enum TextToSpeechHandler {
     struct SpeechRequest: Decodable {
@@ -19,9 +21,9 @@ public enum TextToSpeechHandler {
         var contentType: String {
             switch self {
             case .wav:
-                return "audio/wav"
+                "audio/wav"
             case .pcm:
-                return "audio/pcm"
+                "audio/pcm"
             }
         }
     }
@@ -44,7 +46,7 @@ public enum TextToSpeechHandler {
                 throw TextToSpeechError.invalidRequest("Input text is required")
             }
 
-            if let speed = request.speed, (speed < 0.25 || speed > 4.0) {
+            if let speed = request.speed, speed < 0.25 || speed > 4.0 {
                 throw TextToSpeechError.invalidRequest("Speed must be between 0.25 and 4.0")
             }
 
@@ -85,15 +87,16 @@ public enum TextToSpeechHandler {
         guard let format = ResponseFormat(rawValue: normalized) else {
             throw TextToSpeechError.invalidRequest("Unsupported response_format '\(value ?? "")'")
         }
+
         return format
     }
 
     private static func encodeAudio(result: AudioResult, format: ResponseFormat) throws -> Data {
         switch format {
         case .wav:
-            return try encodeWav(result: result)
+            try encodeWav(result: result)
         case .pcm:
-            return try encodePCM(result: result)
+            try encodePCM(result: result)
         }
     }
 
@@ -110,6 +113,7 @@ public enum TextToSpeechHandler {
             )
             defer { try? FileManager.default.removeItem(at: url) }
             return try Data(contentsOf: url)
+
         case let .file(url, _):
             return try Data(contentsOf: url)
         }
@@ -211,23 +215,25 @@ public enum TextToSpeechHandler {
     }
 }
 
+// MARK: - TextToSpeechError
+
 private enum TextToSpeechError: Error, LocalizedError {
     case invalidRequest(String)
     case invalidModel(String)
 
     var errorDescription: String? {
         switch self {
-        case let .invalidRequest(message),
-             let .invalidModel(message):
+        case let .invalidModel(message),
+             let .invalidRequest(message):
             message
         }
     }
 
     var httpStatus: HTTPResponseStatus {
         switch self {
-        case .invalidRequest,
-             .invalidModel:
-            return .badRequest
+        case .invalidModel,
+             .invalidRequest:
+            .badRequest
         }
     }
 }
@@ -236,20 +242,20 @@ private extension TTSError {
     var httpStatus: HTTPResponseStatus {
         switch self {
         case .invalidArgument,
-             .invalidVoice,
              .invalidReferenceAudio,
-             .voiceNotFound,
-             .modelNotLoaded:
-            return .badRequest
+             .invalidVoice,
+             .modelNotLoaded,
+             .voiceNotFound:
+            .badRequest
         case .insufficientMemory:
-            return .insufficientStorage
+            .insufficientStorage
         case .cancelled:
-            return .requestTimeout
-        case .fileIOError,
+            .requestTimeout
+        case .audioPlaybackFailed,
+             .fileIOError,
              .generationFailed,
-             .audioPlaybackFailed,
              .modelLoadFailed:
-            return .internalServerError
+            .internalServerError
         }
     }
 }

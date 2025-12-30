@@ -165,7 +165,9 @@ public enum ModelPaths {
     private static func ttsModelExistsLocally(kind: TTSModelKind) -> Bool {
         let repoIds = TTSModelResolver.repoIDs(for: kind)
         for repoId in repoIds {
-            if modelMetadataExists(for: repoId) || FileManager.default.fileExists(atPath: hubCacheDirectory(for: repoId).path) {
+            if modelMetadataExists(for: repoId) || FileManager.default
+                .fileExists(atPath: hubCacheDirectory(for: repoId).path)
+            {
                 return true
             }
         }

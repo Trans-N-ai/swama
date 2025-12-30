@@ -17,14 +17,14 @@ struct Remove: AsyncParsableCommand {
     var force: Bool = false
 
     func run() async throws {
-        let resolvedModelName: String
-        if let ttsModel = TTSModelResolver.resolve(model) {
-            resolvedModelName = ttsModel.kind.rawValue
-        }
-        else {
-            // Resolve model name using the same logic as other commands
-            resolvedModelName = ModelAliasResolver.resolve(name: model)
-        }
+        let resolvedModelName: String =
+            if let ttsModel = TTSModelResolver.resolve(model) {
+                ttsModel.kind.rawValue
+            }
+            else {
+                // Resolve model name using the same logic as other commands
+                ModelAliasResolver.resolve(name: model)
+            }
 
         // Show resolved name if different from input
         if model != resolvedModelName {
