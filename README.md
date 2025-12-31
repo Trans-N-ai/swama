@@ -39,7 +39,13 @@ Swama features a modular architecture design:
 
 ## 🛠️ Installation
 
-### 📱 Download Pre-built App (Recommended)
+### 🍺 Homebrew (Recommended)
+
+```bash
+brew install swama
+```
+
+### 📱 Download Pre-built App
 
 1. **Download the latest release**
    - Go to [Releases](https://github.com/Trans-N-ai/swama/releases)

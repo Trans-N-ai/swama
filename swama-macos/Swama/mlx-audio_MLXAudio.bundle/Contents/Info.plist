@@ -7,11 +7,11 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleIdentifier</key>
-	<string>swift-nio.NIOPosix.resources</string>
+	<string>mlx-swift-audio.MLXAudio.resources</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>swift-nio_NIOPosix</string>
+	<string>mlx-audio_MLXAudio</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleSupportedPlatforms</key>
@@ -35,6 +35,6 @@
 	<key>DTXcodeBuild</key>
 	<string>17C52</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>10.13</string>
+	<string>15.4</string>
 </dict>
 </plist>

@@ -29,6 +29,8 @@ private struct CLIToolPaths {
 public class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Lifecycle
 
+    public static let contextLimitDefaultsKey = "SwamaContextLimit"
+
     // MARK: ‑ Init
 
     override public init() {
@@ -50,6 +52,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
         // start backend server
         Task {
+            await syncContextLimitFromDefaults()
+
             do { try serverManager?.startInBackground() }
             catch { NSLog("SwamaKit.AppDelegate: server failed to start → \(error)") }
         }
@@ -174,5 +178,36 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         else {
             return .needsUpdate
         }
+    }
+
+    // MARK: ‑ Context Limit helpers
+
+    public func currentContextLimit() async -> Int {
+        await ContextLimitConfig.shared.currentLimit()
+    }
+
+    public func applyContextLimit(_ newLimit: Int) async {
+        await ContextLimitConfig.shared.updateLimit(newLimit)
+        UserDefaults.standard.set(newLimit, forKey: Self.contextLimitDefaultsKey)
+        await restartServerForContextChange()
+    }
+
+    public func restartServer() async {
+        await restartServerForContextChange()
+    }
+
+    private func syncContextLimitFromDefaults() async {
+        let stored = UserDefaults.standard.integer(forKey: Self.contextLimitDefaultsKey)
+        if stored > 0 {
+            await ContextLimitConfig.shared.updateLimit(stored)
+        }
+    }
+
+    @MainActor
+    private func restartServerForContextChange() async {
+        NSLog("SwamaKit.AppDelegate: Restarting background server to apply context limit change.")
+        await serverManager?.stop()
+        do { try serverManager?.startInBackground() }
+        catch { NSLog("SwamaKit.AppDelegate: Failed to restart server after context change → \(error)") }
     }
 }

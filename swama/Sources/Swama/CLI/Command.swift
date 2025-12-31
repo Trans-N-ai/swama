@@ -10,7 +10,7 @@ struct Swama: AsyncParsableCommand {
     static let configuration: CommandConfiguration = .init(
         commandName: "swama",
         abstract: "Swama - The Swift-native LLM runtime for macOS",
-        version: "1.5.0",
+        version: "2.0.0",
         subcommands: [
             Serve.self,
             Pull.self,
@@ -69,6 +69,11 @@ struct MenuBar: AsyncParsableCommand {
 
 /// Common options for run-like commands
 struct CommonRunOptions: ParsableArguments {
-    // @Flag(help: "Enable verbose output.")
-    // var verbose: Bool = false
+    @Option(name: [.long], help: "Context window token limit (default: 16384).")
+    var contextLimit: Int?
+
+    @Option(name: [.customLong("num-ctx")], help: "Alias for --context-limit.")
+    var numCtx: Int?
+
+    var resolvedContextLimit: Int? { numCtx ?? contextLimit }
 }

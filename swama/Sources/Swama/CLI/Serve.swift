@@ -14,6 +14,9 @@ struct Serve: AsyncParsableCommand {
     @Option(name: .long, help: "Port to bind to (default: from SWAMA_PORT env var or 28100)")
     var port: Int?
 
+    @OptionGroup()
+    var commonOptions: CommonRunOptions
+
     func run() async throws {
         // Use the ServerManager from SwamaKit to run the server in CLI mode.
         // Create a new instance of ServerManager for the CLI.
@@ -24,6 +27,11 @@ struct Serve: AsyncParsableCommand {
 
         // Use provided port or fallback to environment variable/default
         let actualPort = port ?? SwamaKit.ServerManager.defaultPort()
+
+        if let limit = commonOptions.resolvedContextLimit {
+            await ContextLimitConfig.shared.updateLimit(limit)
+            print("CLI Serve: Context limit set to \(limit) tokens.")
+        }
 
         // The runForCLI method now encapsulates the NIO server setup and lifecycle for the CLI.
         try await serverManager.runForCLI(host: host, port: actualPort)

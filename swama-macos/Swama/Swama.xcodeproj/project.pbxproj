@@ -9,9 +9,10 @@
 /* Begin PBXBuildFile section */
 		894B2BC62DD33F930081F47B /* SwamaKit in Frameworks */ = {isa = PBXBuildFile; productRef = 894B2BC52DD33F930081F47B /* SwamaKit */; };
 		8983B0302DD7316B00840502 /* swama-bin in CopyFiles */ = {isa = PBXBuildFile; fileRef = 894B2BC82DD3428A0081F47B /* swama-bin */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
-		8983B0322DD733BF00840502 /* mlx-swift_Cmlx.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8983B0312DD733BF00840502 /* mlx-swift_Cmlx.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		8983B0342DD733C600840502 /* swift-transformers_Hub.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8983B0332DD733C600840502 /* swift-transformers_Hub.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		8983B0362DD733CB00840502 /* swift-nio_NIOPosix.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8983B0352DD733CB00840502 /* swift-nio_NIOPosix.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		89E5EE6A2F04DD010093AB6A /* swift-nio_NIOPosix.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8983B0352DD733CB00840502 /* swift-nio_NIOPosix.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		89E5EE6B2F04DD010093AB6A /* swift-transformers_Hub.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8983B0332DD733C600840502 /* swift-transformers_Hub.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		89E5EE6C2F04DD010093AB6A /* mlx-swift_Cmlx.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8983B0312DD733BF00840502 /* mlx-swift_Cmlx.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		89E5EE6E2F04DD3B0093AB6A /* mlx-audio_MLXAudio.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 89E5EE6D2F04DD3B0093AB6A /* mlx-audio_MLXAudio.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,10 +39,11 @@
 			dstPath = Contents/Helpers;
 			dstSubfolderSpec = 1;
 			files = (
+				89E5EE6E2F04DD3B0093AB6A /* mlx-audio_MLXAudio.bundle in CopyFiles */,
+				89E5EE6A2F04DD010093AB6A /* swift-nio_NIOPosix.bundle in CopyFiles */,
+				89E5EE6B2F04DD010093AB6A /* swift-transformers_Hub.bundle in CopyFiles */,
+				89E5EE6C2F04DD010093AB6A /* mlx-swift_Cmlx.bundle in CopyFiles */,
 				8983B0302DD7316B00840502 /* swama-bin in CopyFiles */,
-				8983B0342DD733C600840502 /* swift-transformers_Hub.bundle in CopyFiles */,
-				8983B0362DD733CB00840502 /* swift-nio_NIOPosix.bundle in CopyFiles */,
-				8983B0322DD733BF00840502 /* mlx-swift_Cmlx.bundle in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -55,6 +57,7 @@
 		8983B0312DD733BF00840502 /* mlx-swift_Cmlx.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "mlx-swift_Cmlx.bundle"; sourceTree = "<group>"; };
 		8983B0332DD733C600840502 /* swift-transformers_Hub.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "swift-transformers_Hub.bundle"; sourceTree = "<group>"; };
 		8983B0352DD733CB00840502 /* swift-nio_NIOPosix.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "swift-nio_NIOPosix.bundle"; sourceTree = "<group>"; };
+		89E5EE6D2F04DD3B0093AB6A /* mlx-audio_MLXAudio.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "mlx-audio_MLXAudio.bundle"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -104,6 +107,7 @@
 		894B2B902DD33F680081F47B = {
 			isa = PBXGroup;
 			children = (
+				89E5EE6D2F04DD3B0093AB6A /* mlx-audio_MLXAudio.bundle */,
 				8983B0352DD733CB00840502 /* swift-nio_NIOPosix.bundle */,
 				8983B0332DD733C600840502 /* swift-transformers_Hub.bundle */,
 				8983B0312DD733BF00840502 /* mlx-swift_Cmlx.bundle */,
@@ -444,7 +448,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.5.0;
+				MARKETING_VERSION = 2.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "trans-n.ai.Swama";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -475,7 +479,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.5.0;
+				MARKETING_VERSION = 2.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "trans-n.ai.Swama";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

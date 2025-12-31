@@ -172,8 +172,15 @@ struct Run: AsyncParsableCommand {
     @Option(name: [.long], help: "Server port (default: 28100)")
     var serverPort: Int = 28100
 
+    @OptionGroup()
+    var commonOptions: CommonRunOptions
+
     func run() async throws {
         let resolvedModelName = try await ModelDownloader.fetchModel(modelName: modelName)
+
+        if let limit = commonOptions.resolvedContextLimit {
+            await ContextLimitConfig.shared.updateLimit(limit)
+        }
 
         if !direct {
             if await isServerRunning() {
@@ -513,8 +520,6 @@ struct Run: AsyncParsableCommand {
             let chatMessages: [MLXLMCommon.Chat.Message] = [
                 MLXLMCommon.Chat.Message(role: .user, content: prompt, images: imagesToUse)
             ]
-
-            // Use UserInput with both chat and images
             let userInput = MLXLMCommon.UserInput(chat: chatMessages)
 
             if stream {
