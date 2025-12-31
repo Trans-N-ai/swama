@@ -39,7 +39,13 @@ Swamaはモジュラーアーキテクチャ設計を採用しています：
 
 ## 🛠️ インストール
 
-### 📱 ビルド済みアプリのダウンロード（推奨）
+### 🍺 Homebrew（推奨）
+
+```bash
+brew install swama
+```
+
+### 📱 ビルド済みアプリのダウンロード
 
 1. **最新リリースをダウンロード**
    - [Releases](https://github.com/Trans-N-ai/swama/releases) ページにアクセス
