@@ -69,6 +69,11 @@ struct MenuBar: AsyncParsableCommand {
 
 /// Common options for run-like commands
 struct CommonRunOptions: ParsableArguments {
-    // @Flag(help: "Enable verbose output.")
-    // var verbose: Bool = false
+    @Option(name: [.long], help: "Context window token limit (default: 16384).")
+    var contextLimit: Int?
+
+    @Option(name: [.customLong("num-ctx")], help: "Alias for --context-limit.")
+    var numCtx: Int?
+
+    var resolvedContextLimit: Int? { numCtx ?? contextLimit }
 }

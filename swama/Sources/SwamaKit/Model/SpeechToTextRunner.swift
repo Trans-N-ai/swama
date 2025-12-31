@@ -247,7 +247,6 @@ public extension SpeechToTextRunner {
         }
 
         try await loadModel(from: modelIdentifier)
-        print("✅ Successfully loaded MLXAudio model '\(modelIdentifier)'")
     }
 }
 

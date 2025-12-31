@@ -306,7 +306,10 @@ public enum CompletionsHandler {
 
             // Try to decode parameters as JSON and convert to string
             if let parametersValue = try? container.decodeIfPresent(JSONValue.self, forKey: .parameters) {
-                let jsonData = try JSONSerialization.data(withJSONObject: parametersValue.anyValue)
+                let jsonData = try JSONSerialization.data(
+                    withJSONObject: parametersValue.anyValue,
+                    options: [.fragmentsAllowed]
+                )
                 parameters = String(data: jsonData, encoding: .utf8)
             }
             else {
@@ -442,6 +445,13 @@ public enum CompletionsHandler {
                 )
             }
         }
+        catch let error as ContextLimitError {
+            try? await respondError(
+                channel: channel,
+                status: .badRequest,
+                message: error.localizedDescription
+            )
+        }
         catch {
             try? await respondError(
                 channel: channel,
@@ -524,13 +534,11 @@ public enum CompletionsHandler {
         parameters: GenerateParameters,
         mlxTools: [ToolSpec]? = nil
     ) async throws {
-        // Create UserInput with chat messages and tools
-        let userInput = MLXLMCommon.UserInput(chat: chatMessages, tools: mlxTools)
-
         let result = try await modelPool.run(
             modelName: modelName
         ) { runner in
-            try await runner.runChatNonStream(
+            let userInput = MLXLMCommon.UserInput(chat: chatMessages, tools: mlxTools)
+            return try await runner.runChatNonStream(
                 userInput: userInput,
                 parameters: parameters
             )
@@ -619,9 +627,6 @@ public enum CompletionsHandler {
         parameters: GenerateParameters,
         tools: [ToolSpec]? = nil
     ) async throws {
-        // Create UserInput with chat messages and tools
-        let userInput = MLXLMCommon.UserInput(chat: chatMessages, tools: tools)
-
         // Send SSE headers
         let headers = HTTPHeaders([
             ("Content-Type", "text/event-stream"),
@@ -653,7 +658,8 @@ public enum CompletionsHandler {
             result = try await modelPool.run(
                 modelName: modelName
             ) { runner in
-                try await runner.runChat(
+                let userInput = MLXLMCommon.UserInput(chat: chatMessages, tools: tools)
+                return try await runner.runChat(
                     userInput: userInput,
                     parameters: parameters,
                     onToken: { chunk in

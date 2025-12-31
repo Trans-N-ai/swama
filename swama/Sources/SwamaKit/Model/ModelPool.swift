@@ -224,6 +224,9 @@ public actor ModelPool {
     /// Maximum number of models to keep in cache before triggering aggressive cleanup
     private let maxCacheSize = 4
 
+    /// Limit idle evictions per cleanup cycle to reduce churn
+    private let maxIdleEvictionsPerCycle = 1
+
     /// Task for periodic memory management
     private var memoryManagementTask: Task<Void, Never>?
 
@@ -420,9 +423,9 @@ public actor ModelPool {
         // Explicitly release container references
         _ = containersToEvict
 
-        // Perform aggressive memory cleanup
+        // Light cleanup only; MLX uses internal caching
         Task {
-            await performAggressiveMemoryCleanup()
+            MLX.Memory.clearCache()
 
             let memoryAfter = MLX.Memory.snapshot()
             let memoryReleased = memoryBefore.activeMemory - memoryAfter.activeMemory
@@ -825,7 +828,7 @@ public actor ModelPool {
         if !idleModels.isEmpty {
             NSLog("SwamaKit.ModelPool: Found \(idleModels.count) idle models for cleanup: \(idleModels.map(\.name))")
 
-            for model in idleModels {
+            for model in idleModels.prefix(maxIdleEvictionsPerCycle) {
                 await evictModel(
                     modelName: model.name,
                     reason: "idle timeout (\(String(format: "%.1f", model.idleTime))s)"
@@ -930,8 +933,8 @@ public actor ModelPool {
         // Explicitly nil out the container reference to help ARC
         _ = containerToEvict
 
-        // Aggressive memory cleanup sequence - force immediate GPU memory release
-        await performAggressiveMemoryCleanup()
+        // Light cleanup only; MLX uses internal caching
+        MLX.Memory.clearCache()
 
         // Get memory snapshot after cleanup to measure actual release
         let memoryAfter = MLX.Memory.snapshot()
@@ -942,36 +945,5 @@ public actor ModelPool {
         )
     }
 
-    /// Performs aggressive memory cleanup to actually release GPU memory
-    private func performAggressiveMemoryCleanup() async {
-        // Step 1: Force Swift ARC to run garbage collection
-        // Create and release a temporary array to trigger GC
-        autoreleasepool {
-            _ = Array(0 ..< 1000)
-        }
-
-        // Step 2: Clear MLX computational cache
-        MLX.Memory.clearCache()
-
-        // Step 3: Temporarily disable cache to force immediate memory release
-        let originalCacheLimit = MLX.Memory.cacheLimit
-        MLX.Memory.cacheLimit = 0
-
-        // Step 4: Clear cache again with disabled limit
-        MLX.Memory.clearCache()
-
-        // Step 5: Brief pause to allow memory cleanup to propagate
-        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-
-        // Step 6: Force another garbage collection cycle
-        autoreleasepool {
-            _ = Array(0 ..< 1000)
-        }
-
-        // Step 7: Clear cache one more time to ensure cleanup
-        MLX.Memory.clearCache()
-
-        // Step 8: Restore original cache limit
-        MLX.Memory.cacheLimit = originalCacheLimit
-    }
+    // Aggressive cleanup removed to keep memory management simple and predictable.
 }
