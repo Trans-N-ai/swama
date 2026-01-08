@@ -60,6 +60,7 @@ struct SwamaApp: App {
                     Button(limitLabel("64k", 65536)) { setPendingContextLimit(65536) }
                     Button(limitLabel("128k", 131_072)) { setPendingContextLimit(131_072) }
                     Button(limitLabel("256k", 262_144)) { setPendingContextLimit(262_144) }
+                    Button(limitLabel("1M", 1_048_576)) { setPendingContextLimit(1_048_576) }
                 }
 
                 if cliToolStatus == .upToDate {
@@ -137,6 +138,9 @@ struct SwamaApp: App {
             return ""
         }
 
+        if value >= 1_048_576 {
+            return "\(value / 1_048_576)M"
+        }
         return "\(value / 1024)k"
     }
 }
