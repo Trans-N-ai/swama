@@ -63,6 +63,7 @@ public actor ModelPool {
     // MARK: Lifecycle
 
     public init() {
+        Self.configureCacheLimit()
         // Memory management timer will be started when first accessed
     }
 
@@ -73,6 +74,15 @@ public actor ModelPool {
         }
 
         startMemoryManagementTimer()
+    }
+
+    private static func configureCacheLimit() {
+        let ramBytes = ProcessInfo.processInfo.physicalMemory
+        let maxCacheBytes: UInt64 = 8 * 1024 * 1024 * 1024
+        let limit = min(maxCacheBytes, ramBytes / 10)
+        if limit > 0 {
+            MLX.Memory.cacheLimit = Int(limit)
+        }
     }
 
     // MARK: Public
