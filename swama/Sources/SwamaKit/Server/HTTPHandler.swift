@@ -62,7 +62,8 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
     private func handleRequest(context: ChannelHandlerContext, request: HTTPRequestHead, bodyBuffer: ByteBuffer) {
         NSLog("SwamaKit.HTTPHandler: Handling request: \(request.method) \(request.uri)")
-        switch (request.method, request.uri) {
+        let uriPath = Self.normalizedPath(from: request.uri)
+        switch (request.method, uriPath) {
         case (.GET, "/v1/models"):
             handleModelsRequest(context: context, request: request)
 
@@ -141,6 +142,13 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         default:
             respond404(context: context, request: request)
         }
+    }
+
+    private static func normalizedPath(from uri: String) -> String {
+        if let questionMarkIndex = uri.firstIndex(of: "?") {
+            return String(uri[..<questionMarkIndex])
+        }
+        return uri
     }
 
     /// New method based on the old ModelsHandler logic
