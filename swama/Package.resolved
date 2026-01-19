@@ -15,7 +15,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ml-explore/mlx-swift",
       "state" : {
-        "revision" : "9594dbe2736a6ba03fe0f11514d7265fd2f7ba77"
+        "revision" : "741bc7e774b973cab7800777f98752a5956728f8"
       }
     },
     {
@@ -24,7 +24,7 @@
       "location" : "https://github.com/DePasqualeOrg/mlx-swift-audio.git",
       "state" : {
         "branch" : "main",
-        "revision" : "42868aa3d04500da8ce90bcd647085866850780a"
+        "revision" : "86ce6724cbd0dbe61317ef823819f816b1df5126"
       }
     },
     {
@@ -33,7 +33,7 @@
       "location" : "https://github.com/ml-explore/mlx-swift-lm",
       "state" : {
         "branch" : "main",
-        "revision" : "d9f46e3a1fe715d01304372089aba5f39c585327"
+        "revision" : "51723b339454ba006d2758646307481e511911cc"
       }
     },
     {
