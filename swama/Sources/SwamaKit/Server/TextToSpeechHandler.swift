@@ -245,6 +245,7 @@ private extension TTSError {
              .invalidReferenceAudio,
              .invalidVoice,
              .modelNotLoaded,
+             .unsupportedStreamingGranularity,
              .voiceNotFound:
             .badRequest
         case .insufficientMemory:
