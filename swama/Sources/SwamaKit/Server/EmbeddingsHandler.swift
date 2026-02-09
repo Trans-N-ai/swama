@@ -147,20 +147,11 @@ public enum EmbeddingsHandler {
             // Generate embeddings using MLXEmbedders
             let (embeddings, usage): ([[Float]], EmbeddingUsage)
             do {
-                // Use standard MLXEmbedders for all models
-                let embeddingRunner: EmbeddingRunner
-                // Check if model is already loaded in the pool
-                if let existingRunner = await modelPool.getEmbeddingRunner(for: request.model) {
-                    embeddingRunner = existingRunner
+                (embeddings, usage) = try await modelPool.runEmbeddingWithConcurrencyControl(
+                    modelName: request.model
+                ) { runner in
+                    try await runner.generateEmbeddings(inputs: inputs)
                 }
-                else {
-                    // Load the embedding model
-                    let container = try await loadEmbeddingModelContainer(modelName: request.model)
-                    embeddingRunner = EmbeddingRunner(container: container)
-                    await modelPool.setEmbeddingRunner(embeddingRunner, for: request.model)
-                }
-
-                (embeddings, usage) = try await embeddingRunner.generateEmbeddings(inputs: inputs)
             }
             catch {
                 try await sendErrorResponse(
