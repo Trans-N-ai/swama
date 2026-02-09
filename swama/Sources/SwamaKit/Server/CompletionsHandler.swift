@@ -481,7 +481,7 @@ public enum CompletionsHandler {
                     // JSON objects are always Sendable (they're value types)
                     // Using as! because JSONSerialization guarantees Sendable types (Dictionary, Array, String, Number,
                     // etc.)
-                    functionDict["parameters"] = jsonObject as! (any Sendable)
+                    functionDict["parameters"] = (jsonObject as! any Sendable)
                 }
             }
 

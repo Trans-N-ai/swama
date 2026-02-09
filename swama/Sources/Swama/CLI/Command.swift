@@ -10,7 +10,7 @@ struct Swama: AsyncParsableCommand {
     static let configuration: CommandConfiguration = .init(
         commandName: "swama",
         abstract: "Swama - The Swift-native LLM runtime for macOS",
-        version: "2.0.0",
+        version: "2.0.1",
         subcommands: [
             Serve.self,
             Pull.self,
