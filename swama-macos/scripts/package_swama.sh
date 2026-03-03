@@ -10,7 +10,7 @@ set -euo pipefail
 
 APP_NAME="Swama"
 APP_BUNDLE="${APP_NAME}.app"
-APP_DIR="/Users/xingyue/Desktop/Swama/${APP_BUNDLE}"
+APP_DIR="/Users/xingyue/Desktop/Swama-2026-01-19/${APP_BUNDLE}"
 OUTPUT_DIR="./release"
 ZIP_PATH="${OUTPUT_DIR}/${APP_NAME}.zip"
 

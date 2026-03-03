@@ -20,7 +20,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
-        .package(url: "https://github.com/DePasqualeOrg/mlx-swift-audio.git", branch: "main"),
+        .package(url: "https://github.com/ml-explore/mlx-swift", branch: "main"),
+        .package(url: "https://github.com/DePasqualeOrg/mlx-swift-audio.git", revision: "2a0e99ecc66f5c04b20d6d8751a4c8817cc4f621"),
     ],
     targets: [
         .target(
@@ -32,6 +33,8 @@ let package = Package(
                 .product(name: "MLXVLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
+                .product(name: "MLXRandom", package: "mlx-swift"),
+                .product(name: "MLXFast", package: "mlx-swift"),
                 .product(name: "MLXAudio", package: "mlx-swift-audio"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
