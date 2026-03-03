@@ -1,5 +1,5 @@
 {
-  "originHash" : "c1f4a2120d791e0b4835b71777e8f34003027d1939970f9725354b99cb4b910b",
+  "originHash" : "0804ae84631b3a2eb580b0eeffc796f3711ab3ea521497e1141cc0ef52d409bf",
   "pins" : [
     {
       "identity" : "espeak-ng-spm",
@@ -24,7 +24,6 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/DePasqualeOrg/mlx-swift-audio.git",
       "state" : {
-        "branch" : "main",
         "revision" : "2a0e99ecc66f5c04b20d6d8751a4c8817cc4f621"
       }
     },
