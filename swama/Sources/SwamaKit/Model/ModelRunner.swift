@@ -13,6 +13,12 @@ import struct Tokenizers.ToolSpec
 /// An actor responsible for running model inference.
 private let modelRunnerLogger: Logger = .init(subsystem: "SwamaKit", category: "ModelRunner")
 
+// MARK: - InferenceSafetyLimits
+
+private enum InferenceSafetyLimits {
+    static let multimodalContextLimit = 4096
+}
+
 // MARK: - ModelRunner
 
 public actor ModelRunner {
@@ -72,77 +78,101 @@ public actor ModelRunner {
         onToken: (@Sendable (String) -> Void)? = nil,
         onToolCall: (@Sendable (MLXLMCommon.ToolCall) -> Void)? = nil
     ) async throws -> ChatRunResult {
-        var output = ""
-        var promptTokens = 0
-        var capturedCompletionInfo: GenerateCompletionInfo?
-        var toolCalls: [MLXLMCommon.ToolCall] = []
+        try await withError {
+            var output = ""
+            var promptTokens = 0
+            var capturedCompletionInfo: GenerateCompletionInfo?
+            var toolCalls: [MLXLMCommon.ToolCall] = []
 
-        let rawOutputStorage = RawOutputBuffer()
+            let rawOutputStorage = RawOutputBuffer()
+            let hasMediaInput = userInput.hasMediaContent
+            let configuredContextLimit = await ContextLimitConfig.shared.currentLimit()
+            let effectiveContextLimit = hasMediaInput
+                ? min(configuredContextLimit, InferenceSafetyLimits.multimodalContextLimit)
+                : configuredContextLimit
 
-        var effectiveInput = userInput
-        if case let .chat(messages) = userInput.prompt {
-            let limit = await ContextLimitConfig.shared.currentLimit()
-            let trimmedMessages = try await trimChatMessagesInternal(
-                chatMessages: messages,
-                tools: userInput.tools,
-                limit: limit,
-                container: container,
-                processing: userInput.processing,
-                additionalContext: userInput.additionalContext
-            )
-            effectiveInput = MLXLMCommon.UserInput(
-                chat: trimmedMessages,
-                processing: userInput.processing,
-                tools: userInput.tools,
-                additionalContext: userInput.additionalContext
-            )
-        }
-
-        let lmInput = try await container.prepare(input: effectiveInput)
-
-        promptTokens = lmInput.text.tokens.count
-
-        let generationStream = try await container.perform { context in
-            try generate(
-                input: lmInput,
-                parameters: parameters,
-                context: context
-            )
-        }
-
-        for await generationEvent in generationStream {
-            switch generationEvent {
-            case let .chunk(chunkString):
-                rawOutputStorage.append(chunkString)
-
-                onToken?(chunkString)
-                // Only accumulate if no onToken callback (for non-streaming)
-                if onToken == nil {
-                    output += chunkString
-                }
-
-            case let .info(info):
-                capturedCompletionInfo = info
-
-            case let .toolCall(toolCall):
-                // Always accumulate tool calls for the return value
-                toolCalls.append(toolCall)
-                // Also send to callback if provided (for streaming)
-                onToolCall?(toolCall)
+            if hasMediaInput, effectiveContextLimit < configuredContextLimit {
+                modelRunnerLogger.info(
+                    "Multimodal request context limit clamped from \(configuredContextLimit) to \(effectiveContextLimit)"
+                )
             }
+
+            var effectiveParameters = parameters
+            if effectiveParameters.maxKVSize == nil {
+                effectiveParameters.maxKVSize = effectiveContextLimit
+            }
+            let generationParameters = effectiveParameters
+
+            var effectiveInput = userInput
+            if case let .chat(messages) = userInput.prompt {
+                let trimmedMessages = try await trimChatMessagesInternal(
+                    chatMessages: messages,
+                    tools: userInput.tools,
+                    limit: effectiveContextLimit,
+                    container: container,
+                    processing: userInput.processing,
+                    additionalContext: userInput.additionalContext
+                )
+                effectiveInput = MLXLMCommon.UserInput(
+                    chat: trimmedMessages,
+                    processing: userInput.processing,
+                    tools: userInput.tools,
+                    additionalContext: userInput.additionalContext
+                )
+            }
+
+            let lmInput = try await container.prepare(input: effectiveInput)
+
+            promptTokens = tokenLength(lmInput.text.tokens)
+            guard promptTokens <= effectiveContextLimit else {
+                throw ContextLimitError.exceededAfterTrimming(
+                    limit: effectiveContextLimit,
+                    promptTokens: promptTokens
+                )
+            }
+
+            let generationStream = try await container.perform { context in
+                try generate(
+                    input: lmInput,
+                    parameters: generationParameters,
+                    context: context
+                )
+            }
+
+            for await generationEvent in generationStream {
+                switch generationEvent {
+                case let .chunk(chunkString):
+                    rawOutputStorage.append(chunkString)
+
+                    onToken?(chunkString)
+                    // Only accumulate if no onToken callback (for non-streaming)
+                    if onToken == nil {
+                        output += chunkString
+                    }
+
+                case let .info(info):
+                    capturedCompletionInfo = info
+
+                case let .toolCall(toolCall):
+                    // Always accumulate tool calls for the return value
+                    toolCalls.append(toolCall)
+                    // Also send to callback if provided (for streaming)
+                    onToolCall?(toolCall)
+                }
+            }
+
+            let rawOutput = rawOutputStorage.consume()
+            let resolvedOutput = output.isEmpty ? rawOutput : output
+
+            return ChatRunResult(
+                output: resolvedOutput,
+                analysis: nil,
+                promptTokens: promptTokens,
+                completionInfo: capturedCompletionInfo,
+                toolCalls: toolCalls,
+                rawText: rawOutput
+            )
         }
-
-        let rawOutput = rawOutputStorage.consume()
-        let resolvedOutput = output.isEmpty ? rawOutput : output
-
-        return ChatRunResult(
-            output: resolvedOutput,
-            analysis: nil,
-            promptTokens: promptTokens,
-            completionInfo: capturedCompletionInfo,
-            toolCalls: toolCalls,
-            rawText: rawOutput
-        )
     }
 
     // MARK: - Existing methods
@@ -198,17 +228,38 @@ private func trimChatMessagesInternal(
         )
     }
 
+    func hasMedia(_ messages: [MLXLMCommon.Chat.Message]) -> Bool {
+        messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
+    }
+
+    func hasNonEmptyUserMessage(_ messages: [MLXLMCommon.Chat.Message]) -> Bool {
+        messages.contains {
+            $0.role == .user && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    func countTokensForTrim(_ messages: [MLXLMCommon.Chat.Message]) async throws -> Int {
+        // For text-only chat, use model-accurate token counting via prepare(input:)
+        // to avoid template-estimation mismatch for multimodal-capable models.
+        if !hasMedia(messages) {
+            return try await tokenCount(for: buildInput(with: messages), container: container)
+        }
+
+        return try await estimateTokenCount(
+            messages: messages,
+            tools: tools,
+            additionalContext: additionalContext,
+            container: container
+        )
+    }
+
     var workingMessages = chatMessages
+    var didTrimContent = false
     var trimmableIndices = workingMessages.enumerated()
         .filter { !isProtected($0.element) }
         .map(\.offset)
 
-    var currentTokenCount = try await estimateTokenCount(
-        messages: workingMessages,
-        tools: tools,
-        additionalContext: additionalContext,
-        container: container
-    )
+    var currentTokenCount = try await countTokensForTrim(workingMessages)
     let initialTokenCount = currentTokenCount
 
     var trimPointer = 0
@@ -237,12 +288,7 @@ private func trimChatMessagesInternal(
                 let decoded = await container.decode(tokens: prefix)
                 workingMessages[index].content = decoded
 
-                let count = try await estimateTokenCount(
-                    messages: workingMessages,
-                    tools: tools,
-                    additionalContext: additionalContext,
-                    container: container
-                )
+                let count = try await countTokensForTrim(workingMessages)
                 if count <= limit {
                     bestContent = decoded
                     low = mid + 1
@@ -255,12 +301,8 @@ private func trimChatMessagesInternal(
             workingMessages[index].content = bestContent ?? ""
         }
 
-        currentTokenCount = try await estimateTokenCount(
-            messages: workingMessages,
-            tools: tools,
-            additionalContext: additionalContext,
-            container: container
-        )
+        currentTokenCount = try await countTokensForTrim(workingMessages)
+        didTrimContent = true
 
         if workingMessages[index].content.isEmpty {
             workingMessages.remove(at: index)
@@ -274,6 +316,17 @@ private func trimChatMessagesInternal(
         }
     }
 
+    // Never collapse to an empty-user prompt. If trimming removed all user text,
+    // restore the latest non-empty user message from the original request.
+    if !hasNonEmptyUserMessage(workingMessages),
+       let fallbackUser = chatMessages.reversed().first(where: {
+           $0.role == .user && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+       })
+    {
+        workingMessages = [fallbackUser]
+        didTrimContent = true
+    }
+
     let finalInput = buildInput(with: workingMessages)
     let finalTokenCount = try await tokenCount(for: finalInput, container: container)
 
@@ -284,7 +337,7 @@ private func trimChatMessagesInternal(
         throw ContextLimitError.exceededAfterTrimming(limit: limit, promptTokens: finalTokenCount)
     }
 
-    if finalTokenCount < initialTokenCount {
+    if didTrimContent, finalTokenCount < initialTokenCount {
         modelRunnerLogger.info(
             "Context trimmed to \(finalTokenCount) tokens (limit \(limit))"
         )
@@ -295,7 +348,7 @@ private func trimChatMessagesInternal(
 
 private func tokenCount(for input: MLXLMCommon.UserInput, container: ModelContainer) async throws -> Int {
     let prepared = try await container.prepare(input: input)
-    return prepared.text.tokens.count
+    return tokenLength(prepared.text.tokens)
 }
 
 private func estimateTokenCount(
@@ -333,4 +386,33 @@ private func estimateTokenCount(
     let estimatedMediaTokens = mediaItems * 400
 
     return templateTokens.count + estimatedMediaTokens
+}
+
+private extension MLXLMCommon.UserInput {
+    var hasMediaContent: Bool {
+        switch prompt {
+        case .text:
+            false
+        case let .chat(messages):
+            messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
+        case let .messages(messages):
+            messages.contains { message in
+                message.keys.contains { key in
+                    let normalized = key.lowercased()
+                    return normalized.contains("image") || normalized.contains("video")
+                }
+            }
+        }
+    }
+}
+
+private func tokenLength(_ tokens: MLXArray) -> Int {
+    switch tokens.ndim {
+    case 0:
+        1
+    case 1:
+        tokens.count
+    default:
+        tokens.dim(-1)
+    }
 }

@@ -499,7 +499,13 @@ public actor ModelPool {
         // Ensure VLM registry is initialized
         ensureVLMRegistryInitialized()
 
-        if vlmRegistryCache![modelName] != nil {
+        if vlmRegistryCache!.keys.contains(where: { $0.caseInsensitiveCompare(modelName) == .orderedSame }) {
+            return true
+        }
+
+        // Prefer local config-driven detection for multimodal models whose names do not
+        // include "vl" (for example Qwen3.5 variants).
+        if isVLMModelByLocalConfig(modelName) {
             return true
         }
 
@@ -776,37 +782,41 @@ public actor ModelPool {
         }
     }
 
-    /// Helper method to detect VLM models by name pattern (heuristic for models not in registry)
-    private func isVLMModelByName(_ modelName: String) -> Bool {
-        let lowercaseName = modelName.lowercased()
-
-        if lowercaseName.contains("gemma") {
-            // Gemma models with DWQ are LLM (not VLM)
-            if lowercaseName.contains("dwq") {
-                return false
-            }
-
-            if lowercaseName.contains("3n"), lowercaseName.contains("lm") {
-                return false // Gemma 3n - Text Only (LM) are LLMs
-            }
-            return true
-        }
-
-        let vlmPatterns = [
-            "-vl-", // Lowercase variant
-            "vl-", // Prefix variant
-            "vision", // Vision models
-            "visual", // Visual models
-            "multimodal" // Multimodal models
+    private func isVLMModelByLocalConfig(_ modelName: String) -> Bool {
+        let modelDirectory = ModelPaths.getModelDirectory(for: modelName)
+        let candidateConfigFiles = [
+            "config.json",
+            "preprocessor_config.json",
+            "processor_config.json"
         ]
 
-        for pattern in vlmPatterns {
-            if lowercaseName.contains(pattern) {
+        for fileName in candidateConfigFiles {
+            let fileURL = modelDirectory.appendingPathComponent(fileName)
+            guard let json = loadJSONDictionary(at: fileURL) else {
+                continue
+            }
+
+            if ModelTypeDetector.isVLMModelConfig(json) {
                 return true
             }
         }
 
         return false
+    }
+
+    private func loadJSONDictionary(at url: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url),
+              let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        return jsonObject
+    }
+
+    /// Helper method to detect VLM models by name pattern (heuristic for models not in registry)
+    private func isVLMModelByName(_ modelName: String) -> Bool {
+        ModelTypeDetector.isVLMModelName(modelName)
     }
 
     // MARK: - Memory Management
@@ -956,4 +966,103 @@ public actor ModelPool {
     }
 
     // Aggressive cleanup removed to keep memory management simple and predictable.
+}
+
+// MARK: - ModelTypeDetector
+
+enum ModelTypeDetector {
+    static func isVLMModelName(_ modelName: String) -> Bool {
+        let lowercaseName = modelName.lowercased()
+
+        if lowercaseName.contains("gemma") {
+            // Gemma models with DWQ are LLM (not VLM)
+            if lowercaseName.contains("dwq") {
+                return false
+            }
+
+            if lowercaseName.contains("3n"), lowercaseName.contains("lm") {
+                return false // Gemma 3n - Text Only (LM) are LLMs
+            }
+            return true
+        }
+
+        let vlmPatterns = [
+            "-vl-", // Lowercase variant
+            "vl-", // Prefix variant
+            "vision", // Vision models
+            "visual", // Visual models
+            "multimodal", // Multimodal models
+            "omni" // Omni models are generally multimodal
+        ]
+
+        for pattern in vlmPatterns where lowercaseName.contains(pattern) {
+            return true
+        }
+
+        return false
+    }
+
+    static func isVLMModelConfig(_ json: [String: Any]) -> Bool {
+        let vlmKeyHints = [
+            "vision_config",
+            "image_token_id",
+            "video_token_id",
+            "vision_start_token_id",
+            "vision_end_token_id",
+            "vision_tower",
+            "visual",
+            "mm_projector",
+            "multi_modal_projector",
+            "image_processor"
+        ]
+
+        let vlmValueHints = [
+            "vl",
+            "vision",
+            "visual",
+            "multimodal",
+            "omni",
+            "llava",
+            "idefics",
+            "paligemma",
+            "pixtral",
+            "minicpmv",
+            "qwen3_5forconditionalgeneration"
+        ]
+
+        func containsVLMHints(in value: Any, keyContext: String? = nil) -> Bool {
+            if let dictionary = value as? [String: Any] {
+                for (rawKey, nestedValue) in dictionary {
+                    let key = rawKey.lowercased()
+
+                    if vlmKeyHints.contains(where: { key.contains($0) }) {
+                        return true
+                    }
+
+                    if containsVLMHints(in: nestedValue, keyContext: key) {
+                        return true
+                    }
+                }
+                return false
+            }
+
+            if let array = value as? [Any] {
+                for item in array where containsVLMHints(in: item, keyContext: keyContext) {
+                    return true
+                }
+                return false
+            }
+
+            if let stringValue = value as? String {
+                let normalized = stringValue.lowercased()
+                if keyContext == "architectures" || keyContext == "model_type" {
+                    return vlmValueHints.contains(where: { normalized.contains($0) })
+                }
+            }
+
+            return false
+        }
+
+        return containsVLMHints(in: json)
+    }
 }
