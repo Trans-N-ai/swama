@@ -14,6 +14,8 @@ import struct Tokenizers.ToolSpec
 public enum CompletionsHandler {
     // MARK: Public
 
+    private static let qwen35MultimodalResize: CGSize = .init(width: 1344, height: 1344)
+
     public struct CompletionRequest: Decodable, Sendable {
         let model: String
         let messages: [Message]
@@ -524,6 +526,30 @@ public enum CompletionsHandler {
         }
     }
 
+    private static func buildUserInput(
+        chatMessages: [MLXLMCommon.Chat.Message],
+        modelName: String,
+        tools: [ToolSpec]?
+    ) -> MLXLMCommon.UserInput {
+        guard chatMessages.contains(where: { !$0.images.isEmpty || !$0.videos.isEmpty }) else {
+            return MLXLMCommon.UserInput(chat: chatMessages, tools: tools)
+        }
+        guard shouldApplyQwen35MultimodalSafety(modelName: modelName) else {
+            return MLXLMCommon.UserInput(chat: chatMessages, tools: tools)
+        }
+
+        return MLXLMCommon.UserInput(
+            chat: chatMessages,
+            processing: .init(resize: qwen35MultimodalResize),
+            tools: tools
+        )
+    }
+
+    private static func shouldApplyQwen35MultimodalSafety(modelName: String) -> Bool {
+        let lowered = modelName.lowercased()
+        return lowered.contains("qwen3.5") || lowered.contains("qwen3_5")
+    }
+
     // MARK: - Chat Response Methods
 
     public static func sendNonStreamResponse(
@@ -537,7 +563,11 @@ public enum CompletionsHandler {
         let result = try await modelPool.run(
             modelName: modelName
         ) { runner in
-            let userInput = MLXLMCommon.UserInput(chat: chatMessages, tools: mlxTools)
+            let userInput = buildUserInput(
+                chatMessages: chatMessages,
+                modelName: modelName,
+                tools: mlxTools
+            )
             return try await runner.runChatNonStream(
                 userInput: userInput,
                 parameters: parameters
@@ -658,7 +688,11 @@ public enum CompletionsHandler {
             result = try await modelPool.run(
                 modelName: modelName
             ) { runner in
-                let userInput = MLXLMCommon.UserInput(chat: chatMessages, tools: tools)
+                let userInput = buildUserInput(
+                    chatMessages: chatMessages,
+                    modelName: modelName,
+                    tools: tools
+                )
                 return try await runner.runChat(
                     userInput: userInput,
                     parameters: parameters,

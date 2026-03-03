@@ -99,6 +99,18 @@ public enum ModelAliasResolver {
         "qwen3-32b": "mlx-community/Qwen3-32B-4bit",
         "qwen3-235b": "mlx-community/Qwen3-235B-A22B-4bit",
 
+        // Qwen3.5 Family (multimodal, no explicit "vl" suffix in model names)
+        "qwen3.5": "mlx-community/Qwen3.5-35B-A3B-4bit", // Default for "qwen3.5"
+        "qwen3.5-0.8b": "mlx-community/Qwen3.5-0.8B-4bit",
+        "qwen3.5-2b": "mlx-community/Qwen3.5-2B-4bit",
+        "qwen3.5-4b": "mlx-community/Qwen3.5-4B-4bit",
+        "qwen3.5-9b": "mlx-community/Qwen3.5-9B-4bit",
+        "qwen3.5-27b": "mlx-community/Qwen3.5-27B-4bit",
+        "qwen3.5-35b": "mlx-community/Qwen3.5-35B-A3B-4bit",
+        "qwen3.5-35b-a3b": "mlx-community/Qwen3.5-35B-A3B-4bit",
+        "qwen3.5-122b-a10b": "mlx-community/Qwen3.5-122B-A10B-4bit",
+        "qwen3.5-397b-a17b": "mlx-community/Qwen3.5-397B-A17B-4bit",
+
         // Qwen3-VL Family (Vision-Language)
         "qwen3-vl": "mlx-community/Qwen3-VL-4B-Instruct-4bit", // Default for "qwen3-vl"
         "qwen3-vl-2b": "mlx-community/Qwen3-VL-2B-Instruct-4bit",

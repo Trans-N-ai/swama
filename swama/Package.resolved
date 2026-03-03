@@ -16,7 +16,7 @@
       "location" : "https://github.com/ml-explore/mlx-swift",
       "state" : {
         "branch" : "main",
-        "revision" : "a1bf4506db678a4023cf38318e8cb14bc8562b2e"
+        "revision" : "a2f0d764c1c233f05e87a0090a26df5f48a3eb48"
       }
     },
     {
@@ -34,7 +34,7 @@
       "location" : "https://github.com/ml-explore/mlx-swift-lm",
       "state" : {
         "branch" : "main",
-        "revision" : "2c700546340c37f275d23302163701b77c4dcbd9"
+        "revision" : "6bce33425917e943769887a4156a7207e346a64b"
       }
     },
     {
@@ -44,6 +44,15 @@
       "state" : {
         "revision" : "c5d11a805e765f52ba34ec7284bd4fcd6ba68615",
         "version" : "1.7.0"
+      }
+    },
+    {
+      "identity" : "swift-asn1",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-asn1.git",
+      "state" : {
+        "revision" : "810496cf121e525d660cd0ea89a758740476b85f",
+        "version" : "1.5.1"
       }
     },
     {
@@ -62,6 +71,15 @@
       "state" : {
         "revision" : "7b847a3b7008b2dc2f47ca3110d8c782fb2e5c7e",
         "version" : "1.3.0"
+      }
+    },
+    {
+      "identity" : "swift-crypto",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-crypto.git",
+      "state" : {
+        "revision" : "6f70fa9eab24c1fd982af18c281c4525d05e3095",
+        "version" : "4.2.0"
       }
     },
     {
@@ -114,8 +132,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-transformers",
       "state" : {
-        "revision" : "573e5c9036c2f136b3a8a071da8e8907322403d0",
-        "version" : "1.1.6"
+        "revision" : "150169bfba0889c229a2ce7494cf8949f18e6906",
+        "version" : "1.1.9"
+      }
+    },
+    {
+      "identity" : "yyjson",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ibireme/yyjson.git",
+      "state" : {
+        "revision" : "8b4a38dc994a110abaec8a400615567bd996105f",
+        "version" : "0.12.0"
       }
     }
   ],
