@@ -131,6 +131,15 @@ swama list
 
 | 别名 | 完整模型名 | 大小 | 描述 |
 |-------|-----------------|------|-------------|
+| `qwen3.5` | `mlx-community/Qwen3.5-35B-A3B-4bit` | 约 21 GB | Qwen3.5 35B-A3B（默认） |
+| `qwen3.5-0.8b` | `mlx-community/Qwen3.5-0.8B-4bit` | 约 0.6 GB | Qwen3.5 0.8B |
+| `qwen3.5-2b` | `mlx-community/Qwen3.5-2B-4bit` | 约 1.4 GB | Qwen3.5 2B |
+| `qwen3.5-4b` | `mlx-community/Qwen3.5-4B-4bit` | 约 2.4 GB | Qwen3.5 4B |
+| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 约 6.0 GB | Qwen3.5 9B |
+| `qwen3.5-27b` | `mlx-community/Qwen3.5-27B-4bit` | 约 16 GB | Qwen3.5 27B |
+| `qwen3.5-35b-a3b` | `mlx-community/Qwen3.5-35B-A3B-4bit` | 约 21 GB | Qwen3.5 35B-A3B |
+| `qwen3.5-122b-a10b` | `mlx-community/Qwen3.5-122B-A10B-4bit` | 约 68 GB | Qwen3.5 122B-A10B |
+| `qwen3.5-397b-a17b` | `mlx-community/Qwen3.5-397B-A17B-4bit` | 约 220 GB | Qwen3.5 397B-A17B |
 | `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 4B (默认 VLM) |
 | `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B (大规模 VLM) |
 | `qwen3-vl` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 约 4 GB | Qwen3-VL 4B (默认 VLM) |
