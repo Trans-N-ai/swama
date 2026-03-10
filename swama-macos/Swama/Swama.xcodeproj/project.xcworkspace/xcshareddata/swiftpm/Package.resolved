@@ -1,5 +1,5 @@
 {
-  "originHash" : "5945f342d2e679649cf5bc31f3124d081ac61525c038fe0faf6619210a2aa25f",
+  "originHash" : "a94bee5635fa043b26b7255a7a5985990aa2dc3d8dbe217b0d77be4fb68ffd23",
   "pins" : [
     {
       "identity" : "espeak-ng-spm",
@@ -33,7 +33,7 @@
       "location" : "https://github.com/ml-explore/mlx-swift-lm",
       "state" : {
         "branch" : "main",
-        "revision" : "6bce33425917e943769887a4156a7207e346a64b"
+        "revision" : "06bfeed73f5b93f476057c8dc6d9c8a329ae3072"
       }
     },
     {
