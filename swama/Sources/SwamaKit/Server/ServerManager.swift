@@ -149,6 +149,7 @@ public class ServerManager {
     }
 
     /// Renamed from stopServer
+    @MainActor
     public func stop() async {
         NSLog("SwamaKit.ServerManager: Explicitly stopping background server (stop() called)...")
         // This will trigger the shutdown of the channel and group managed by startInBackground's Task.
@@ -156,6 +157,7 @@ public class ServerManager {
     }
 
     /// This method is primarily for the background server instance's resources.
+    @MainActor
     public func shutdownServerGracefully(isCalledFromDeinit: Bool = false, fromError: Bool = false) async {
         let contextMessage = isCalledFromDeinit ? "Deinit" : (fromError ? "Error/Completion" : "Explicit Stop")
         NSLog("SwamaKit.ServerManager (\(contextMessage)): Initiating graceful shutdown for background server...")
