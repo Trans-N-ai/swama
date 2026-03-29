@@ -205,11 +205,13 @@ public enum CompletionsHandler {
 
     /// OpenAI-compatible tool call structures for response
     public struct ResponseToolCall: Encodable, Decodable, Sendable {
+        let index: Int?
         let id: String
         let type: String
         let function: ResponseFunction
 
-        public init(id: String, type: String = "function", function: ResponseFunction) {
+        public init(index: Int = 0, id: String, type: String = "function", function: ResponseFunction) {
+            self.index = index
             self.id = id
             self.type = type
             self.function = function
@@ -217,6 +219,7 @@ public enum CompletionsHandler {
 
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
+            index = try container.decodeIfPresent(Int.self, forKey: .index)
             id = try container.decode(String.self, forKey: .id)
             type = try container.decode(String.self, forKey: .type)
             function = try container.decode(ResponseFunction.self, forKey: .function)
@@ -578,7 +581,7 @@ public enum CompletionsHandler {
         let completionTokens = result.completionInfo?.generationTokenCount ?? 0
 
         // Convert MLX ToolCalls to OpenAI format
-        let toolCalls: [ResponseToolCall]? = result.toolCalls.isEmpty ? nil : result.toolCalls.compactMap { toolCall in
+        let toolCalls: [ResponseToolCall]? = result.toolCalls.isEmpty ? nil : result.toolCalls.enumerated().compactMap { index, toolCall in
             let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
             let argumentsJSON: String =
                 if let jsonData = try? JSONSerialization.data(withJSONObject: argumentsDict),
@@ -590,6 +593,7 @@ public enum CompletionsHandler {
                 }
 
             return ResponseToolCall(
+                index: index,
                 id: "call_\(UUID().uuidString)",
                 type: "function",
                 function: ResponseFunction(
