@@ -287,7 +287,8 @@ private extension SpeechToTextRunner {
             return STT.funASR()
         case .whisper:
             let whisperModel = resolveWhisperModel(from: modelName)
-            return STT.whisper(model: whisperModel)
+            let whisperQuant = resolveWhisperQuant(from: modelName)
+            return STT.whisper(model: whisperModel, quantization: whisperQuant)
         }
     }
 
@@ -301,23 +302,41 @@ private extension SpeechToTextRunner {
 
     func resolveWhisperModel(from modelName: String) -> WhisperModelSize {
         let normalized = modelName.lowercased()
-        switch normalized {
-        case "whisper-large",
-             "whisper-large-v3":
-            return .large
-        case "whisper-large-turbo",
-             "whisper-large-v3-turbo":
+
+        if normalized.contains("turbo") {
             return .largeTurbo
-        case "whisper-medium":
-            return .medium
-        case "whisper-small":
-            return .small
-        case "whisper-base":
-            return .base
-        case "whisper-tiny":
-            return .tiny
-        default:
+        }
+        if normalized.contains("large") {
             return .large
         }
+        if normalized.contains("medium") {
+            return .medium
+        }
+        if normalized.contains("small") {
+            return .small
+        }
+        if normalized.contains("base") {
+            return .base
+        }
+        if normalized.contains("tiny") {
+            return .tiny
+        }
+        return .large
     }
+
+    func resolveWhisperQuant(from modelName: String) -> WhisperQuantization {
+        let normalized = modelName.lowercased()
+
+        if normalized.contains("fp16") {
+            return .fp16
+        }
+        if normalized.contains("8bit") {
+            return .q8
+        }
+        if normalized.contains("4bit") {
+            return .q4
+        }
+        return .q4
+    }
+
 }
