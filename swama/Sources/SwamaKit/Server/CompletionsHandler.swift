@@ -661,6 +661,14 @@ public enum CompletionsHandler {
         parameters: GenerateParameters,
         tools: [ToolSpec]? = nil
     ) async throws {
+        actor ToolCallCounter {
+            private var index = 0
+            func next() -> Int {
+                let current = index
+                index += 1
+                return current
+            }
+        }
         // Send SSE headers
         let headers = HTTPHeaders([
             ("Content-Type", "text/event-stream"),
@@ -697,6 +705,7 @@ public enum CompletionsHandler {
                     modelName: modelName,
                     tools: tools
                 )
+                let toolCallCounter = ToolCallCounter()
                 return try await runner.runChat(
                     userInput: userInput,
                     parameters: parameters,
@@ -724,25 +733,27 @@ public enum CompletionsHandler {
                             else {
                                 "{}"
                             }
-
-                        let toolCallDict: [String: Any] = [
-                            "id": "call_\(UUID().uuidString)",
-                            "type": "function",
-                            "function": [
-                                "name": toolCall.function.name,
-                                "arguments": argumentsJSON
-                            ]
-                        ]
-
-                        let toolCallDelta: [String: Any] = [
-                            "id": chunkId,
-                            "object": "chat.completion.chunk",
-                            "created": timestamp,
-                            "model": model,
-                            "choices": [["index": 0, "delta": ["tool_calls": [toolCallDict]],
-                                         "finish_reason": NSNull()]]
-                        ]
                         Task {
+                            let index = await toolCallCounter.next()
+                            let toolCallDict: [String: Any] = [
+                                "index": index,
+                                "id": "call_\(UUID().uuidString)",
+                                "type": "function",
+                                "function": [
+                                    "name": toolCall.function.name,
+                                    "arguments": argumentsJSON
+                                ]
+                            ]
+
+                            let toolCallDelta: [String: Any] = [
+                                "id": chunkId,
+                                "object": "chat.completion.chunk",
+                                "created": timestamp,
+                                "model": model,
+                                "choices": [["index": 0, "delta": ["tool_calls": [toolCallDict]],
+                                             "finish_reason": NSNull()]]
+                            ]
+
                             try? await writeSSEJSON(channel: channel, payload: toolCallDelta)
                         }
                     }
