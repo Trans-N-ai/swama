@@ -156,20 +156,68 @@ public enum ModelAliasResolver {
     /// All keys should be lowercase for case-insensitive matching.
     static let sttAliases: [String: String] = [
         // Whisper models - default to 4bit quantization for balance of quality and size
+
+        // Tiny
         "whisper-tiny": "mlx-community/whisper-tiny-4bit",
+        "whisper-tiny-4bit": "mlx-community/whisper-tiny-4bit",
+        "whisper-tiny-8bit": "mlx-community/whisper-tiny-8bit",
+        "whisper-tiny-fp16": "mlx-community/whisper-tiny-fp16",
+
+        // Base
         "whisper-base": "mlx-community/whisper-base-4bit",
+        "whisper-base-4bit": "mlx-community/whisper-base-4bit",
+        "whisper-base-8bit": "mlx-community/whisper-base-8bit",
+        "whisper-base-fp16": "mlx-community/whisper-base-fp16",
+
+        // Small
         "whisper-small": "mlx-community/whisper-small-4bit",
+        "whisper-small-4bit": "mlx-community/whisper-small-4bit",
+        "whisper-small-8bit": "mlx-community/whisper-small-8bit",
+        "whisper-small-fp16": "mlx-community/whisper-small-fp16",
+
+        // Medium
         "whisper-medium": "mlx-community/whisper-medium-4bit",
+        "whisper-medium-4bit": "mlx-community/whisper-medium-4bit",
+        "whisper-medium-8bit": "mlx-community/whisper-medium-8bit",
+        "whisper-medium-fp16": "mlx-community/whisper-medium-fp16",
+
+        // Large
         "whisper-large": "mlx-community/whisper-large-v3-4bit",
         "whisper-large-v3": "mlx-community/whisper-large-v3-4bit",
+        "whisper-large-v3-4bit": "mlx-community/whisper-large-v3-4bit",
+        "whisper-large-v3-8bit": "mlx-community/whisper-large-v3-8bit",
+        "whisper-large-v3-fp16": "mlx-community/whisper-large-v3-fp16",
+
+        // Large-turbo
         "whisper-large-turbo": "mlx-community/whisper-large-v3-turbo-4bit",
+        "whisper-large-v3-turbo": "mlx-community/whisper-large-v3-turbo-4bit",
+        "whisper-large-v3-turbo-4bit": "mlx-community/whisper-large-v3-turbo-4bit",
+        "whisper-large-v3-turbo-8bit": "mlx-community/whisper-large-v3-turbo-8bit",
+        "whisper-large-v3-turbo-fp16": "mlx-community/whisper-large-v3-turbo-fp16",
+
+        // Default
         "whisper": "mlx-community/whisper-large-v3-4bit",
 
         // English-only variants
         "whisper-tiny-en": "mlx-community/whisper-tiny.en-4bit",
+        "whisper-tiny-en-4bit": "mlx-community/whisper-tiny.en-4bit",
+        "whisper-tiny-en-8bit": "mlx-community/whisper-tiny.en-8bit",
+        "whisper-tiny-en-fp16": "mlx-community/whisper-tiny.en-fp16",
+
         "whisper-base-en": "mlx-community/whisper-base.en-4bit",
+        "whisper-base-en-4bit": "mlx-community/whisper-base.en-4bit",
+        "whisper-base-en-8bit": "mlx-community/whisper-base.en-8bit",
+        "whisper-base-en-fp16": "mlx-community/whisper-base.en-fp16",
+
         "whisper-small-en": "mlx-community/whisper-small.en-4bit",
+        "whisper-small-en-4bit": "mlx-community/whisper-small.en-4bit",
+        "whisper-small-en-8bit": "mlx-community/whisper-small.en-8bit",
+        "whisper-small-en-fp16": "mlx-community/whisper-small.en-fp16",
+
         "whisper-medium-en": "mlx-community/whisper-medium.en-4bit",
+        "whisper-medium-en-4bit": "mlx-community/whisper-medium.en-4bit",
+        "whisper-medium-en-8bit": "mlx-community/whisper-medium.en-8bit",
+        "whisper-medium-en-fp16": "mlx-community/whisper-medium.en-fp16",
 
         // FunASR models
         "funasr": "mlx-community/Fun-ASR-Nano-2512-4bit",
