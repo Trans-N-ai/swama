@@ -15,6 +15,8 @@ public enum ModelDownloader {
     public static func downloadModel(resolvedModelName: String) async throws {
         printMessage("Pulling model: \(resolvedModelName)")
 
+        // LLM, STT and TTS all share this path. `getModelDirectory` is the single
+        // source of truth that routes audio models to the mlx-audio cache layout.
         let modelDir = ModelPaths.getModelDirectory(for: resolvedModelName)
         try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
         let swamaRegistry = ProcessInfo.processInfo.environment["SWAMA_REGISTRY"] ?? "HUGGING_FACE"
@@ -122,7 +124,7 @@ public enum ModelDownloader {
                     domain: "SwamaKit.Audio",
                     code: 0,
                     userInfo: [
-                        NSLocalizedDescriptionKey: "WhisperKit models are no longer supported. Use MLXAudio whisper models instead (e.g., whisper-large-turbo)"
+                        NSLocalizedDescriptionKey: "WhisperKit models are no longer supported. Use MLXAudio STT models instead (e.g., qwen3-asr)"
                     ]
                 )
             )
@@ -200,6 +202,4 @@ public enum ModelDownloader {
         }
         return total
     }
-
-    // MARK: - Main Download Functions
 }

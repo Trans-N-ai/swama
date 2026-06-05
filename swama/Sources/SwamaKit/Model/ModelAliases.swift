@@ -39,11 +39,20 @@ public enum ModelAliasResolver {
         return name
     }
 
-    /// Check if a model name is supported by MLXAudio transcription (STT only: Whisper, FunASR)
+    /// Check if a model name is supported by MLXAudio transcription.
     public static func isAudioModel(_ modelName: String) -> Bool {
         let lowercasedName = modelName.lowercased()
         return lowercasedName.hasPrefix("whisper-") ||
             lowercasedName.hasPrefix("funasr-") ||
+            lowercasedName.contains("qwen3-asr") ||
+            lowercasedName.contains("glm-asr") ||
+            lowercasedName.contains("glmasr") ||
+            lowercasedName.contains("sensevoice") ||
+            lowercasedName.contains("voxtral") ||
+            lowercasedName.contains("cohere") ||
+            lowercasedName.contains("parakeet") ||
+            lowercasedName.contains("firered") ||
+            lowercasedName.contains("fire-red") ||
             sttAliases.keys.contains(lowercasedName) ||
             sttAliases.values.contains(where: { $0.lowercased() == lowercasedName })
     }
@@ -152,97 +161,69 @@ public enum ModelAliasResolver {
         "gpt-oss-120b": "lmstudio-community/gpt-oss-120b-MLX-8bit",
     ]
 
-    /// STT model aliases for MLXAudio (Whisper, FunASR)
+    /// STT model aliases for MLXAudio.
     /// All keys should be lowercase for case-insensitive matching.
     static let sttAliases: [String: String] = [
-        // Whisper models - default to 4bit quantization for balance of quality and size
-
-        // Tiny
-        "whisper-tiny": "mlx-community/whisper-tiny-4bit",
-        "whisper-tiny-4bit": "mlx-community/whisper-tiny-4bit",
-        "whisper-tiny-8bit": "mlx-community/whisper-tiny-8bit",
-        "whisper-tiny-fp16": "mlx-community/whisper-tiny-fp16",
-
-        // Base
-        "whisper-base": "mlx-community/whisper-base-4bit",
-        "whisper-base-4bit": "mlx-community/whisper-base-4bit",
-        "whisper-base-8bit": "mlx-community/whisper-base-8bit",
-        "whisper-base-fp16": "mlx-community/whisper-base-fp16",
-
-        // Small
-        "whisper-small": "mlx-community/whisper-small-4bit",
-        "whisper-small-4bit": "mlx-community/whisper-small-4bit",
-        "whisper-small-8bit": "mlx-community/whisper-small-8bit",
-        "whisper-small-fp16": "mlx-community/whisper-small-fp16",
-
-        // Medium
-        "whisper-medium": "mlx-community/whisper-medium-4bit",
-        "whisper-medium-4bit": "mlx-community/whisper-medium-4bit",
-        "whisper-medium-8bit": "mlx-community/whisper-medium-8bit",
-        "whisper-medium-fp16": "mlx-community/whisper-medium-fp16",
-
-        // Large
-        "whisper-large": "mlx-community/whisper-large-v3-4bit",
-        "whisper-large-v3": "mlx-community/whisper-large-v3-4bit",
-        "whisper-large-v3-4bit": "mlx-community/whisper-large-v3-4bit",
-        "whisper-large-v3-8bit": "mlx-community/whisper-large-v3-8bit",
-        "whisper-large-v3-fp16": "mlx-community/whisper-large-v3-fp16",
-
-        // Large-turbo
-        "whisper-large-turbo": "mlx-community/whisper-large-v3-turbo-4bit",
-        "whisper-large-v3-turbo": "mlx-community/whisper-large-v3-turbo-4bit",
-        "whisper-large-v3-turbo-4bit": "mlx-community/whisper-large-v3-turbo-4bit",
-        "whisper-large-v3-turbo-8bit": "mlx-community/whisper-large-v3-turbo-8bit",
-        "whisper-large-v3-turbo-fp16": "mlx-community/whisper-large-v3-turbo-fp16",
-
-        // Default
-        "whisper": "mlx-community/whisper-large-v3-4bit",
+        // Legacy Whisper/FunASR API names are preserved and mapped to the new ASR backend.
+        "whisper-tiny": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "whisper-base": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "whisper-small": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "whisper-medium": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "whisper-large": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "whisper-large-v3": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "whisper-large-turbo": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "whisper": "mlx-community/Qwen3-ASR-0.6B-4bit",
 
         // English-only variants
-        "whisper-tiny-en": "mlx-community/whisper-tiny.en-4bit",
-        "whisper-tiny-en-4bit": "mlx-community/whisper-tiny.en-4bit",
-        "whisper-tiny-en-8bit": "mlx-community/whisper-tiny.en-8bit",
-        "whisper-tiny-en-fp16": "mlx-community/whisper-tiny.en-fp16",
-
-        "whisper-base-en": "mlx-community/whisper-base.en-4bit",
-        "whisper-base-en-4bit": "mlx-community/whisper-base.en-4bit",
-        "whisper-base-en-8bit": "mlx-community/whisper-base.en-8bit",
-        "whisper-base-en-fp16": "mlx-community/whisper-base.en-fp16",
-
-        "whisper-small-en": "mlx-community/whisper-small.en-4bit",
-        "whisper-small-en-4bit": "mlx-community/whisper-small.en-4bit",
-        "whisper-small-en-8bit": "mlx-community/whisper-small.en-8bit",
-        "whisper-small-en-fp16": "mlx-community/whisper-small.en-fp16",
-
-        "whisper-medium-en": "mlx-community/whisper-medium.en-4bit",
-        "whisper-medium-en-4bit": "mlx-community/whisper-medium.en-4bit",
-        "whisper-medium-en-8bit": "mlx-community/whisper-medium.en-8bit",
-        "whisper-medium-en-fp16": "mlx-community/whisper-medium.en-fp16",
+        "whisper-tiny-en": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "whisper-base-en": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "whisper-small-en": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "whisper-medium-en": "mlx-community/Qwen3-ASR-0.6B-4bit",
 
         // FunASR models
-        "funasr": "mlx-community/Fun-ASR-Nano-2512-4bit",
-        "funasr-mlt": "mlx-community/Fun-ASR-MLT-Nano-2512-4bit",
+        "funasr": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "funasr-mlt": "mlx-community/Qwen3-ASR-0.6B-4bit",
+
+        // Native mlx-audio-swift STT models
+        "qwen3-asr": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "qwen3-asr-0.6b": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        "qwen3-asr-1.7b": "mlx-community/Qwen3-ASR-1.7B-bf16",
+        "glmasr": "mlx-community/GLM-ASR-Nano-2512-4bit",
+        "glm-asr": "mlx-community/GLM-ASR-Nano-2512-4bit",
+        "sensevoice": "mlx-community/SenseVoiceSmall",
+        "parakeet": "mlx-community/parakeet-tdt-0.6b-v3",
+        "voxtral": "mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16",
+        "cohere-transcribe": "beshkenadze/cohere-transcribe-03-2026-mlx-fp16",
     ]
 
     /// TTS (Text-to-Speech) model aliases
     /// All keys should be lowercase for case-insensitive matching.
     static let ttsAliases: [String: String] = [
         // Orpheus
-        "orpheus": "mlx-community/orpheus-3b-0.1-ft-4bit",
+        "orpheus": "mlx-community/orpheus-3b-0.1-ft-bf16",
 
         // Marvis
-        "marvis": "Marvis-AI/marvis-tts-100m-v0.2-MLX-6bit",
+        "marvis": "Marvis-AI/marvis-tts-250m-v0.2-MLX-8bit",
 
         // Chatterbox
-        "chatterbox": "mlx-community/Chatterbox-TTS-q4",
-        "chatterbox-turbo": "mlx-community/Chatterbox-Turbo-TTS-q4",
-        "chatterbox_turbo": "mlx-community/Chatterbox-Turbo-TTS-q4",
+        "chatterbox": "mlx-community/chatterbox-turbo-4bit",
+        "chatterbox-turbo": "mlx-community/chatterbox-turbo-4bit",
+        "chatterbox_turbo": "mlx-community/chatterbox-turbo-4bit",
 
-        // OuteTTS
-        "outetts": "mlx-community/Llama-OuteTTS-1.0-1B-4bit",
+        // New mlx-audio-swift TTS models
+        "qwen3-tts": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+        "vyvo": "mlx-community/VyvoTTS-EN-Beta-4bit",
+        "fish-speech": "mlx-community/fish-audio-s2-pro-8bit",
+        "soprano": "mlx-community/Soprano-80M-bf16",
+        "pocket-tts": "mlx-community/pocket-tts",
+        "moss-tts": "OpenMOSS-Team/MOSS-TTS",
+        "echo-tts": "mlx-community/echo-tts-base",
+
+        // Legacy names mapped to Qwen3-TTS to keep request compatibility.
+        "outetts": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
 
         // CosyVoice models
-        "cosyvoice2": "mlx-community/CosyVoice2-0.5B-4bit",
-        "cosyvoice3": "mlx-community/Fun-CosyVoice3-0.5B-2512-4bit",
+        "cosyvoice2": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+        "cosyvoice3": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
     ]
 }

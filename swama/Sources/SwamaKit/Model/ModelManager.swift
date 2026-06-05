@@ -18,16 +18,19 @@ public enum ModelManager {
         return modelInfos
     }
 
-    /// Scans a specific models directory and returns ModelInfo array
+    /// Scans a models directory and returns ModelInfo array.
+    ///
+    /// A model is recognised solely by a `.swama-meta.json` file in its directory —
+    /// uniform across LLM, STT and TTS. Two on-disk shapes are supported:
+    ///   • flat:   `{root}/{model}/.swama-meta.json`
+    ///   • nested: `{root}/{org}/{model}/.swama-meta.json`
+    /// The nested case also covers the audio layout `{root}/mlx-audio/{repo_underscore}/`.
     private static func scanModelsDirectory(at modelsRootDirectory: URL) -> [ModelInfo] {
         var modelInfos: [ModelInfo] = []
 
-        // Determine if this is the audio models directory (no .swama-meta.json files)
-        let isAudioDirectory = modelsRootDirectory.path.contains("huggingface/models")
-
-        let orgDirs: [URL]
+        let topLevel: [URL]
         do {
-            orgDirs = try FileManager.default.contentsOfDirectory(
+            topLevel = try FileManager.default.contentsOfDirectory(
                 at: modelsRootDirectory,
                 includingPropertiesForKeys: [.isDirectoryKey],
                 options: [.skipsHiddenFiles]
@@ -44,72 +47,40 @@ public enum ModelManager {
             return [] // Return empty if the root directory is inaccessible
         }
 
-        // Iterate through organization directories (e.g., mlx-community)
-        for orgDir in orgDirs {
-            guard orgDir.hasDirectoryPath else {
+        for entry in topLevel {
+            guard entry.hasDirectoryPath else {
                 continue
             }
 
-            let modelNameDirs: [URL]
-            do {
-                modelNameDirs = try FileManager.default.contentsOfDirectory(
-                    at: orgDir,
-                    includingPropertiesForKeys: [.isDirectoryKey, .creationDateKey],
-                    options: [.skipsHiddenFiles]
-                )
-            }
-            catch {
-                fputs(
-                    "SwamaKit.ModelManager: Error reading contents of org directory \(orgDir.path): \(error.localizedDescription)\n",
-                    stderr
-                )
+            // Flat layout: {root}/{model}/.swama-meta.json
+            let flatMeta = entry.appendingPathComponent(".swama-meta.json")
+            if FileManager.default.fileExists(atPath: flatMeta.path) {
+                if let info = parseModelMetadata(metaURL: flatMeta, fallbackID: entry.lastPathComponent) {
+                    modelInfos.append(info)
+                }
                 continue
             }
 
-            for modelDir in modelNameDirs {
-                guard modelDir.hasDirectoryPath else {
+            // Nested layout: {root}/{org}/{model}/.swama-meta.json
+            let children = (try? FileManager.default.contentsOfDirectory(
+                at: entry,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+
+            for child in children {
+                guard child.hasDirectoryPath else {
                     continue
                 }
 
-                let modelID = "\(orgDir.lastPathComponent)/\(modelDir.lastPathComponent)"
-                let metaURL = modelDir.appendingPathComponent(".swama-meta.json")
-
-                if FileManager.default.fileExists(atPath: metaURL.path) {
-                    // LLM model with metadata file
-                    if let info = parseModelMetadata(metaURL: metaURL, modelID: modelID) {
-                        modelInfos.append(info)
-                    }
+                let metaURL = child.appendingPathComponent(".swama-meta.json")
+                guard FileManager.default.fileExists(atPath: metaURL.path) else {
+                    continue
                 }
-                else if isAudioDirectory {
-                    // Audio model without metadata file - create info from directory scan
-                    if let attributes = try? FileManager.default.attributesOfItem(atPath: modelDir.path),
-                       let creationDate = attributes[.creationDate] as? Date
-                    {
-                        let size = directorySize(at: modelDir)
-                        let created = Int(creationDate.timeIntervalSince1970)
 
-                        modelInfos.append(ModelInfo(
-                            id: modelID,
-                            created: created,
-                            sizeInBytes: size,
-                            source: .directoryScan,
-                            rawMetadata: nil
-                        ))
-                    }
-                }
-            }
-        }
-
-        // Additional: support flat model directories (e.g., ~/.swama/models/llama2/.swama-meta.json)
-        // Only for non-audio directories
-        if !isAudioDirectory {
-            for modelDir in orgDirs {
-                let metaURL = modelDir.appendingPathComponent(".swama-meta.json")
-                if FileManager.default.fileExists(atPath: metaURL.path) {
-                    let modelID = modelDir.lastPathComponent
-                    if let info = parseModelMetadata(metaURL: metaURL, modelID: modelID) {
-                        modelInfos.append(info)
-                    }
+                let fallbackID = "\(entry.lastPathComponent)/\(child.lastPathComponent)"
+                if let info = parseModelMetadata(metaURL: metaURL, fallbackID: fallbackID) {
+                    modelInfos.append(info)
                 }
             }
         }
@@ -117,46 +88,25 @@ public enum ModelManager {
         return modelInfos
     }
 
-    /// Calculate total size of a directory recursively
-    private static func directorySize(at url: URL) -> Int64 {
-        var totalSize: Int64 = 0
-
-        guard let enumerator = FileManager.default.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
-        )
-        else {
-            return 0
-        }
-
-        for case let fileURL as URL in enumerator {
-            guard let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-                  let isRegularFile = resourceValues.isRegularFile,
-                  isRegularFile,
-                  let fileSize = resourceValues.fileSize
-            else {
-                continue
-            }
-
-            totalSize += Int64(fileSize)
-        }
-
-        return totalSize
-    }
-
-    private static func parseModelMetadata(metaURL: URL, modelID: String) -> ModelInfo? {
+    /// Parse a `.swama-meta.json`. The displayed model id comes from the file's `id`
+    /// field (the canonical repo, e.g. `mlx-community/Qwen3-ASR-1.7B-bf16`); the
+    /// directory-derived `fallbackID` is used only when the file omits it. This matters
+    /// for audio models whose directory name is the underscore-joined repo, which cannot
+    /// be reliably reversed back into `{org}/{model}`.
+    private static func parseModelMetadata(metaURL: URL, fallbackID: String) -> ModelInfo? {
         do {
             let data = try Data(contentsOf: metaURL)
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let created = json["created"] as? Int,
                   let size = (json["size_in_bytes"] as? NSNumber)?.int64Value
             else {
-                fputs("SwamaKit.ModelManager: Invalid .swama-meta.json for \(modelID)\n", stderr)
+                fputs("SwamaKit.ModelManager: Invalid .swama-meta.json for \(fallbackID)\n", stderr)
                 return nil
             }
 
+            let id = (json["id"] as? String) ?? fallbackID
             return ModelInfo(
-                id: modelID,
+                id: id,
                 created: created,
                 sizeInBytes: size,
                 source: .metaFile,
@@ -165,7 +115,7 @@ public enum ModelManager {
         }
         catch {
             fputs(
-                "SwamaKit.ModelManager: Error reading .swama-meta.json for \(modelID): \(error.localizedDescription)\n",
+                "SwamaKit.ModelManager: Error reading .swama-meta.json for \(fallbackID): \(error.localizedDescription)\n",
                 stderr
             )
             return nil

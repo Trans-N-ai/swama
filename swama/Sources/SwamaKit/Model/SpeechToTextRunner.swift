@@ -1,5 +1,8 @@
 import Foundation
-@preconcurrency import MLXAudio
+import HuggingFace
+@preconcurrency import MLX
+import MLXAudioCore
+import MLXAudioSTT
 
 // MARK: - TranscriptionResult
 
@@ -54,15 +57,13 @@ public struct TranscriptionResult: Sendable {
 
 // MARK: - TranscriptionResponseFormat
 
-/// Response format for transcription output
 public enum TranscriptionResponseFormat {
-    case simple // Just text
-    case verboseJson // Text with timing and metadata
+    case simple
+    case verboseJson
 }
 
 // MARK: - TranscriptionOutput
 
-/// Unified transcription output
 public enum TranscriptionOutput: Sendable {
     case simple(String)
     case detailed([TranscriptionResult])
@@ -70,180 +71,84 @@ public enum TranscriptionOutput: Sendable {
 
 // MARK: - SpeechToTextRunner
 
-/// MLXAudio-based implementation for speech recognition
 @MainActor
 public class SpeechToTextRunner: @unchecked Sendable {
-    private var stt: (any STTEngine)?
+    private var stt: (any STTGenerationModel)?
     private var isRunning = false
     private var selectedModelName: String?
 
     public init() {}
 
-    /// Load model using MLXAudio's built-in downloader/cache.
     public func loadModel(from modelName: String) async throws {
-        let stt = try createSTT(for: modelName)
-        try await stt.load()
+        let stt = try await createSTT(for: modelName)
         self.stt = stt
         self.selectedModelName = modelName
     }
 
-    /// Validate and prepare audio file for transcription
-    /// - Parameter url: URL to audio file
-    /// - Returns: Path to the prepared audio file (may be converted)
-    private func validateAndPrepareAudio(at url: URL) async throws -> String {
-        // Check if file exists
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw AudioError.transcriptionFailed("Audio file not found: \(url.path)")
-        }
-
-        // Basic file size check
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
-        if fileSize == 0 {
-            throw AudioError.transcriptionFailed("Audio file is empty")
-        }
-
-        // Let MLXAudio handle the actual audio processing
-        return url.path
-    }
-
-    /// Transcribe audio file with unified options (main interface)
-    /// - Parameters:
-    ///   - url: URL to audio file
-    ///   - language: Language code (e.g., "en", "zh", "ja") or nil for auto-detection
-    ///   - temperature: Sampling temperature (0.0-1.0)
-    ///   - responseFormat: Response format for output
-    /// - Returns: Full transcription results array with timing information when available
     public func transcribe(
         audioFile url: URL,
         language: String? = nil,
         temperature: Float = 0.0,
         responseFormat: TranscriptionResponseFormat = .simple
     ) async throws -> TranscriptionOutput {
-        // Prevent concurrent runs
         while isRunning {
-            try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+            try await Task.sleep(nanoseconds: 10_000_000)
         }
 
         isRunning = true
         defer { isRunning = false }
 
         guard let stt else {
-            throw AudioError.modelLoadFailed("MLXAudio model not initialized")
+            throw AudioError.modelLoadFailed("MLXAudioSTT model not initialized")
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw AudioError.transcriptionFailed("Audio file not found: \(url.path)")
         }
 
-        // Validate audio file first
-        let audioPath = try await validateAndPrepareAudio(at: url)
-
-        // Get results with better error handling
         do {
-            let transcriptionText = try await transcribeWithMLXAudio(
-                stt: stt,
-                audioPath: audioPath,
-                language: language
+            let audio = try loadPreparedAudio(from: url)
+            var params = stt.defaultGenerationParameters
+            params = STTGenerateParameters(
+                maxTokens: params.maxTokens,
+                temperature: temperature,
+                topP: params.topP,
+                topK: params.topK,
+                verbose: responseFormat == .verboseJson,
+                language: normalizeLanguage(language),
+                chunkDuration: params.chunkDuration,
+                minChunkDuration: params.minChunkDuration,
+                repetitionPenalty: params.repetitionPenalty,
+                repetitionContextSize: params.repetitionContextSize
             )
 
-            // MLXAudio does not currently expose segment metadata in this integration,
-            // so we return a single segment for verbose requests.
+            let output = stt.generate(audio: audio, generationParameters: params)
             switch responseFormat {
             case .simple:
-                return .simple(transcriptionText)
+                return .simple(output.text)
             case .verboseJson:
-                let segment = TranscriptionResult.Segment(
-                    id: 0,
-                    seek: 0,
-                    start: 0,
-                    end: 0,
-                    text: transcriptionText,
-                    tokens: nil,
-                    temperature: temperature,
-                    avgLogprob: 0,
-                    compressionRatio: 0,
-                    noSpeechProb: 0
-                )
-                let result = TranscriptionResult(
-                    text: transcriptionText,
-                    language: language,
-                    segments: [segment]
-                )
-                return .detailed([result])
+                return .detailed([makeTranscriptionResult(from: output, fallbackLanguage: language)])
             }
         }
         catch {
-            // Provide more specific error messages
-            let errorMessage = error.localizedDescription
-            if errorMessage.contains("1954115647") || errorMessage.contains("coreaudio.avfaudio") {
-                throw AudioError
-                    .transcriptionFailed(
-                        "Audio encoding error: The audio file format is not supported or the file is corrupted. Please try converting to WAV format (16kHz, mono) and try again. Original error: \(errorMessage)"
-                    )
-            }
-            else {
-                throw AudioError.transcriptionFailed("Transcription failed: \(errorMessage)")
-            }
+            throw AudioError.transcriptionFailed("Transcription failed: \(error.localizedDescription)")
         }
     }
 
-    // MARK: - Helper Methods
-
-    private func transcribeWithMLXAudio(
-        stt: any STTEngine,
-        audioPath: String,
-        language: String?
-    ) async throws -> String {
-        let audioURL = URL(fileURLWithPath: audioPath)
-        if let language, let sttLanguage = resolveLanguage(language) {
-            // Cast to WhisperEngine to access language parameter
-            if let whisperEngine = stt as? WhisperEngine {
-                let result = try await whisperEngine.transcribe(audioURL, language: sttLanguage)
-                return result.text
-            }
+    private func loadPreparedAudio(from url: URL) throws -> MLXArray {
+        let (inputSampleRate, inputAudio) = try loadAudioArray(from: url)
+        let mono = inputAudio.ndim > 1 ? inputAudio.mean(axis: -1) : inputAudio
+        guard inputSampleRate != 16000 else {
+            return mono
         }
 
-        // For non-Whisper engines or no language specified
-        if let whisperEngine = stt as? WhisperEngine {
-            let result = try await whisperEngine.transcribe(audioURL)
-            return result.text
-        }
-        else if let funasrEngine = stt as? FunASREngine {
-            let result = try await funasrEngine.transcribe(audioURL)
-            return result.text
-        }
-
-        throw AudioError.transcriptionFailed("Unsupported STT engine type")
-    }
-
-    private func resolveLanguage(_ language: String) -> Language? {
-        let normalized = language.lowercased()
-        switch normalized {
-        case "en",
-             "english":
-            return .english
-        case "chinese",
-             "zh",
-             "zh-cn",
-             "zh-hans":
-            return .chinese
-        case "ja",
-             "japanese":
-            return .japanese
-        case "es",
-             "spanish":
-            return .spanish
-        default:
-            return nil
-        }
+        return try MLXAudioCore.resampleAudio(mono, from: inputSampleRate, to: 16000)
     }
 }
 
-/// Convenience methods for model integration with Swama
 public extension SpeechToTextRunner {
-    /// Load model from Swama's model identifier (e.g. "whisper-base", "funasr")
     func loadModel(_ modelIdentifier: String) async throws {
         guard ModelAliasResolver.isAudioModel(modelIdentifier) else {
-            throw AudioError
-                .invalidInput(
-                    "Model '\(modelIdentifier)' is not a supported audio model. Use whisper-* or funasr variants."
-                )
+            throw AudioError.invalidInput("Model '\(modelIdentifier)' is not a supported audio model.")
         }
 
         try await loadModel(from: modelIdentifier)
@@ -276,67 +181,141 @@ public enum AudioError: Error, LocalizedError {
 }
 
 private extension SpeechToTextRunner {
-    enum AudioModelKind {
-        case whisper
-        case funASR
+    func createSTT(for modelName: String) async throws -> any STTGenerationModel {
+        let repo = resolveSTTRepo(modelName)
+        let normalized = repo.lowercased()
+        let cache = HubCache(cacheDirectory: ModelPaths.activeModelsDirectory)
+
+        if normalized.contains("glmasr") || normalized.contains("glm-asr") {
+            return try await GLMASRModel.fromPretrained(repo, cache: cache)
+        }
+        if normalized.contains("voxtral") {
+            // Voxtral/Cohere fromPretrained in mlx-audio-swift do not accept a cache
+            // override yet, so they fall back to the library's default HF cache.
+            return try await VoxtralRealtimeModel.fromPretrained(repo)
+        }
+        if normalized.contains("cohere") {
+            return try await CohereTranscribeModel.fromPretrained(repo)
+        }
+        if normalized.contains("parakeet") {
+            return try await ParakeetModel.fromPretrained(repo, cache: cache)
+        }
+        if normalized.contains("firered") || normalized.contains("fire-red") {
+            return try await FireRedASR2Model.fromPretrained(repo, cache: cache)
+        }
+        if normalized.contains("sensevoice") {
+            return try await SenseVoiceModel.fromPretrained(repo, cache: cache)
+        }
+        if normalized.contains("qwen3-asr") || normalized.contains("qwen3_asr") {
+            return try await Qwen3ASRModel.fromPretrained(repo, cache: cache)
+        }
+
+        throw AudioError.modelNotFound("Unsupported STT model: \(modelName)")
     }
 
-    func createSTT(for modelName: String) throws -> any STTEngine {
-        switch resolveModelKind(from: modelName) {
-        case .funASR:
-            return STT.funASR()
-        case .whisper:
-            let whisperModel = resolveWhisperModel(from: modelName)
-            let whisperQuant = resolveWhisperQuant(from: modelName)
-            return STT.whisper(model: whisperModel, quantization: whisperQuant)
+    func resolveSTTRepo(_ modelName: String) -> String {
+        let resolved = ModelAliasResolver.resolve(name: modelName)
+        let normalized = resolved.lowercased()
+
+        if normalized.hasPrefix("whisper-") ||
+            normalized.hasPrefix("mlx-community/whisper") ||
+            normalized.hasPrefix("funasr") ||
+            normalized.hasPrefix("fun-asr") ||
+            normalized.hasPrefix("mlx-community/fun-asr")
+        {
+            return "mlx-community/Qwen3-ASR-0.6B-4bit"
+        }
+
+        return resolved
+    }
+
+    func normalizeLanguage(_ language: String?) -> String? {
+        guard let trimmed = language?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
+        else {
+            return nil
+        }
+
+        switch trimmed.lowercased() {
+        case "en",
+             "english":
+            return "English"
+        case "chinese",
+             "zh",
+             "zh-cn",
+             "zh-hans":
+            return "Chinese"
+        case "ja",
+             "japanese":
+            return "Japanese"
+        default:
+            return trimmed
         }
     }
 
-    func resolveModelKind(from modelName: String) -> AudioModelKind {
-        let normalized = modelName.lowercased()
-        if normalized.hasPrefix("funasr") || normalized.hasPrefix("fun-asr") {
-            return .funASR
-        }
-        return .whisper
+    func makeTranscriptionResult(from output: STTOutput, fallbackLanguage: String?) -> TranscriptionResult {
+        let segments = extractSegments(from: output)
+        return TranscriptionResult(
+            text: output.text,
+            language: output.language ?? fallbackLanguage,
+            segments: segments.isEmpty
+                ? [TranscriptionResult.Segment(text: output.text)]
+                : segments
+        )
     }
 
-    func resolveWhisperModel(from modelName: String) -> WhisperModelSize {
-        let normalized = modelName.lowercased()
+    func extractSegments(from output: STTOutput) -> [TranscriptionResult.Segment] {
+        guard let rawSegments = output.segments else {
+            return []
+        }
 
-        if normalized.contains("turbo") {
-            return .largeTurbo
+        return rawSegments.enumerated().compactMap { index, raw in
+            guard let text = raw["text"] as? String else {
+                return nil
+            }
+
+            return TranscriptionResult.Segment(
+                id: intValue(raw["id"]) ?? index,
+                seek: intValue(raw["seek"]) ?? 0,
+                start: floatValue(raw["start"]) ?? 0,
+                end: floatValue(raw["end"]) ?? 0,
+                text: text,
+                tokens: raw["tokens"] as? [Int],
+                temperature: floatValue(raw["temperature"]) ?? 0,
+                avgLogprob: floatValue(raw["avg_logprob"]) ?? 0,
+                compressionRatio: floatValue(raw["compression_ratio"]) ?? 0,
+                noSpeechProb: floatValue(raw["no_speech_prob"]) ?? 0
+            )
         }
-        if normalized.contains("large") {
-            return .large
-        }
-        if normalized.contains("medium") {
-            return .medium
-        }
-        if normalized.contains("small") {
-            return .small
-        }
-        if normalized.contains("base") {
-            return .base
-        }
-        if normalized.contains("tiny") {
-            return .tiny
-        }
-        return .large
     }
 
-    func resolveWhisperQuant(from modelName: String) -> WhisperQuantization {
-        let normalized = modelName.lowercased()
-
-        if normalized.contains("fp16") {
-            return .fp16
+    func intValue(_ value: Any?) -> Int? {
+        switch value {
+        case let value as Int:
+            value
+        case let value as Double:
+            Int(value)
+        case let value as Float:
+            Int(value)
+        case let value as NSNumber:
+            value.intValue
+        default:
+            nil
         }
-        if normalized.contains("8bit") {
-            return .q8
-        }
-        if normalized.contains("4bit") {
-            return .q4
-        }
-        return .q4
     }
 
+    func floatValue(_ value: Any?) -> Float? {
+        switch value {
+        case let value as Float:
+            value
+        case let value as Double:
+            Float(value)
+        case let value as Int:
+            Float(value)
+        case let value as NSNumber:
+            value.floatValue
+        default:
+            nil
+        }
+    }
 }

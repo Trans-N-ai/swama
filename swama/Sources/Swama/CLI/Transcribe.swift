@@ -1,7 +1,6 @@
 import ArgumentParser
 import Foundation
 import MLX
-@preconcurrency import MLXAudio
 @preconcurrency import MLXLMCommon
 import SwamaKit
 
@@ -25,13 +24,13 @@ enum ResponseFormat: String, CaseIterable, ExpressibleByArgument {
 
 struct Transcribe: AsyncParsableCommand {
     static let configuration: CommandConfiguration = .init(
-        abstract: "Transcribe audio file to text using Whisper"
+        abstract: "Transcribe audio file to text using MLXAudio STT"
     )
 
     @Argument(help: "Audio file path (WAV format recommended)")
     var audioFile: String
 
-    @Option(name: [.customShort("m"), .long], help: "Whisper model name or alias")
+    @Option(name: [.customShort("m"), .long], help: "STT model name or alias")
     var model: String = "whisper-base"
 
     @Option(
@@ -76,7 +75,7 @@ struct Transcribe: AsyncParsableCommand {
             }
         }()
 
-        print("🎤 Loading Whisper model: \(model)")
+        print("🎤 Loading STT model: \(model)")
         if let lang = language {
             print("🌍 Language: \(lang)")
         }
@@ -90,16 +89,16 @@ struct Transcribe: AsyncParsableCommand {
         // Check if this is a supported audio model
         guard ModelAliasResolver.isAudioModel(model) else {
             print("❌ Error: '\(model)' is not a supported audio model.")
-            print("   Use whisper-* models or funasr variants")
+            print("   Use qwen3-asr, whisper-* compatibility aliases, or another supported STT model")
             throw ExitCode.failure
         }
 
         do {
-            // Load MLXAudio model
+            // Load MLXAudio STT model
             print("📥 Loading model...")
             let runner = await MainActor.run { SpeechToTextRunner() }
 
-            // Load using MLXAudio-specific logic
+            // Load using MLXAudio STT-specific logic
             try await runner.loadModel(model)
             print("✅ Model loaded successfully")
 

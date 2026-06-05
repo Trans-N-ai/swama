@@ -16,7 +16,7 @@
 - 📱 **Menu Bar App**: Elegant macOS native menu bar integration
 - 💻 **Command Line Tools**: Complete CLI support for model management and inference
 - 🖼️ **Multimodal Support**: Support for both text and image inputs
-- 🎤 **Local Audio Transcription**: Built-in speech recognition with Whisper (no cloud required)
+- 🎤 **Local Audio Transcription**: Built-in speech recognition powered by Qwen3-ASR and other MLX ASR models (no cloud required)
 - 🔍 **Text Embeddings**: Built-in embedding generation for semantic search and RAG applications
 - 📦 **Smart Model Management**: Automatic downloading, caching, and version management
 - 🔄 **Streaming Responses**: Real-time streaming text generation support
@@ -150,25 +150,30 @@ swama list
 
 | Alias | Full Model Name | Size | Description |
 |-------|-----------------|------|-------------|
-| `whisper-large` | `mlx-community/whisper-large-v3-4bit` | 1.6 GB | Whisper Large v3 (highest accuracy) |
-| `whisper-medium` | `mlx-community/whisper-medium-4bit` | 791.1 MB | Whisper Medium (balanced) |
-| `whisper-small` | `mlx-community/whisper-small-4bit` | 251.7 MB | Whisper Small (fast) |
-| `whisper-base` | `mlx-community/whisper-base-4bit` | 77.2 MB | Whisper Base (faster) |
-| `whisper-tiny` | `mlx-community/whisper-tiny-4bit` | 40.1 MB | Whisper Tiny (fastest) |
-| `funasr` | `mlx-community/Fun-ASR-Nano-2512-4bit` | ~200 MB | FunASR Nano (multilingual) |
-| `funasr-mlt` | `mlx-community/Fun-ASR-MLT-Nano-2512-4bit` | ~200 MB | FunASR MLT (multilingual transcription) |
+| `qwen3-asr` | `mlx-community/Qwen3-ASR-0.6B-4bit` | - | Qwen3-ASR 0.6B (multilingual, default) |
+| `qwen3-asr-1.7b` | `mlx-community/Qwen3-ASR-1.7B-bf16` | 3.8 GB | Qwen3-ASR 1.7B (multilingual, higher accuracy) |
+| `glm-asr` | `mlx-community/GLM-ASR-Nano-2512-4bit` | - | GLM-ASR Nano |
+| `sensevoice` | `mlx-community/SenseVoiceSmall` | - | SenseVoice Small |
+| `parakeet` | `mlx-community/parakeet-tdt-0.6b-v3` | - | Parakeet TDT 0.6B |
+| `voxtral` | `mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16` | - | Voxtral Mini 4B (realtime) |
+| `cohere-transcribe` | `beshkenadze/cohere-transcribe-03-2026-mlx-fp16` | - | Cohere Transcribe |
+
+> FireRedASR2 is also supported — pass its full HuggingFace repo id as the model name.
 
 #### Text-to-Speech Models (experimental)
 
 | Alias | Full Model Name | Size | Description |
 |-------|-----------------|------|-------------|
-| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-4bit` | - | - |
-| `marvis` | `Marvis-AI/marvis-tts-100m-v0.2-MLX-6bit` | - | - |
-| `chatterbox` | `mlx-community/Chatterbox-TTS-q4` | - | - |
-| `chatterbox-turbo` | `mlx-community/Chatterbox-Turbo-TTS-q4` | - | - |
-| `outetts` | `mlx-community/Llama-OuteTTS-1.0-1B-4bit` | - | - |
-| `cosyvoice2` | `mlx-community/CosyVoice2-0.5B-4bit` | - | - |
-| `cosyvoice3` | `mlx-community/Fun-CosyVoice3-0.5B-2512-4bit` | - | - |
+| `qwen3-tts` | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit` | - | Qwen3-TTS 0.6B |
+| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-bf16` | - | Orpheus 3B (multi-voice) |
+| `marvis` | `Marvis-AI/marvis-tts-250m-v0.2-MLX-8bit` | - | Marvis TTS 250M (multi-voice) |
+| `chatterbox` | `mlx-community/chatterbox-turbo-4bit` | - | Chatterbox Turbo |
+| `vyvo` | `mlx-community/VyvoTTS-EN-Beta-4bit` | - | VyvoTTS (English) |
+| `fish-speech` | `mlx-community/fish-audio-s2-pro-8bit` | - | Fish-Speech S2 Pro |
+| `soprano` | `mlx-community/Soprano-80M-bf16` | - | Soprano 80M |
+| `pocket-tts` | `mlx-community/pocket-tts` | - | Pocket-TTS |
+| `moss-tts` | `OpenMOSS-Team/MOSS-TTS` | - | MOSS-TTS |
+| `echo-tts` | `mlx-community/echo-tts-base` | - | Echo-TTS |
 
 ### 3. Start API Service
 
@@ -223,7 +228,7 @@ curl -X POST http://localhost:28100/v1/embeddings \
 # Transcribe audio files (local processing)
 curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "file=@audio.wav" \
-  -F "model=whisper-large" \
+  -F "model=qwen3-asr" \
   -F "response_format=json"
 
 # Text-to-speech (TTS, experimental)
@@ -236,11 +241,11 @@ curl -X POST http://localhost:28100/v1/audio/speech \
     "response_format": "wav"
   }' --output speech.wav
 
-# TTS models: orpheus, marvis, chatterbox, chatterbox-turbo, outetts, cosyvoice2, cosyvoice3
-# Voice-supported models: orpheus, marvis
-# Orpheus voices: tara, leah, jess, leo, dan, mia, zac, zoe
+# TTS models: qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts
+# Voice-supported models: orpheus, marvis, qwen3-tts, vyvo
+# Orpheus voices: dan, jess, leo, mia, tara, zac, zoe
 # Marvis voices: conversational_a, conversational_b
-# CosyVoice uses a cached default reference audio when no reference is provided
+# Qwen3-TTS / VyvoTTS voice: en-us-1
 
 # Tool calling (function calling)
 curl -X POST http://localhost:28100/v1/chat/completions \
@@ -291,7 +296,7 @@ curl -X POST http://localhost:28100/v1/chat/completions \
 ```bash
 # Download model (supports both aliases and full names)
 swama pull qwen3                    # Using alias
-swama pull whisper-large            # Download speech recognition model
+swama pull qwen3-asr                # Download speech recognition model
 swama pull mlx-community/Qwen3-8B-4bit  # Using full name
 
 # List local models and available aliases
@@ -303,7 +308,7 @@ swama run deepseek-coder "Write a Python function"  # Another alias
 swama run <full-model-name> <prompt> [options]      # Using full name
 
 # Transcribe audio files
-swama transcribe audio.wav --model whisper-large --language en
+swama transcribe audio.wav --model qwen3-asr --language en
 ```
 
 ### Server
@@ -339,7 +344,7 @@ swama run deepseek-r1 "Think step by step: 2+2*3"    # DeepSeek R1 (reasoning)
 - [swift-argument-parser](https://github.com/apple/swift-argument-parser) - Command-line argument parsing
 - [mlx-swift](https://github.com/ml-explore/mlx-swift) - Apple MLX Swift bindings
 - [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) - MLX Swift language models
-- [mlx-swift-audio](https://github.com/DePasqualeOrg/mlx-swift-audio) - MLX Swift audio processing (Whisper, FunASR)
+- [mlx-audio-swift](https://github.com/Blaizzy/mlx-audio-swift) - MLX Swift audio (STT/TTS: Qwen3-ASR, GLM-ASR, SenseVoice, Parakeet, Qwen3-TTS, and more)
 
 ### Building
 

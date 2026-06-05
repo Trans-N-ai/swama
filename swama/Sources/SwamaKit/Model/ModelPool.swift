@@ -1,9 +1,11 @@
 import Foundation
 import MLX
 import MLXEmbedders
+import MLXHuggingFace
 import MLXLLM
 import MLXLMCommon
 import MLXVLM
+import Tokenizers
 
 // MARK: - ModelPoolError
 
@@ -208,7 +210,7 @@ public actor ModelPool {
         await performMemoryPressureCheck()
 
         let task = Task {
-            let runner = await MainActor.run { TTSRunner(kind: kind) }
+            let runner = TTSRunner(kind: kind)
             try await runner.loadModel()
             self.setTTSRunner(runner, forKey: modelKey)
             return runner
@@ -527,10 +529,18 @@ public actor ModelPool {
 
         do {
             if isVLM {
-                return try await VLMModelFactory.shared.loadContainer(configuration: localConfig)
+                return try await VLMModelFactory.shared.loadContainer(
+                    from: LocalOnlyModelDownloader(),
+                    using: #huggingFaceTokenizerLoader(),
+                    configuration: localConfig
+                )
             }
             else {
-                return try await LLMModelFactory.shared.loadContainer(configuration: localConfig)
+                return try await LLMModelFactory.shared.loadContainer(
+                    from: LocalOnlyModelDownloader(),
+                    using: #huggingFaceTokenizerLoader(),
+                    configuration: localConfig
+                )
             }
         }
         catch {
