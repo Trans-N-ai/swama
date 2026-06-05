@@ -16,7 +16,7 @@
 - 📱 **メニューバーアプリ**: エレガントなmacOSネイティブメニューバー統合
 - 💻 **コマンドラインツール**: モデル管理と推論のための完全なCLIサポート
 - 🖼️ **マルチモーダルサポート**: テキストと画像の両方の入力をサポート
-- 🎤 **ローカル音声文字起こし**: Whisper内蔵音声認識（クラウド不要）
+- 🎤 **ローカル音声文字起こし**: Qwen3-ASR など MLX 音声認識モデル内蔵（クラウド不要）
 - 🔍 **テキスト埋め込み**: セマンティック検索とRAGアプリケーション用の組み込み埋め込み生成
 - 📦 **スマートモデル管理**: 自動ダウンロード、キャッシュ、バージョン管理
 - 🔄 **ストリーミングレスポンス**: リアルタイムストリーミングテキスト生成をサポート
@@ -150,25 +150,30 @@ swama list
 
 | エイリアス | 完全なモデル名 | サイズ | 説明 |
 |-------|-----------------|------|-------------|
-| `whisper-large` | `mlx-community/whisper-large-v3-4bit` | 1.6 GB | Whisper Large v3 (最高精度) |
-| `whisper-medium` | `mlx-community/whisper-medium-4bit` | 791.1 MB | Whisper Medium (バランス型) |
-| `whisper-small` | `mlx-community/whisper-small-4bit` | 251.7 MB | Whisper Small (高速) |
-| `whisper-base` | `mlx-community/whisper-base-4bit` | 77.2 MB | Whisper Base (より高速) |
-| `whisper-tiny` | `mlx-community/whisper-tiny-4bit` | 40.1 MB | Whisper Tiny (最速) |
-| `funasr` | `mlx-community/Fun-ASR-Nano-2512-4bit` | 約 200 MB | FunASR Nano (多言語) |
-| `funasr-mlt` | `mlx-community/Fun-ASR-MLT-Nano-2512-4bit` | 約 200 MB | FunASR MLT (多言語転写) |
+| `qwen3-asr` | `mlx-community/Qwen3-ASR-0.6B-4bit` | - | Qwen3-ASR 0.6B（多言語、デフォルト） |
+| `qwen3-asr-1.7b` | `mlx-community/Qwen3-ASR-1.7B-bf16` | 3.8 GB | Qwen3-ASR 1.7B（多言語、高精度） |
+| `glm-asr` | `mlx-community/GLM-ASR-Nano-2512-4bit` | - | GLM-ASR Nano |
+| `sensevoice` | `mlx-community/SenseVoiceSmall` | - | SenseVoice Small |
+| `parakeet` | `mlx-community/parakeet-tdt-0.6b-v3` | - | Parakeet TDT 0.6B |
+| `voxtral` | `mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16` | - | Voxtral Mini 4B（リアルタイム） |
+| `cohere-transcribe` | `beshkenadze/cohere-transcribe-03-2026-mlx-fp16` | - | Cohere Transcribe |
+
+> FireRedASR2 もサポート —— 完全な HuggingFace repo id をモデル名として指定してください。
 
 #### テキスト読み上げモデル (TTS)
 
 | エイリアス | 完全なモデル名 | サイズ | 説明 |
 |-------|-----------------|------|-------------|
-| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-4bit` | - | - |
-| `marvis` | `Marvis-AI/marvis-tts-100m-v0.2-MLX-6bit` | - | - |
-| `chatterbox` | `mlx-community/Chatterbox-TTS-q4` | - | - |
-| `chatterbox-turbo` | `mlx-community/Chatterbox-Turbo-TTS-q4` | - | - |
-| `outetts` | `mlx-community/Llama-OuteTTS-1.0-1B-4bit` | - | - |
-| `cosyvoice2` | `mlx-community/CosyVoice2-0.5B-4bit` | - | - |
-| `cosyvoice3` | `mlx-community/Fun-CosyVoice3-0.5B-2512-4bit` | - | - |
+| `qwen3-tts` | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit` | - | Qwen3-TTS 0.6B |
+| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-bf16` | - | Orpheus 3B（マルチボイス） |
+| `marvis` | `Marvis-AI/marvis-tts-250m-v0.2-MLX-8bit` | - | Marvis TTS 250M（マルチボイス） |
+| `chatterbox` | `mlx-community/chatterbox-turbo-4bit` | - | Chatterbox Turbo |
+| `vyvo` | `mlx-community/VyvoTTS-EN-Beta-4bit` | - | VyvoTTS（英語） |
+| `fish-speech` | `mlx-community/fish-audio-s2-pro-8bit` | - | Fish-Speech S2 Pro |
+| `soprano` | `mlx-community/Soprano-80M-bf16` | - | Soprano 80M |
+| `pocket-tts` | `mlx-community/pocket-tts` | - | Pocket-TTS |
+| `moss-tts` | `OpenMOSS-Team/MOSS-TTS` | - | MOSS-TTS |
+| `echo-tts` | `mlx-community/echo-tts-base` | - | Echo-TTS |
 
 ### 3. APIサービスの開始
 
@@ -223,7 +228,7 @@ curl -X POST http://localhost:28100/v1/embeddings \
 # 音声ファイルの文字起こし（ローカル処理）
 curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "file=@audio.wav" \
-  -F "model=whisper-large" \
+  -F "model=qwen3-asr" \
   -F "response_format=json"
 
 # テキスト読み上げ（TTS、experimental）
@@ -236,11 +241,11 @@ curl -X POST http://localhost:28100/v1/audio/speech \
     "response_format": "wav"
   }' --output speech.wav
 
-# TTSモデル: orpheus, marvis, chatterbox, chatterbox-turbo, outetts, cosyvoice2, cosyvoice3
-# 音色対応モデル: orpheus, marvis
-# Orpheus音色: tara, leah, jess, leo, dan, mia, zac, zoe
+# TTSモデル: qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts
+# 音色対応モデル: orpheus, marvis, qwen3-tts, vyvo
+# Orpheus音色: dan, jess, leo, mia, tara, zac, zoe
 # Marvis音色: conversational_a, conversational_b
-# CosyVoice は明示的な参照音声が必要なため、OpenAI互換エンドポイントでは未対応
+# Qwen3-TTS / VyvoTTS 音色: en-us-1
 
 # ツール呼び出し（関数呼び出し）
 curl -X POST http://localhost:28100/v1/chat/completions \
@@ -291,7 +296,7 @@ curl -X POST http://localhost:28100/v1/chat/completions \
 ```bash
 # モデルのダウンロード（エイリアスと完全な名前の両方をサポート）
 swama pull qwen3                    # エイリアスを使用
-swama pull whisper-large            # 音声認識モデルをダウンロード
+swama pull qwen3-asr                # 音声認識モデルをダウンロード
 swama pull mlx-community/Qwen3-8B-4bit  # 完全な名前を使用
 
 # ローカルモデルと利用可能なエイリアスの一覧表示
@@ -303,7 +308,7 @@ swama run deepseek-coder "Python関数を書いて"  # 別のエイリアス
 swama run <完全なモデル名> <プロンプト> [オプション]      # 完全な名前を使用
 
 # 音声ファイルの文字起こし
-swama transcribe audio.wav --model whisper-large --language ja
+swama transcribe audio.wav --model qwen3-asr --language ja
 ```
 
 ### サーバー
@@ -328,7 +333,7 @@ swama serve [--host HOST] [--port PORT]
 - [swift-argument-parser](https://github.com/apple/swift-argument-parser) - コマンドライン引数解析
 - [mlx-swift](https://github.com/ml-explore/mlx-swift) - Apple MLX Swiftバインディング
 - [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) - MLX Swift言語モデル
-- [mlx-swift-audio](https://github.com/DePasqualeOrg/mlx-swift-audio) - MLX Swift音声処理（Whisper、FunASR）
+- [mlx-audio-swift](https://github.com/Blaizzy/mlx-audio-swift) - MLX Swift音声（STT/TTS：Qwen3-ASR、GLM-ASR、SenseVoice、Parakeet、Qwen3-TTS など）
 
 ### ビルド
 

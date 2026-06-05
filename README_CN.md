@@ -16,7 +16,7 @@
 - 📱 **菜单栏应用**: 优雅的 macOS 原生菜单栏集成
 - 💻 **命令行工具**: 完整的 CLI 支持用于模型管理和推理
 - 🖼️ **多模态支持**: 同时支持文本和图像输入
-- 🎤 **本地音频转录**: 内置 Whisper 语音识别（无需云服务）
+- 🎤 **本地音频转录**: 基于 Qwen3-ASR 等 MLX 语音识别模型（无需云服务）
 - 🔍 **文本嵌入**: 内置嵌入生成功能，支持语义搜索和 RAG 应用
 - 📦 **智能模型管理**: 自动下载、缓存和版本管理
 - 🔄 **流式响应**: 支持实时流式文本生成
@@ -150,25 +150,30 @@ swama list
 
 | 别名 | 完整模型名 | 大小 | 描述 |
 |-------|-----------------|------|-------------|
-| `whisper-large` | `mlx-community/whisper-large-v3-4bit` | 1.6 GB | Whisper Large v3 (最高精度) |
-| `whisper-medium` | `mlx-community/whisper-medium-4bit` | 791.1 MB | Whisper Medium (均衡) |
-| `whisper-small` | `mlx-community/whisper-small-4bit` | 251.7 MB | Whisper Small (快速) |
-| `whisper-base` | `mlx-community/whisper-base-4bit` | 77.2 MB | Whisper Base (更快) |
-| `whisper-tiny` | `mlx-community/whisper-tiny-4bit` | 40.1 MB | Whisper Tiny (最快) |
-| `funasr` | `mlx-community/Fun-ASR-Nano-2512-4bit` | 约 200 MB | FunASR Nano (多语言) |
-| `funasr-mlt` | `mlx-community/Fun-ASR-MLT-Nano-2512-4bit` | 约 200 MB | FunASR MLT (多语言转写) |
+| `qwen3-asr` | `mlx-community/Qwen3-ASR-0.6B-4bit` | - | Qwen3-ASR 0.6B（多语言，默认） |
+| `qwen3-asr-1.7b` | `mlx-community/Qwen3-ASR-1.7B-bf16` | 3.8 GB | Qwen3-ASR 1.7B（多语言，更高精度） |
+| `glm-asr` | `mlx-community/GLM-ASR-Nano-2512-4bit` | - | GLM-ASR Nano |
+| `sensevoice` | `mlx-community/SenseVoiceSmall` | - | SenseVoice Small |
+| `parakeet` | `mlx-community/parakeet-tdt-0.6b-v3` | - | Parakeet TDT 0.6B |
+| `voxtral` | `mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16` | - | Voxtral Mini 4B（实时） |
+| `cohere-transcribe` | `beshkenadze/cohere-transcribe-03-2026-mlx-fp16` | - | Cohere Transcribe |
+
+> 同时支持 FireRedASR2 —— 用完整的 HuggingFace repo id 作为模型名即可。
 
 #### 文本转语音模型 (TTS)
 
 | 别名 | 完整模型名 | 大小 | 描述 |
 |-------|-----------------|------|-------------|
-| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-4bit` | - | - |
-| `marvis` | `Marvis-AI/marvis-tts-100m-v0.2-MLX-6bit` | - | - |
-| `chatterbox` | `mlx-community/Chatterbox-TTS-q4` | - | - |
-| `chatterbox-turbo` | `mlx-community/Chatterbox-Turbo-TTS-q4` | - | - |
-| `outetts` | `mlx-community/Llama-OuteTTS-1.0-1B-4bit` | - | - |
-| `cosyvoice2` | `mlx-community/CosyVoice2-0.5B-4bit` | - | - |
-| `cosyvoice3` | `mlx-community/Fun-CosyVoice3-0.5B-2512-4bit` | - | - |
+| `qwen3-tts` | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit` | - | Qwen3-TTS 0.6B |
+| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-bf16` | - | Orpheus 3B（多音色） |
+| `marvis` | `Marvis-AI/marvis-tts-250m-v0.2-MLX-8bit` | - | Marvis TTS 250M（多音色） |
+| `chatterbox` | `mlx-community/chatterbox-turbo-4bit` | - | Chatterbox Turbo |
+| `vyvo` | `mlx-community/VyvoTTS-EN-Beta-4bit` | - | VyvoTTS（英语） |
+| `fish-speech` | `mlx-community/fish-audio-s2-pro-8bit` | - | Fish-Speech S2 Pro |
+| `soprano` | `mlx-community/Soprano-80M-bf16` | - | Soprano 80M |
+| `pocket-tts` | `mlx-community/pocket-tts` | - | Pocket-TTS |
+| `moss-tts` | `OpenMOSS-Team/MOSS-TTS` | - | MOSS-TTS |
+| `echo-tts` | `mlx-community/echo-tts-base` | - | Echo-TTS |
 
 ### 3. 启动 API 服务
 
@@ -223,7 +228,7 @@ curl -X POST http://localhost:28100/v1/embeddings \
 # 音频文件转录（本地处理）
 curl -X POST http://localhost:28100/v1/audio/transcriptions \
   -F "file=@audio.wav" \
-  -F "model=whisper-large" \
+  -F "model=qwen3-asr" \
   -F "response_format=json"
 
 # 文本转语音（TTS，experimental）
@@ -236,11 +241,11 @@ curl -X POST http://localhost:28100/v1/audio/speech \
     "response_format": "wav"
   }' --output speech.wav
 
-# TTS 模型：orpheus, marvis, chatterbox, chatterbox-turbo, outetts, cosyvoice2, cosyvoice3
-# 支持音色的模型：orpheus, marvis
-# Orpheus 音色：tara, leah, jess, leo, dan, mia, zac, zoe
+# TTS 模型：qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts
+# 支持音色的模型：orpheus, marvis, qwen3-tts, vyvo
+# Orpheus 音色：dan, jess, leo, mia, tara, zac, zoe
 # Marvis 音色：conversational_a, conversational_b
-# CosyVoice 需要显式参考音频，OpenAI 兼容端点不支持
+# Qwen3-TTS / VyvoTTS 音色：en-us-1
 
 # 工具调用（函数调用）
 curl -X POST http://localhost:28100/v1/chat/completions \
@@ -291,7 +296,7 @@ curl -X POST http://localhost:28100/v1/chat/completions \
 ```bash
 # 下载模型（支持别名和完整名称）
 swama pull qwen3                    # 使用别名
-swama pull whisper-large            # 下载语音识别模型
+swama pull qwen3-asr                # 下载语音识别模型
 swama pull mlx-community/Qwen3-8B-4bit  # 使用完整名称
 
 # 列出本地模型和可用别名
@@ -303,7 +308,7 @@ swama run deepseek-coder "写一个Python函数"  # 另一个别名
 swama run <完整模型名> <提示词> [选项]      # 使用完整名称
 
 # 转录音频文件
-swama transcribe audio.wav --model whisper-large --language zh
+swama transcribe audio.wav --model qwen3-asr --language zh
 ```
 
 ### 服务器
@@ -339,7 +344,7 @@ swama run deepseek-r1 "逐步思考：2+2*3"    # DeepSeek R1 (推理型)
 - [swift-argument-parser](https://github.com/apple/swift-argument-parser) - 命令行参数解析
 - [mlx-swift](https://github.com/ml-explore/mlx-swift) - Apple MLX Swift 绑定
 - [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) - MLX Swift 语言模型
-- [mlx-swift-audio](https://github.com/DePasqualeOrg/mlx-swift-audio) - MLX Swift 音频处理（Whisper、FunASR）
+- [mlx-audio-swift](https://github.com/Blaizzy/mlx-audio-swift) - MLX Swift 音频（STT/TTS：Qwen3-ASR、GLM-ASR、SenseVoice、Parakeet、Qwen3-TTS 等）
 
 ### 构建
 

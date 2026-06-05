@@ -1,16 +1,21 @@
 import Foundation
 import MLX
 import MLXEmbedders
+import MLXHuggingFace
 import MLXLMCommon
 import Tokenizers
 
 /// Loads an embedding model container for the given model name.
-public func loadEmbeddingModelContainer(modelName: String) async throws -> MLXEmbedders.ModelContainer {
-    let config = MLXEmbedders.ModelConfiguration(id: modelName)
+public func loadEmbeddingModelContainer(modelName: String) async throws -> EmbedderModelContainer {
+    let config = MLXLMCommon.ModelConfiguration(directory: ModelPaths.getModelDirectory(for: modelName))
 
-    let container: MLXEmbedders.ModelContainer
+    let container: EmbedderModelContainer
     do {
-        container = try await MLXEmbedders.loadModelContainer(configuration: config)
+        container = try await EmbedderModelFactory.shared.loadContainer(
+            from: LocalOnlyModelDownloader(),
+            using: #huggingFaceTokenizerLoader(),
+            configuration: config
+        )
     }
     catch {
         fputs(
@@ -35,7 +40,7 @@ public func loadEmbeddingModelContainer(modelName: String) async throws -> MLXEm
 public actor EmbeddingRunner {
     // MARK: Lifecycle
 
-    public init(container: MLXEmbedders.ModelContainer) {
+    public init(container: EmbedderModelContainer) {
         self.container = container
         self.isRunning = false
     }
@@ -46,13 +51,12 @@ public actor EmbeddingRunner {
     public func generateEmbeddings(inputs: [String]) async throws -> (
         embeddings: [[Float]], usage: EmbeddingUsage
     ) {
-        try await container.perform { (
-            model: any EmbeddingModel,
-            tokenizer: Tokenizer,
-            pooler: Pooling
-        ) throws -> (
+        try await container.perform { context throws -> (
             embeddings: [[Float]], usage: EmbeddingUsage
         ) in
+            let model = context.model
+            let tokenizer = context.tokenizer
+            let pooler = context.pooling
             var totalTokens = 0
 
             // Tokenize all inputs
@@ -149,7 +153,7 @@ public actor EmbeddingRunner {
 
     // MARK: Private
 
-    private let container: MLXEmbedders.ModelContainer
+    private let container: EmbedderModelContainer
     private var isRunning: Bool
     private let maxBatchSize = 8
 }

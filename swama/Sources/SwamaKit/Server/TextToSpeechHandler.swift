@@ -1,5 +1,5 @@
 import Foundation
-@preconcurrency import MLXAudio
+import MLXAudioCore
 import NIOCore
 import NIOHTTP1
 
@@ -104,13 +104,8 @@ public enum TextToSpeechHandler {
         switch result {
         case let .samples(samples, sampleRate, _):
             let filename = "swama_tts_\(UUID().uuidString)"
-            let url = try AudioFileWriter.save(
-                samples: samples,
-                sampleRate: sampleRate,
-                to: FileManager.default.temporaryDirectory,
-                filename: filename,
-                format: .wav
-            )
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename + ".wav")
+            try AudioUtils.writeWavFile(samples: samples, sampleRate: sampleRate, fileURL: url)
             defer { try? FileManager.default.removeItem(at: url) }
             return try Data(contentsOf: url)
 
