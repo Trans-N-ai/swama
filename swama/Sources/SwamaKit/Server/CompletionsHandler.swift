@@ -563,18 +563,26 @@ public enum CompletionsHandler {
         parameters: GenerateParameters,
         mlxTools: [ToolSpec]? = nil
     ) async throws {
-        let result = try await modelPool.run(
-            modelName: modelName
-        ) { runner in
-            let userInput = buildUserInput(
-                chatMessages: chatMessages,
-                modelName: modelName,
-                tools: mlxTools
-            )
-            return try await runner.runChatNonStream(
-                userInput: userInput,
-                parameters: parameters
-            )
+        let result = try await runCancellingOnClose(channel: channel) {
+            try await modelPool.run(
+                modelName: modelName
+            ) { runner in
+                let userInput = buildUserInput(
+                    chatMessages: chatMessages,
+                    modelName: modelName,
+                    tools: mlxTools
+                )
+                return try await runner.runChatNonStream(
+                    userInput: userInput,
+                    parameters: parameters
+                )
+            }
+        }
+
+        // The client disconnected mid-generation; the run above was cancelled promptly, and
+        // there is nothing left to write to.
+        guard channel.isActive else {
+            return
         }
 
         // Calculate completion tokens from completion info
@@ -697,70 +705,90 @@ public enum CompletionsHandler {
         let result: ModelRunner.ChatRunResult
 
         do {
-            result = try await modelPool.run(
-                modelName: modelName
-            ) { runner in
-                let userInput = buildUserInput(
-                    chatMessages: chatMessages,
-                    modelName: modelName,
-                    tools: tools
-                )
-                let toolCallCounter = ToolCallCounter()
-                return try await runner.runChat(
-                    userInput: userInput,
-                    parameters: parameters,
-                    onToken: { chunk in
-                        let deltaJSON: [String: Any] = [
-                            "id": chunkId,
-                            "object": "chat.completion.chunk",
-                            "created": timestamp,
-                            "model": model,
-                            "choices": [["index": 0, "delta": ["content": chunk], "finish_reason": NSNull()]]
-                        ]
-                        Task {
-                            try? await writeSSEJSON(channel: channel, payload: deltaJSON)
-                        }
-                    },
-                    onToolCall: { toolCall in
-                        let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
-                        let argumentsJSON: String =
-                            if let jsonData = try? JSONSerialization
-                                .data(withJSONObject: argumentsDict),
-                                let jsonString = String(data: jsonData, encoding: .utf8)
-                            {
-                                jsonString
-                            }
-                            else {
-                                "{}"
-                            }
-                        Task {
-                            let index = await toolCallCounter.next()
-                            let toolCallDict: [String: Any] = [
-                                "index": index,
-                                "id": "call_\(UUID().uuidString)",
-                                "type": "function",
-                                "function": [
-                                    "name": toolCall.function.name,
-                                    "arguments": argumentsJSON
-                                ]
-                            ]
-
-                            let toolCallDelta: [String: Any] = [
+            result = try await runCancellingOnClose(channel: channel) {
+                try await modelPool.run(
+                    modelName: modelName
+                ) { runner in
+                    let userInput = buildUserInput(
+                        chatMessages: chatMessages,
+                        modelName: modelName,
+                        tools: tools
+                    )
+                    let toolCallCounter = ToolCallCounter()
+                    return try await runner.runChat(
+                        userInput: userInput,
+                        parameters: parameters,
+                        onToken: { chunk in
+                            let deltaJSON: [String: Any] = [
                                 "id": chunkId,
                                 "object": "chat.completion.chunk",
                                 "created": timestamp,
                                 "model": model,
-                                "choices": [["index": 0, "delta": ["tool_calls": [toolCallDict]],
-                                             "finish_reason": NSNull()]]
+                                "choices": [["index": 0, "delta": ["content": chunk], "finish_reason": NSNull()]]
                             ]
+                            Task {
+                                do {
+                                    try await writeSSEJSON(channel: channel, payload: deltaJSON)
+                                }
+                                catch {
+                                    // The write failed (client gone) at a moment closeFuture may not
+                                    // have observed yet; close explicitly so it converges on the same
+                                    // cancellation path.
+                                    channel.close(promise: nil)
+                                }
+                            }
+                        },
+                        onToolCall: { toolCall in
+                            let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
+                            let argumentsJSON: String =
+                                if let jsonData = try? JSONSerialization
+                                    .data(withJSONObject: argumentsDict),
+                                    let jsonString = String(data: jsonData, encoding: .utf8)
+                                {
+                                    jsonString
+                                }
+                                else {
+                                    "{}"
+                                }
+                            Task {
+                                let index = await toolCallCounter.next()
+                                let toolCallDict: [String: Any] = [
+                                    "index": index,
+                                    "id": "call_\(UUID().uuidString)",
+                                    "type": "function",
+                                    "function": [
+                                        "name": toolCall.function.name,
+                                        "arguments": argumentsJSON
+                                    ]
+                                ]
 
-                            try? await writeSSEJSON(channel: channel, payload: toolCallDelta)
+                                let toolCallDelta: [String: Any] = [
+                                    "id": chunkId,
+                                    "object": "chat.completion.chunk",
+                                    "created": timestamp,
+                                    "model": model,
+                                    "choices": [["index": 0, "delta": ["tool_calls": [toolCallDict]],
+                                                 "finish_reason": NSNull()]]
+                                ]
+
+                                do {
+                                    try await writeSSEJSON(channel: channel, payload: toolCallDelta)
+                                }
+                                catch {
+                                    channel.close(promise: nil)
+                                }
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
         }
         catch {
+            // The client disconnected mid-generation; there is nothing left to write to.
+            guard channel.isActive else {
+                return
+            }
+
             // Send error through SSE instead of trying to change HTTP status
             let errorJSON: [String: Any] = [
                 "id": chunkId,
@@ -776,6 +804,12 @@ public enum CompletionsHandler {
             try await writeSSEJSON(channel: channel, payload: errorJSON)
             try await writeSSELine(channel: channel, line: "data: [DONE]\n\n")
             try await channel.writeAndFlush(HTTPServerResponsePart.end(nil))
+            return
+        }
+
+        // The client disconnected mid-generation; the run above was cancelled promptly, and
+        // there is nothing left to write to.
+        guard channel.isActive else {
             return
         }
 
@@ -810,6 +844,26 @@ public enum CompletionsHandler {
     // MARK: - Helper Methods
 
     private static let modelPool: ModelPool = .shared
+
+    /// Runs `operation` in a child task, cancelling that task as soon as `channel`'s connection
+    /// closes (the client disconnecting mid-request). `operation` is expected to observe
+    /// `Task.isCancelled` and return promptly rather than throw, so its (possibly partial)
+    /// result is still returned normally here.
+    ///
+    /// Not marked `private` so tests can drive this channel-close -> cancellation path directly
+    /// with a stub `operation` and an `EmbeddedChannel`, without needing a real model.
+    static func runCancellingOnClose<T: Sendable>(
+        channel: Channel,
+        operation: @Sendable @escaping () async throws -> T
+    ) async throws -> T {
+        let task = Task { try await operation() }
+        channel.closeFuture.whenComplete { _ in task.cancel() }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
 
     private static func sendFullResponse(
         channel: Channel,

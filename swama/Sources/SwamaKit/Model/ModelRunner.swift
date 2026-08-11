@@ -140,6 +140,10 @@ public actor ModelRunner {
             }
 
             for await generationEvent in generationStream {
+                if Task.isCancelled {
+                    break
+                }
+
                 switch generationEvent {
                 case let .chunk(chunkString):
                     rawOutputStorage.append(chunkString)

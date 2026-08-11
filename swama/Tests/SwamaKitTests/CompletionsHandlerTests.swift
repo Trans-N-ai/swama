@@ -1,5 +1,6 @@
 import Foundation
 import NIOCore
+import NIOEmbedded
 import NIOHTTP1
 @testable import SwamaKit
 import Testing
@@ -277,6 +278,84 @@ final class CompletionsHandlerTests {
         let function = parsedJSON?["function"] as? [String: Any]
         #expect(function?["name"] as? String == "get_weather")
         #expect(function?["arguments"] as? String == "{\"location\": \"San Francisco\"}")
+    }
+
+    // MARK: - Mid-Stream Disconnect Cancellation Tests
+
+    /// Closing the channel mid-operation must cancel the wrapped operation and let its
+    /// (possibly partial) result flow back through normally, mirroring how
+    /// `ModelRunner.runChat` breaks out of its generation loop on cancellation instead of
+    /// throwing. Uses `NIOAsyncTestingChannel` (not `EmbeddedChannel`) because this test
+    /// necessarily crosses suspension points, and the embedded event loop is
+    /// single-thread-only.
+    @Test func runCancellingOnCloseCancelsOperationWhenChannelCloses() async throws {
+        let channel = NIOAsyncTestingChannel()
+        let started = CancellationFlag()
+        let observedCancellation = CancellationFlag()
+
+        let task = Task<String, Error> {
+            try await CompletionsHandler.runCancellingOnClose(channel: channel) {
+                await started.set()
+                while !Task.isCancelled {
+                    await Task.yield()
+                }
+                await observedCancellation.set()
+                return "partial"
+            }
+        }
+
+        // Bounded wait for the operation to actually start (and register isCancelled polling)
+        // before we close the channel, so the close is guaranteed to race an in-flight
+        // operation rather than a not-yet-started one.
+        var waited = 0
+        while await !started.value, waited < 10000 {
+            await Task.yield()
+            waited += 1
+        }
+        #expect(await started.value == true)
+
+        try await channel.close()
+        await channel.testingEventLoop.run()
+
+        let result = try await task.value
+
+        #expect(result == "partial")
+        #expect(await observedCancellation.value == true)
+        #expect(channel.isActive == false)
+    }
+
+    /// If the channel is already closed before the operation is even started,
+    /// `runCancellingOnClose` must not hang or attempt to run the operation to completion --
+    /// it should observe cancellation promptly.
+    @Test func runCancellingOnCloseCancelsOperationWhenChannelAlreadyClosed() async throws {
+        let channel = NIOAsyncTestingChannel()
+        try await channel.close()
+        await channel.testingEventLoop.run()
+
+        let observedCancellation = CancellationFlag()
+
+        let result = try await CompletionsHandler.runCancellingOnClose(channel: channel) {
+            var iterations = 0
+            while !Task.isCancelled, iterations < 10000 {
+                await Task.yield()
+                iterations += 1
+            }
+            await observedCancellation.set()
+            return "partial"
+        }
+
+        #expect(result == "partial")
+        #expect(await observedCancellation.value == true)
+    }
+}
+
+/// Thread-safe boolean box used to coordinate assertions with work happening inside a
+/// separately-scheduled `Task` in the tests above.
+private actor CancellationFlag {
+    private(set) var value = false
+
+    func set() {
+        value = true
     }
 }
 
