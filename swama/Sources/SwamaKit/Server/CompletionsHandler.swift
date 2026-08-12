@@ -726,17 +726,12 @@ public enum CompletionsHandler {
                                 "model": model,
                                 "choices": [["index": 0, "delta": ["content": chunk], "finish_reason": NSNull()]]
                             ]
-                            Task {
-                                do {
-                                    try await writeSSEJSON(channel: channel, payload: deltaJSON)
-                                }
-                                catch {
-                                    // The write failed (client gone) at a moment closeFuture may not
-                                    // have observed yet; close explicitly so it converges on the same
-                                    // cancellation path.
-                                    channel.close(promise: nil)
-                                }
-                            }
+                            // Awaited directly: the write is ordered and fully drained before
+                            // `runChat` moves on to the next generation event, and a failed
+                            // write (client gone) throws here, stopping generation and flowing
+                            // through the existing catch below rather than needing an explicit
+                            // channel.close(promise: nil) to converge on the cancellation path.
+                            try await writeSSEJSON(channel: channel, payload: deltaJSON)
                         },
                         onToolCall: { toolCall in
                             let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
@@ -750,34 +745,28 @@ public enum CompletionsHandler {
                                 else {
                                     "{}"
                                 }
-                            Task {
-                                let index = await toolCallCounter.next()
-                                let toolCallDict: [String: Any] = [
-                                    "index": index,
-                                    "id": "call_\(UUID().uuidString)",
-                                    "type": "function",
-                                    "function": [
-                                        "name": toolCall.function.name,
-                                        "arguments": argumentsJSON
-                                    ]
-                                ]
 
-                                let toolCallDelta: [String: Any] = [
-                                    "id": chunkId,
-                                    "object": "chat.completion.chunk",
-                                    "created": timestamp,
-                                    "model": model,
-                                    "choices": [["index": 0, "delta": ["tool_calls": [toolCallDict]],
-                                                 "finish_reason": NSNull()]]
+                            let index = await toolCallCounter.next()
+                            let toolCallDict: [String: Any] = [
+                                "index": index,
+                                "id": "call_\(UUID().uuidString)",
+                                "type": "function",
+                                "function": [
+                                    "name": toolCall.function.name,
+                                    "arguments": argumentsJSON
                                 ]
+                            ]
 
-                                do {
-                                    try await writeSSEJSON(channel: channel, payload: toolCallDelta)
-                                }
-                                catch {
-                                    channel.close(promise: nil)
-                                }
-                            }
+                            let toolCallDelta: [String: Any] = [
+                                "id": chunkId,
+                                "object": "chat.completion.chunk",
+                                "created": timestamp,
+                                "model": model,
+                                "choices": [["index": 0, "delta": ["tool_calls": [toolCallDict]],
+                                             "finish_reason": NSNull()]]
+                            ]
+
+                            try await writeSSEJSON(channel: channel, payload: toolCallDelta)
                         }
                     )
                 }
@@ -857,11 +846,56 @@ public enum CompletionsHandler {
         operation: @Sendable @escaping () async throws -> T
     ) async throws -> T {
         let task = Task { try await operation() }
-        channel.closeFuture.whenComplete { _ in task.cancel() }
+
+        // `channel.closeFuture` only resolves when the *connection* closes, not when this one
+        // request finishes -- so on a keep-alive connection, capturing `task` directly here
+        // would keep the completed task (and everything it retains, including its returned
+        // result) reachable for as long as the connection stays open, not just for the
+        // lifetime of this request. Capture a clearable box instead, and clear it in the
+        // `defer` below once this request's operation has completed, so the task and its
+        // result can be released immediately rather than pinned until connection close.
+        //
+        // This does not fully eliminate per-request retention on a keep-alive connection: NIO
+        // gives no way to deregister a `whenComplete` callback, so the (now-empty) closure
+        // itself still accumulates on `closeFuture` for every request until the connection
+        // finally closes. What this bounds is *what* each accumulated closure keeps alive --
+        // an empty box, not the completed task and its captured state/result.
+        let taskBox = CancellableTaskBox(task)
+        channel.closeFuture.whenComplete { _ in taskBox.cancel() }
+        defer { taskBox.clear() }
+
         return try await withTaskCancellationHandler {
             try await task.value
         } onCancel: {
             task.cancel()
+        }
+    }
+
+    /// A clearable holder for a `Task`, used so `channel.closeFuture`'s callback can cancel an
+    /// in-flight task without keeping a completed task (and its result) alive for the life of a
+    /// keep-alive connection. See `runCancellingOnClose` for why this exists.
+    private final class CancellableTaskBox<T: Sendable>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var task: Task<T, Error>?
+
+        init(_ task: Task<T, Error>) {
+            self.task = task
+        }
+
+        /// Cancels the held task, if it hasn't already been cleared.
+        func cancel() {
+            lock.lock()
+            let current = task
+            lock.unlock()
+            current?.cancel()
+        }
+
+        /// Releases the held reference to the task (and, transitively, its result) without
+        /// cancelling it.
+        func clear() {
+            lock.lock()
+            task = nil
+            lock.unlock()
         }
     }
 
