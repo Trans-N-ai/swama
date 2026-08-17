@@ -21,6 +21,12 @@ public enum CompletionsHandler {
         let messages: [Message]
         let temperature: Float?
         let top_p: Float?
+        let top_k: Int?
+        let min_p: Float?
+        let repetition_penalty: Float?
+        let repetition_context_size: Int?
+        let presence_penalty: Float?
+        let frequency_penalty: Float?
         let max_tokens: Int?
         let stream: Bool?
         let tools: [Tool]?
@@ -420,11 +426,7 @@ public enum CompletionsHandler {
             // Convert messages to MLX Chat.Message format
             let chatMessages = try convertToMLXChatMessages(payload.messages)
 
-            let parameters = GenerateParameters(
-                maxTokens: payload.max_tokens,
-                temperature: payload.temperature ?? 0.6,
-                topP: payload.top_p ?? 1.0
-            )
+            let parameters = generateParameters(from: payload)
 
             // Convert tools to MLX ToolSpec format once here
             let tools: [ToolSpec]? = convertToolsToMLX(payload.tools)
@@ -845,6 +847,22 @@ public enum CompletionsHandler {
 
         let jsonData = try JSONSerialization.data(withJSONObject: errorJSON)
         try await sendFullResponse(channel: channel, data: jsonData, status: status, version: .http1_1)
+    }
+
+    /// Maps request sampling fields onto the engine's `GenerateParameters`,
+    /// falling back to the engine defaults when a field is absent.
+    static func generateParameters(from payload: CompletionRequest) -> GenerateParameters {
+        GenerateParameters(
+            maxTokens: payload.max_tokens,
+            temperature: payload.temperature ?? 0.6,
+            topP: payload.top_p ?? 1.0,
+            topK: payload.top_k ?? 0,
+            minP: payload.min_p ?? 0.0,
+            repetitionPenalty: payload.repetition_penalty,
+            repetitionContextSize: payload.repetition_context_size ?? 20,
+            presencePenalty: payload.presence_penalty,
+            frequencyPenalty: payload.frequency_penalty
+        )
     }
 
     private static func parsePayload(_ buffer: ByteBuffer?) -> CompletionRequest? {
