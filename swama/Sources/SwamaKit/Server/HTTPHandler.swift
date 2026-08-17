@@ -65,7 +65,12 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         let uriPath = Self.normalizedPath(from: request.uri)
         switch (request.method, uriPath) {
         case (.GET, "/v1/models"):
-            handleModelsRequest(context: context, request: request)
+            let channel = context.channel
+            channel.eventLoop.execute {
+                Task {
+                    await ModelsHandler.handle(requestHead: request, channel: channel)
+                }
+            }
 
         case (.POST, "/v1/chat/completions"):
             let channel = context.channel
@@ -152,65 +157,6 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     }
 
     /// New method based on the old ModelsHandler logic
-    private func handleModelsRequest(context: ChannelHandlerContext, request: HTTPRequestHead) {
-        do {
-            let modelsList = ModelManager.models().map { model_info -> [String: Any] in
-                return [
-                    "id": model_info.id,
-                    "object": "model",
-                    "created": model_info.created,
-                    "owned_by": "swama",
-                    "size_in_bytes": model_info.sizeInBytes
-                ]
-            }
-
-            let responsePayload: [String: Any] = [
-                "object": "list",
-                "data": modelsList
-            ]
-
-            let jsonData = try JSONSerialization.data(withJSONObject: responsePayload)
-
-            var responseBuffer = context.channel.allocator.buffer(capacity: jsonData.count)
-            responseBuffer.writeBytes(jsonData)
-
-            var headers = HTTPHeaders()
-            headers.add(name: "Content-Type", value: "application/json")
-            headers.add(name: "Content-Length", value: "\(responseBuffer.readableBytes)")
-            headers.add(name: "Connection", value: "close")
-            HTTPHandler.applyCORSHeaders(&headers)
-
-            context.write(
-                self.wrapOutboundOut(.head(HTTPResponseHead(version: request.version, status: .ok, headers: headers))),
-                promise: nil
-            )
-            context.write(self.wrapOutboundOut(.body(.byteBuffer(responseBuffer))), promise: nil)
-            context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
-        }
-        catch {
-            NSLog("SwamaKit.HTTPHandler Error (handleModelsRequest): Failed to process models request - \(error)")
-            // Send an error response
-            var errorBuffer = context.channel.allocator.buffer(capacity: 128)
-            errorBuffer.writeString("Internal Server Error: Could not process model list.")
-            var headers = HTTPHeaders()
-            headers.add(name: "Content-Length", value: "\(errorBuffer.readableBytes)")
-            headers.add(name: "Content-Type", value: "text/plain")
-            headers.add(name: "Connection", value: "close")
-            HTTPHandler.applyCORSHeaders(&headers)
-
-            context.write(
-                self.wrapOutboundOut(.head(HTTPResponseHead(
-                    version: request.version,
-                    status: .internalServerError,
-                    headers: headers
-                ))),
-                promise: nil
-            )
-            context.write(self.wrapOutboundOut(.body(.byteBuffer(errorBuffer))), promise: nil)
-            context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
-        }
-    }
-
     private func respond404(context: ChannelHandlerContext, request: HTTPRequestHead) {
         var notFoundBuffer = context.channel.allocator.buffer(capacity: 64)
         notFoundBuffer.writeString("404 Not Found\n")
