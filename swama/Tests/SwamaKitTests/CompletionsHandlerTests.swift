@@ -1,5 +1,6 @@
 import Foundation
 import NIOCore
+import NIOEmbedded
 import NIOHTTP1
 @testable import SwamaKit
 import Testing
@@ -277,6 +278,204 @@ final class CompletionsHandlerTests {
         let function = parsedJSON?["function"] as? [String: Any]
         #expect(function?["name"] as? String == "get_weather")
         #expect(function?["arguments"] as? String == "{\"location\": \"San Francisco\"}")
+    }
+
+    // MARK: - Mid-Stream Disconnect Cancellation Tests
+
+    /// Closing the channel mid-operation must cancel the wrapped operation and let its
+    /// (possibly partial) result flow back through normally, mirroring how
+    /// `ModelRunner.runChat` breaks out of its generation loop on cancellation instead of
+    /// throwing. Uses `NIOAsyncTestingChannel` (not `EmbeddedChannel`) because this test
+    /// necessarily crosses suspension points, and the embedded event loop is
+    /// single-thread-only.
+    ///
+    /// The inner loop is bounded (not `while !Task.isCancelled { ... }`) and the assertion
+    /// is made on the *actual* value of `Task.isCancelled` observed once the loop exits, not
+    /// set unconditionally after it -- see `runCancellingOnCloseCancelsOperationWhenChannelAlreadyClosed`'s
+    /// doc comment for why: an unconditional `observedCancellation.set()` here would make this
+    /// test pass even if cancellation silently broke, which is the false-pass hole this
+    /// rewrite closes. (If cancellation genuinely regresses, this now fails cleanly instead of
+    /// hanging on an unbounded loop or passing vacuously.)
+    @Test func runCancellingOnCloseCancelsOperationWhenChannelCloses() async throws {
+        let channel = NIOAsyncTestingChannel()
+        let started = CancellationFlag()
+        let observedCancellation = CancellationFlag()
+
+        let task = Task<String, Error> {
+            try await CompletionsHandler.runCancellingOnClose(channel: channel) {
+                await started.set()
+                var iterations = 0
+                while !Task.isCancelled, iterations < 10000 {
+                    await Task.yield()
+                    iterations += 1
+                }
+                // Record whatever `Task.isCancelled` actually is once the loop exits --
+                // `true` because cancellation fired, or `false` because the iteration budget
+                // ran out first. Either way this reflects reality instead of asserting a fact
+                // that was never checked.
+                await observedCancellation.set(Task.isCancelled)
+                return "partial"
+            }
+        }
+
+        // Bounded wait for the operation to actually start (and register isCancelled polling)
+        // before we close the channel, so the close is guaranteed to race an in-flight
+        // operation rather than a not-yet-started one.
+        var waited = 0
+        while await !started.value, waited < 10000 {
+            await Task.yield()
+            waited += 1
+        }
+        #expect(await started.value == true)
+
+        try await channel.close()
+        await channel.testingEventLoop.run()
+
+        let result = try await task.value
+
+        #expect(result == "partial")
+        #expect(await observedCancellation.value == true)
+        #expect(channel.isActive == false)
+    }
+
+    /// If the channel is already closed before the operation is even started,
+    /// `runCancellingOnClose` must not hang or attempt to run the operation to completion --
+    /// it should observe cancellation promptly.
+    ///
+    /// Previously this test's inner loop exited on cancellation *or* after 10000 iterations,
+    /// then set `observedCancellation` unconditionally afterward -- so the assertion below
+    /// passed even on a build where cancellation never fired at all (the loop would just run
+    /// out its budget and the flag still got set to `true` regardless). That made this a
+    /// vacuous assertion: it could not fail no matter what the code under test did. This
+    /// rewrite captures the *actual* `Task.isCancelled` observed when the bounded loop exits
+    /// and asserts on that value, so a broken cancellation path now produces a genuine,
+    /// non-hanging test failure instead of a silent false pass.
+    ///
+    /// This rewrite is expected to still PASS on current code -- `runCancellingOnClose` itself
+    /// is not the bug here (see the ModelPool and keep-alive tests elsewhere for those); this
+    /// closes a hole in how the test verifies it, not a live product defect.
+    @Test func runCancellingOnCloseCancelsOperationWhenChannelAlreadyClosed() async throws {
+        let channel = NIOAsyncTestingChannel()
+        try await channel.close()
+        await channel.testingEventLoop.run()
+
+        let observedCancellation = CancellationFlag()
+
+        let result = try await CompletionsHandler.runCancellingOnClose(channel: channel) {
+            var iterations = 0
+            while !Task.isCancelled, iterations < 10000 {
+                await Task.yield()
+                iterations += 1
+            }
+            await observedCancellation.set(Task.isCancelled)
+            return "partial"
+        }
+
+        #expect(result == "partial")
+        #expect(await observedCancellation.value == true)
+    }
+
+    // MARK: - Keep-Alive Task Retention Tests
+
+    /// TASK RETENTION ON KEEP-ALIVE: `runCancellingOnClose` registers
+    /// `channel.closeFuture.whenComplete { _ in task.cancel() }`, which captures `task`
+    /// strongly. `closeFuture` only resolves when the *connection* closes, so on a keep-alive
+    /// connection (where the channel stays open across many requests) that callback -- and
+    /// the `Task` it captures -- is never released after any single request completes; it
+    /// only goes away when the whole connection eventually closes. Each request on a
+    /// keep-alive connection therefore adds one more permanently-retained completed `Task` to
+    /// the channel's close future for the lifetime of the connection.
+    ///
+    /// Demonstrated with a weak reference to a sentinel object returned as `operation`'s
+    /// *result* (`T`), not merely captured by it: a `Task`'s completion storage must keep its
+    /// result alive for as long as the `Task` handle itself is reachable (so that `.value`
+    /// stays valid for any observer), which is exactly the piece of state this defect leaks.
+    /// (A sentinel merely *captured inside* the closure, rather than returned as its result,
+    /// was tried first and found to be released as soon as the operation returns regardless
+    /// of this bug -- a completed async closure's own captures are freed promptly once it
+    /// stops running -- so that shape does not distinguish buggy from fixed behavior here.)
+    /// The retained *result*, however, does: once the operation completes and every other
+    /// strong reference to it is dropped, the sentinel should deallocate even though the
+    /// channel remains open -- but it does not today.
+    ///
+    /// See `runCancellingOnCloseReleasesOperationResultAfterChannelCloses` below for the
+    /// control: the same setup, but with the channel actually closed, where the sentinel
+    /// *does* deallocate -- confirming the retention observed here is specifically tied to
+    /// the channel staying open, not some other artifact.
+    @Test func runCancellingOnCloseRetainsOperationResultWhileChannelStaysOpenOnKeepAlive() async throws {
+        let channel = NIOAsyncTestingChannel()
+
+        final class Sentinel: @unchecked Sendable {}
+        weak var weakSentinel: Sentinel?
+
+        do {
+            let result = try await CompletionsHandler.runCancellingOnClose(channel: channel) {
+                Sentinel()
+            }
+            weakSentinel = result
+            // `result` (our only other strong reference to the sentinel) goes out of scope
+            // at the end of this `do` block.
+        }
+
+        // Give ARC every opportunity to actually run before we check.
+        for _ in 0 ..< 5 {
+            await Task.yield()
+        }
+
+        #expect(
+            weakSentinel == nil,
+            Comment(rawValue: "operation result should be released once the request completes, even though " +
+                "the keep-alive channel stays open -- it is retained today via " +
+                "channel.closeFuture.whenComplete's strong capture of the completed Task")
+        )
+
+        // Clean up the testing channel so it doesn't leak past the test. This close happens
+        // only *after* the assertion above, so it cannot be responsible for the (expected)
+        // failure of that assertion.
+        _ = try? await channel.finish()
+    }
+
+    /// Control for `runCancellingOnCloseRetainsOperationResultWhileChannelStaysOpenOnKeepAlive`:
+    /// identical setup, but the channel is actually closed before we check. This should PASS,
+    /// confirming that once `closeFuture` fires, the retaining callback runs/releases and the
+    /// operation's result is free to deallocate -- i.e. the retention above is specifically a
+    /// function of the channel staying open (the keep-alive scenario), not some unrelated
+    /// reason a completed `Task`'s result might outlive the caller.
+    @Test func runCancellingOnCloseReleasesOperationResultAfterChannelCloses() async throws {
+        let channel = NIOAsyncTestingChannel()
+
+        final class Sentinel: @unchecked Sendable {}
+        weak var weakSentinel: Sentinel?
+
+        do {
+            let result = try await CompletionsHandler.runCancellingOnClose(channel: channel) {
+                Sentinel()
+            }
+            weakSentinel = result
+        }
+
+        try await channel.close()
+        await channel.testingEventLoop.run()
+
+        for _ in 0 ..< 5 {
+            await Task.yield()
+        }
+
+        #expect(weakSentinel == nil)
+    }
+}
+
+/// Thread-safe boolean box used to coordinate assertions with work happening inside a
+/// separately-scheduled `Task` in the tests above.
+private actor CancellationFlag {
+    private(set) var value = false
+
+    /// Records the given value (defaulting to `true` for simple started/reached-here signals).
+    /// Tests that need to assert on an *actual observed* condition -- rather than merely
+    /// signalling that some line of code ran -- pass the condition explicitly, e.g.
+    /// `set(Task.isCancelled)`.
+    func set(_ newValue: Bool = true) {
+        value = newValue
     }
 }
 

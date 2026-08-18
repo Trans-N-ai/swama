@@ -563,18 +563,26 @@ public enum CompletionsHandler {
         parameters: GenerateParameters,
         mlxTools: [ToolSpec]? = nil
     ) async throws {
-        let result = try await modelPool.run(
-            modelName: modelName
-        ) { runner in
-            let userInput = buildUserInput(
-                chatMessages: chatMessages,
-                modelName: modelName,
-                tools: mlxTools
-            )
-            return try await runner.runChatNonStream(
-                userInput: userInput,
-                parameters: parameters
-            )
+        let result = try await runCancellingOnClose(channel: channel) {
+            try await modelPool.run(
+                modelName: modelName
+            ) { runner in
+                let userInput = buildUserInput(
+                    chatMessages: chatMessages,
+                    modelName: modelName,
+                    tools: mlxTools
+                )
+                return try await runner.runChatNonStream(
+                    userInput: userInput,
+                    parameters: parameters
+                )
+            }
+        }
+
+        // The client disconnected mid-generation; the run above was cancelled promptly, and
+        // there is nothing left to write to.
+        guard channel.isActive else {
+            return
         }
 
         // Calculate completion tokens from completion info
@@ -697,43 +705,47 @@ public enum CompletionsHandler {
         let result: ModelRunner.ChatRunResult
 
         do {
-            result = try await modelPool.run(
-                modelName: modelName
-            ) { runner in
-                let userInput = buildUserInput(
-                    chatMessages: chatMessages,
-                    modelName: modelName,
-                    tools: tools
-                )
-                let toolCallCounter = ToolCallCounter()
-                return try await runner.runChat(
-                    userInput: userInput,
-                    parameters: parameters,
-                    onToken: { chunk in
-                        let deltaJSON: [String: Any] = [
-                            "id": chunkId,
-                            "object": "chat.completion.chunk",
-                            "created": timestamp,
-                            "model": model,
-                            "choices": [["index": 0, "delta": ["content": chunk], "finish_reason": NSNull()]]
-                        ]
-                        Task {
-                            try? await writeSSEJSON(channel: channel, payload: deltaJSON)
-                        }
-                    },
-                    onToolCall: { toolCall in
-                        let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
-                        let argumentsJSON: String =
-                            if let jsonData = try? JSONSerialization
-                                .data(withJSONObject: argumentsDict),
-                                let jsonString = String(data: jsonData, encoding: .utf8)
-                            {
-                                jsonString
-                            }
-                            else {
-                                "{}"
-                            }
-                        Task {
+            result = try await runCancellingOnClose(channel: channel) {
+                try await modelPool.run(
+                    modelName: modelName
+                ) { runner in
+                    let userInput = buildUserInput(
+                        chatMessages: chatMessages,
+                        modelName: modelName,
+                        tools: tools
+                    )
+                    let toolCallCounter = ToolCallCounter()
+                    return try await runner.runChat(
+                        userInput: userInput,
+                        parameters: parameters,
+                        onToken: { chunk in
+                            let deltaJSON: [String: Any] = [
+                                "id": chunkId,
+                                "object": "chat.completion.chunk",
+                                "created": timestamp,
+                                "model": model,
+                                "choices": [["index": 0, "delta": ["content": chunk], "finish_reason": NSNull()]]
+                            ]
+                            // Awaited directly: the write is ordered and fully drained before
+                            // `runChat` moves on to the next generation event, and a failed
+                            // write (client gone) throws here, stopping generation and flowing
+                            // through the existing catch below rather than needing an explicit
+                            // channel.close(promise: nil) to converge on the cancellation path.
+                            try await writeSSEJSON(channel: channel, payload: deltaJSON)
+                        },
+                        onToolCall: { toolCall in
+                            let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
+                            let argumentsJSON: String =
+                                if let jsonData = try? JSONSerialization
+                                    .data(withJSONObject: argumentsDict),
+                                    let jsonString = String(data: jsonData, encoding: .utf8)
+                                {
+                                    jsonString
+                                }
+                                else {
+                                    "{}"
+                                }
+
                             let index = await toolCallCounter.next()
                             let toolCallDict: [String: Any] = [
                                 "index": index,
@@ -754,13 +766,18 @@ public enum CompletionsHandler {
                                              "finish_reason": NSNull()]]
                             ]
 
-                            try? await writeSSEJSON(channel: channel, payload: toolCallDelta)
+                            try await writeSSEJSON(channel: channel, payload: toolCallDelta)
                         }
-                    }
-                )
+                    )
+                }
             }
         }
         catch {
+            // The client disconnected mid-generation; there is nothing left to write to.
+            guard channel.isActive else {
+                return
+            }
+
             // Send error through SSE instead of trying to change HTTP status
             let errorJSON: [String: Any] = [
                 "id": chunkId,
@@ -776,6 +793,12 @@ public enum CompletionsHandler {
             try await writeSSEJSON(channel: channel, payload: errorJSON)
             try await writeSSELine(channel: channel, line: "data: [DONE]\n\n")
             try await channel.writeAndFlush(HTTPServerResponsePart.end(nil))
+            return
+        }
+
+        // The client disconnected mid-generation; the run above was cancelled promptly, and
+        // there is nothing left to write to.
+        guard channel.isActive else {
             return
         }
 
@@ -810,6 +833,71 @@ public enum CompletionsHandler {
     // MARK: - Helper Methods
 
     private static let modelPool: ModelPool = .shared
+
+    /// Runs `operation` in a child task, cancelling that task as soon as `channel`'s connection
+    /// closes (the client disconnecting mid-request). `operation` is expected to observe
+    /// `Task.isCancelled` and return promptly rather than throw, so its (possibly partial)
+    /// result is still returned normally here.
+    ///
+    /// Not marked `private` so tests can drive this channel-close -> cancellation path directly
+    /// with a stub `operation` and an `EmbeddedChannel`, without needing a real model.
+    static func runCancellingOnClose<T: Sendable>(
+        channel: Channel,
+        operation: @Sendable @escaping () async throws -> T
+    ) async throws -> T {
+        let task = Task { try await operation() }
+
+        // `channel.closeFuture` only resolves when the *connection* closes, not when this one
+        // request finishes -- so on a keep-alive connection, capturing `task` directly here
+        // would keep the completed task (and everything it retains, including its returned
+        // result) reachable for as long as the connection stays open, not just for the
+        // lifetime of this request. Capture a clearable box instead, and clear it in the
+        // `defer` below once this request's operation has completed, so the task and its
+        // result can be released immediately rather than pinned until connection close.
+        //
+        // This does not fully eliminate per-request retention on a keep-alive connection: NIO
+        // gives no way to deregister a `whenComplete` callback, so the (now-empty) closure
+        // itself still accumulates on `closeFuture` for every request until the connection
+        // finally closes. What this bounds is *what* each accumulated closure keeps alive --
+        // an empty box, not the completed task and its captured state/result.
+        let taskBox = CancellableTaskBox(task)
+        channel.closeFuture.whenComplete { _ in taskBox.cancel() }
+        defer { taskBox.clear() }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    /// A clearable holder for a `Task`, used so `channel.closeFuture`'s callback can cancel an
+    /// in-flight task without keeping a completed task (and its result) alive for the life of a
+    /// keep-alive connection. See `runCancellingOnClose` for why this exists.
+    private final class CancellableTaskBox<T: Sendable>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var task: Task<T, Error>?
+
+        init(_ task: Task<T, Error>) {
+            self.task = task
+        }
+
+        /// Cancels the held task, if it hasn't already been cleared.
+        func cancel() {
+            lock.lock()
+            let current = task
+            lock.unlock()
+            current?.cancel()
+        }
+
+        /// Releases the held reference to the task (and, transitively, its result) without
+        /// cancelling it.
+        func clear() {
+            lock.lock()
+            task = nil
+            lock.unlock()
+        }
+    }
 
     private static func sendFullResponse(
         channel: Channel,

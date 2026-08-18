@@ -75,8 +75,8 @@ public actor ModelRunner {
     public nonisolated func runChat(
         userInput: MLXLMCommon.UserInput,
         parameters: GenerateParameters,
-        onToken: (@Sendable (String) -> Void)? = nil,
-        onToolCall: (@Sendable (MLXLMCommon.ToolCall) -> Void)? = nil
+        onToken: (@Sendable (String) async throws -> Void)? = nil,
+        onToolCall: (@Sendable (MLXLMCommon.ToolCall) async throws -> Void)? = nil
     ) async throws -> ChatRunResult {
         try await withError {
             var output = ""
@@ -140,13 +140,23 @@ public actor ModelRunner {
             }
 
             for await generationEvent in generationStream {
+                if Task.isCancelled {
+                    break
+                }
+
                 switch generationEvent {
                 case let .chunk(chunkString):
                     rawOutputStorage.append(chunkString)
 
-                    onToken?(chunkString)
-                    // Only accumulate if no onToken callback (for non-streaming)
-                    if onToken == nil {
+                    if let onToken {
+                        // Awaited (and fully written) before the next generation event is
+                        // processed, so writes land on the channel in generation order and are
+                        // guaranteed drained by the time this call returns; a failed write
+                        // throws here and stops generation.
+                        try await onToken(chunkString)
+                    }
+                    else {
+                        // Only accumulate if no onToken callback (for non-streaming)
                         output += chunkString
                     }
 
@@ -157,7 +167,9 @@ public actor ModelRunner {
                     // Always accumulate tool calls for the return value
                     toolCalls.append(toolCall)
                     // Also send to callback if provided (for streaming)
-                    onToolCall?(toolCall)
+                    if let onToolCall {
+                        try await onToolCall(toolCall)
+                    }
                 }
             }
 

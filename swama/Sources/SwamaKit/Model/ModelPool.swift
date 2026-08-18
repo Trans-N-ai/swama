@@ -65,8 +65,13 @@ public actor ModelPool {
     // MARK: Lifecycle
 
     public init() {
-        Self.configureCacheLimit()
-        // Memory management timer will be started when first accessed
+        // Cache limit and memory management timer are both deferred: the former until MLX is
+        // genuinely about to be used (see `ensureCacheLimitConfigured()`), the latter until
+        // first model access (see `ensureMemoryManagementStarted()`). Neither may run here --
+        // `configureCacheLimit()` touches `MLX.Memory`, which triggers MLX's Metal/device
+        // library load, so calling it eagerly from `init()` would force that initialization
+        // just to construct a `ModelPool`, which is what made `ModelPool` impossible to
+        // construct under `swift test` (no colocated `mlx.metallib` for the test binary).
     }
 
     /// Ensures memory management timer is running (called on first model access)
@@ -77,6 +82,25 @@ public actor ModelPool {
 
         startMemoryManagementTimer()
     }
+
+    /// Ensures the MLX cache limit has been configured. Idempotent -- safe to call from every
+    /// site that's about to actually load a model.
+    ///
+    /// Must only be called immediately before code that will genuinely touch MLX (i.e. right
+    /// before loading a model container/runner), never from MLX-free paths like
+    /// `ensureMemoryManagementStarted()` or `getContainer`'s cache/task lookups -- those must
+    /// stay MLX-free so a test can reach `ModelPoolError.modelNotFoundLocally` without
+    /// initializing Metal.
+    private func ensureCacheLimitConfigured() {
+        guard !didConfigureCacheLimit else {
+            return
+        }
+        didConfigureCacheLimit = true
+        Self.configureCacheLimit()
+    }
+
+    /// Whether `configureCacheLimit()` has already run for this pool.
+    private var didConfigureCacheLimit = false
 
     private static func configureCacheLimit() {
         let ramBytes = ProcessInfo.processInfo.physicalMemory
@@ -100,29 +124,23 @@ public actor ModelPool {
     ) async throws -> T {
         // Wait for available slot AND ensure the specific model is not already running
         while runningInferences >= maxConcurrentInferences || runningModels.contains(modelName) {
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+            try await Task.sleep(nanoseconds: 50_000_000) // 50ms
         }
+
+        try Task.checkCancellation()
 
         runningInferences += 1
         runningModels.insert(modelName)
-
-        do {
-            // Get or load the speech-to-text runner
-            let runner = try await getSpeechToTextRunner(modelName: modelName)
-
-            // Execute the operation
-            let result = try await operation(runner)
-
+        defer {
             runningInferences = max(0, runningInferences - 1)
             runningModels.remove(modelName)
+        }
 
-            return result
-        }
-        catch {
-            runningInferences = max(0, runningInferences - 1)
-            runningModels.remove(modelName)
-            throw error
-        }
+        // Get or load the speech-to-text runner
+        let runner = try await getSpeechToTextRunner(modelName: modelName)
+
+        // Execute the operation
+        return try await operation(runner)
     }
 
     /// Safely run a TTS operation with caching and concurrency control
@@ -132,26 +150,20 @@ public actor ModelPool {
         operation: @Sendable @escaping (TTSRunner) async throws -> T
     ) async throws -> T {
         while runningInferences >= maxConcurrentInferences || runningModels.contains(modelKey) {
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+            try await Task.sleep(nanoseconds: 50_000_000) // 50ms
         }
+
+        try Task.checkCancellation()
 
         runningInferences += 1
         runningModels.insert(modelKey)
-
-        do {
-            let runner = try await getTTSRunner(modelKey: modelKey, kind: kind)
-            let result = try await operation(runner)
-
+        defer {
             runningInferences = max(0, runningInferences - 1)
             runningModels.remove(modelKey)
+        }
 
-            return result
-        }
-        catch {
-            runningInferences = max(0, runningInferences - 1)
-            runningModels.remove(modelKey)
-            throw error
-        }
+        let runner = try await getTTSRunner(modelKey: modelKey, kind: kind)
+        return try await operation(runner)
     }
 
     /// Gets or loads a speech-to-text runner for the given model name
@@ -174,6 +186,9 @@ public actor ModelPool {
 
         // Check if we need to free up memory before loading a new model
         await performMemoryPressureCheck()
+
+        // About to genuinely touch MLX -- configure the cache limit now, idempotently.
+        ensureCacheLimitConfigured()
 
         let task = Task {
             let runner = await MainActor.run { SpeechToTextRunner() }
@@ -208,6 +223,9 @@ public actor ModelPool {
         }
 
         await performMemoryPressureCheck()
+
+        // About to genuinely touch MLX -- configure the cache limit now, idempotently.
+        ensureCacheLimitConfigured()
 
         let task = Task {
             let runner = TTSRunner(kind: kind)
@@ -257,30 +275,24 @@ public actor ModelPool {
     ) async throws -> T {
         // Wait for available slot AND ensure the specific model is not already running
         while runningInferences >= maxConcurrentInferences || runningModels.contains(modelName) {
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+            try await Task.sleep(nanoseconds: 50_000_000) // 50ms
         }
+
+        try Task.checkCancellation()
 
         runningInferences += 1
         runningModels.insert(modelName)
-
-        do {
-            // Get or load the model container
-            let container = try await getContainer(modelName: modelName)
-            let runner = ModelRunner(container: container)
-
-            // Execute the operation
-            let result = try await operation(runner)
-
+        defer {
             runningInferences = max(0, runningInferences - 1)
             runningModels.remove(modelName)
+        }
 
-            return result
-        }
-        catch {
-            runningInferences = max(0, runningInferences - 1)
-            runningModels.remove(modelName)
-            throw error
-        }
+        // Get or load the model container
+        let container = try await getContainer(modelName: modelName)
+        let runner = ModelRunner(container: container)
+
+        // Execute the operation
+        return try await operation(runner)
     }
 
     /// Safely run an embedding operation with concurrency control to prevent MLX heap corruption
@@ -290,35 +302,33 @@ public actor ModelPool {
     ) async throws -> T {
         // Wait for available slot
         while runningInferences >= maxConcurrentInferences {
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+            try await Task.sleep(nanoseconds: 50_000_000) // 50ms
         }
+
+        try Task.checkCancellation()
 
         runningInferences += 1
-
-        do {
-            // Get or create embedding runner
-            let runner: EmbeddingRunner
-            if let existingRunner = embeddingRunnerCache[modelName] {
-                runner = existingRunner
-            }
-            else {
-                // Load the embedding model
-                let container = try await loadEmbeddingModelContainer(modelName: modelName)
-                runner = EmbeddingRunner(container: container)
-                embeddingRunnerCache[modelName] = runner
-            }
-
-            // Execute the operation
-            let result = try await operation(runner)
-
+        defer {
             runningInferences = max(0, runningInferences - 1)
+        }
 
-            return result
+        // Get or create embedding runner
+        let runner: EmbeddingRunner
+        if let existingRunner = embeddingRunnerCache[modelName] {
+            runner = existingRunner
         }
-        catch {
-            runningInferences = max(0, runningInferences - 1)
-            throw error
+        else {
+            // About to genuinely touch MLX -- configure the cache limit now, idempotently.
+            ensureCacheLimitConfigured()
+
+            // Load the embedding model
+            let container = try await loadEmbeddingModelContainer(modelName: modelName)
+            runner = EmbeddingRunner(container: container)
+            embeddingRunnerCache[modelName] = runner
         }
+
+        // Execute the operation
+        return try await operation(runner)
     }
 
     /// Gets or loads a ModelContainer
@@ -518,6 +528,10 @@ public actor ModelPool {
         modelName: String,
         isVLM: Bool
     ) async throws -> MLXLMCommon.ModelContainer {
+        // About to genuinely touch MLX (loading a container triggers Metal init) -- configure
+        // the cache limit now, idempotently, rather than eagerly in `init()`.
+        ensureCacheLimitConfigured()
+
         ensureChatTemplateIfNeeded(for: modelName)
         // Configure extra EOS tokens for models with known issues
         let extraEOSTokens = getExtraEOSTokens(for: modelName)
