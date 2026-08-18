@@ -420,6 +420,7 @@ public actor ModelPool {
         modelTypeCache.removeAll() // Clear type cache too
         vlmRegistryCache = nil // Reset VLM registry cache
         embeddingRunnerCache.removeAll() // Clear embedding cache
+        PromptCacheStore.shared.dropAll() // Clear prompt/KV-cache slots
         sttRunnerCache.removeAll() // Clear speech-to-text cache
         ttsRunnerCache.removeAll() // Clear TTS cache
         modelUsageInfo.removeAll() // Clear usage tracking
@@ -467,6 +468,7 @@ public actor ModelPool {
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName) // Clear type cache for this model
         embeddingRunnerCache.removeValue(forKey: modelName) // Clear embedding cache for this model
+        PromptCacheStore.shared.drop(modelName: modelName) // Clear prompt/KV-cache slot for this model
         sttRunnerCache.removeValue(forKey: modelName) // Clear speech-to-text cache for this model
         ttsRunnerCache.removeValue(forKey: modelName) // Clear TTS cache for this model
         modelUsageInfo.removeValue(forKey: modelName) // Clear usage tracking for this model
@@ -956,6 +958,7 @@ public actor ModelPool {
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName)
         embeddingRunnerCache.removeValue(forKey: modelName)
+        PromptCacheStore.shared.drop(modelName: modelName)
         sttRunnerCache.removeValue(forKey: modelName)
         ttsRunnerCache.removeValue(forKey: modelName)
         modelUsageInfo.removeValue(forKey: modelName)
