@@ -135,6 +135,7 @@ public actor ModelRunner {
             }
 
             let maxKVSize = generationParameters.maxKVSize ?? effectiveContextLimit
+            let kvConfig = PromptCacheKVConfig(parameters: generationParameters, maxKVSize: maxKVSize)
             let modelName = await container.configuration.name
             let fullTokens = promptCacheTokenArray(lmInput.text.tokens)
 
@@ -143,16 +144,56 @@ public actor ModelRunner {
                 hasMediaInput: hasMediaInput,
                 modelName: modelName,
                 newTokens: fullTokens,
-                maxKVSize: maxKVSize,
+                kvConfig: kvConfig,
                 store: promptCacheStore
             )
 
+            // `resolvePromptCacheReuse` cannot see `generationParameters` at all, so it has no way
+            // to know whether a `.reuse` it just returned would actually need
+            // `FullHistoryLogitProcessor` wrapped around a processor that also wants a quantized
+            // KV cache -- the one combination no `TokenIterator` initializer can honour correctly
+            // (see `PromptCacheIteratorStrategy.bypass`). Override that specific case to an
+            // equivalent `.miss` here, once, so both the switch below and the log line after it
+            // agree on the same effective decision without duplicating this check.
+            let effectiveCacheDecision: PromptCacheResolution =
+                if case let .reuse(_, _, _, epoch) = cacheDecision,
+                promptCacheIteratorStrategy(
+                    needsFullHistoryWrapper: true,
+                    hasPenaltyProcessor: generationParameters.processor() != nil,
+                    kvBits: generationParameters.kvBits
+                ) == .bypass {
+                    .miss(reason: .kvQuantizationUnsupported, epoch: epoch)
+                }
+                else {
+                    cacheDecision
+                }
+
+            // Captured up front (before generation starts) on every path that will ever write a
+            // slot back -- `nil` only for `.disabled`/`.multimodal`, which never touch the store
+            // at all. `resolvePromptCacheReuse` already captured this from `checkout` (reuse,
+            // and the checked-out-but-rejected miss reasons) or `currentEpoch` (`.noSlot`); see
+            // `PromptCacheEpoch`'s doc comment for why it has to be this early.
+            let cacheEpoch: PromptCacheEpoch? =
+                switch effectiveCacheDecision {
+                case let .reuse(_, _, _, epoch):
+                    epoch
+                case let .miss(_, epoch):
+                    epoch
+                }
+
             let run: PromptCacheGenerationRun = try await container.perform { context in
-                switch cacheDecision {
-                case .miss(.disabled), .miss(.multimodal):
-                    // Cache untouched -- feature off, or bypassed for multimodal content (image
-                    // embeddings aren't in the token sequence a KV cache indexes by). This is
-                    // today's path exactly, unchanged from before this feature existed.
+                switch effectiveCacheDecision {
+                case .miss(.disabled, _),
+                     .miss(.kvQuantizationUnsupported, _),
+                     .miss(.multimodal, _):
+                    // Cache untouched (feature off, or bypassed for multimodal content -- image
+                    // embeddings aren't in the token sequence a KV cache indexes by), or a cache
+                    // hit we've deliberately declined to reuse because its full-history wrapper
+                    // would silently drop the caller's KV-quantization settings
+                    // (.kvQuantizationUnsupported). In every one of these cases, any slot
+                    // `resolvePromptCacheReuse` already checked out is simply never checked back
+                    // in below (`run.cache` is `nil` here), exactly like every other
+                    // rejected-but-checked-out miss reason.
                     let stream = try generate(
                         input: lmInput,
                         parameters: generationParameters,
@@ -160,7 +201,7 @@ public actor ModelRunner {
                     )
                     return PromptCacheGenerationRun(stream: stream, task: nil, cache: nil, prefillMs: nil)
 
-                case let .reuse(matchedLength, reusedCache, _):
+                case let .reuse(matchedLength, reusedCache, _, _):
                     // Cache hit: feed only the unmatched suffix, but prime the penalty
                     // processors with the FULL history (not just the suffix), or their windowed
                     // state would silently diverge from the uncached baseline.
@@ -174,7 +215,7 @@ public actor ModelRunner {
                     )
 
                 case .miss:
-                    // A cacheable miss (no prior slot, mismatch, rotated, or a maxKVSize change):
+                    // A cacheable miss (no prior slot, mismatch, rotated, or a KV config change):
                     // full prefill on a fresh cache, captured so it can be stored for next turn.
                     let freshCache = context.model.newCache(parameters: generationParameters)
                     return try buildPromptCacheGenerationRun(
@@ -188,7 +229,7 @@ public actor ModelRunner {
             }
 
             logPromptCacheDecision(
-                decision: cacheDecision,
+                decision: effectiveCacheDecision,
                 promptTokens: promptTokens,
                 prefillMs: run.prefillMs
             )
@@ -247,14 +288,18 @@ public actor ModelRunner {
             // Only ever store on a clean, uncancelled, unthrown completion: on any abort the slot
             // stays absent (it was already removed from the store by `checkout` inside
             // `resolvePromptCacheReuse`, or was never created for a fresh miss), never
-            // half-written.
-            if let cache = run.cache, thrownError == nil, !Task.isCancelled {
+            // half-written. `cacheEpoch` is non-nil whenever `run.cache` is (see the comment
+            // where it's captured above); binding it alongside the `run.cache` check rather than
+            // asserting that pairing means a future divergence skips the store instead of
+            // trapping.
+            if let cache = run.cache, let cacheEpoch, thrownError == nil, Task.isCancelled == false {
                 storePromptCacheIfReusable(
                     cache: cache,
                     fullTokens: fullTokens,
                     promptTokenCount: promptTokens,
-                    maxKVSize: maxKVSize,
+                    kvConfig: kvConfig,
                     modelName: modelName,
+                    epoch: cacheEpoch,
                     store: promptCacheStore
                 )
             }
@@ -520,7 +565,7 @@ private func tokenLength(_ tokens: MLXArray) -> Int {
     }
 }
 
-// MARK: - Prompt-cache integration
+// MARK: - PromptCacheGenerationRun
 
 /// One generation attempt's stream/task/cache, as built inside `container.perform` and consumed
 /// back in `runChat` after crossing the actor boundary.
@@ -540,6 +585,8 @@ private struct PromptCacheGenerationRun: @unchecked Sendable {
     let cache: [KVCache]?
     let prefillMs: Double?
 }
+
+// MARK: - FullHistoryLogitProcessor
 
 /// Wraps a `LogitProcessor` so `TokenIterator.prepare`'s call to `processor?.prompt(...)` --
 /// which only sees the tokens actually fed to this iterator, i.e. the cache-hit suffix -- is
@@ -565,10 +612,86 @@ private struct FullHistoryLogitProcessor: LogitProcessor {
     }
 }
 
-/// Builds a `TokenIterator` (applying, on a cache hit, the full-history processor
-/// wrapper) and starts it via `generateTask`, capturing the `Task` so the caller can await it
-/// before ever touching `cache` again -- unlike `generate(input:cache:parameters:context:)`,
-/// which starts the same task but discards the handle.
+// MARK: - PromptCacheIteratorError
+
+/// Thrown when `buildPromptCacheGenerationRun` is reached in a state its
+/// `PromptCacheIteratorStrategy` says cannot happen -- `runChat` routes `.bypass` to the ordinary
+/// uncached path before ever calling it, and `.processorWrapper` is only ever returned when both
+/// a processor and a full history exist to wrap.
+///
+/// This is deliberately a thrown error rather than a `preconditionFailure`: swama is a long-lived
+/// server, and a future refactor that broke the invariant should fail this one request (the
+/// caller already surfaces a thrown error as a failed completion) rather than take the whole
+/// daemon down with every other in-flight request. Silently falling back to the parameters
+/// initializer is not an option -- that would drop the caller's KV-quantization settings, exactly
+/// what this fix exists to prevent.
+enum PromptCacheIteratorError: Error {
+    case unreachableStrategy(PromptCacheIteratorStrategy)
+}
+
+// MARK: - PromptCacheIteratorStrategy
+
+/// Which `TokenIterator` initializer `buildPromptCacheGenerationRun` should use for one
+/// generation attempt. Factored out as a pure function of three plain values (rather than
+/// asserted on a constructed `TokenIterator`, whose `kvBits`/`kvGroupSize`/`quantizedKVStart` are
+/// internal `let`s not visible from SwamaKit at all) so the initializer-selection decision itself
+/// is directly unit-testable, independent of MLX/model machinery.
+enum PromptCacheIteratorStrategy: Equatable {
+    /// `TokenIterator(input:model:cache:parameters:)` -- kvBits/kvGroupSize/quantizedKVStart are
+    /// honoured because this initializer reads them directly off `GenerateParameters`. Used
+    /// whenever no full-history wrapper is needed at all: every cacheable-miss path (`iterInput`
+    /// already *is* the full prompt) and any cache hit whose `GenerateParameters` yield no
+    /// penalty processor (there is nothing for `FullHistoryLogitProcessor` to wrap).
+    case parameters
+
+    /// `TokenIterator(input:model:cache:processor:sampler:prefillStepSize:maxTokens:)` with a
+    /// `FullHistoryLogitProcessor`-wrapped processor -- a cache hit with a penalty processor,
+    /// where the wrapper is required to re-prime penalty state with the full conversation
+    /// history rather than just the unmatched suffix. Safe only because this overload's
+    /// hardcoded `kvBits: nil` is indistinguishable from what an unset `kvBits` would have
+    /// produced via the other initializer: `maybeQuantizeKVCache` is already a no-op whenever
+    /// `kvBits == nil`, regardless of `kvGroupSize`/`quantizedKVStart` -- see `.bypass` for the
+    /// case where that is *not* true.
+    case processorWrapper
+
+    /// Neither initializer can correctly serve this request: a cache hit needs the full-history
+    /// wrapper (a penalty processor is configured) *and* the caller wants a quantized KV cache
+    /// (`kvBits != nil`), but the only initializer that accepts a custom processor hardcodes
+    /// `kvBits: nil` and cannot be told otherwise -- and the initializer that does honour
+    /// `kvBits` does not accept a custom processor. There is no combination of the two upstream
+    /// initializers that satisfies both requirements at once, so the caller must not build a
+    /// `TokenIterator` here at all: decline this cache hit and fall back to an ordinary,
+    /// uncached prefill for this one request instead (see
+    /// `PromptCacheMissReason.kvQuantizationUnsupported`).
+    case bypass
+}
+
+/// Pure decision function backing `PromptCacheIteratorStrategy`.
+///
+/// - Parameters:
+///   - needsFullHistoryWrapper: `true` on a cache hit (`iterInput` is only the unmatched
+///     suffix, so a penalty processor needs `FullHistoryLogitProcessor` to see the full
+///     history); `false` on a miss, where `iterInput` already is the full prompt.
+///   - hasPenaltyProcessor: whether `generationParameters.processor()` returned non-nil --
+///     i.e. whether there is anything to wrap in the first place.
+///   - kvBits: `generationParameters.kvBits`, forwarded as-is.
+func promptCacheIteratorStrategy(
+    needsFullHistoryWrapper: Bool,
+    hasPenaltyProcessor: Bool,
+    kvBits: Int?
+) -> PromptCacheIteratorStrategy {
+    guard needsFullHistoryWrapper, hasPenaltyProcessor else {
+        return .parameters
+    }
+
+    return kvBits == nil ? .processorWrapper : .bypass
+}
+
+/// Builds a `TokenIterator` (applying, on a cache hit with a penalty processor, the full-history
+/// wrapper -- see `PromptCacheIteratorStrategy`) and starts it via `generateTask`, capturing the
+/// `Task` so the caller can await it before ever touching `cache` again -- unlike
+/// `generate(input:cache:parameters:context:)`, which starts the same task but discards the
+/// handle.
 ///
 /// - Parameter fullHistory: the full post-template token sequence to prime penalty
 ///   processors with, when non-nil (a cache hit, where `iterInput` is only the unmatched
@@ -582,25 +705,49 @@ private func buildPromptCacheGenerationRun(
     generationParameters: GenerateParameters
 ) throws -> PromptCacheGenerationRun {
     let baseProcessor: LogitProcessor? = generationParameters.processor()
-
-    let processor: LogitProcessor?
-    if let fullHistory, let baseProcessor {
-        processor = FullHistoryLogitProcessor(inner: baseProcessor, fullHistory: fullHistory)
-    }
-    else {
-        processor = baseProcessor
-    }
+    let strategy = promptCacheIteratorStrategy(
+        needsFullHistoryWrapper: fullHistory != nil,
+        hasPenaltyProcessor: baseProcessor != nil,
+        kvBits: generationParameters.kvBits
+    )
 
     let prefillStart = Date()
-    let iterator = try TokenIterator(
-        input: iterInput,
-        model: context.model,
-        cache: cache,
-        processor: processor,
-        sampler: generationParameters.sampler(),
-        prefillStepSize: generationParameters.prefillStepSize,
-        maxTokens: generationParameters.maxTokens
-    )
+    let iterator: TokenIterator
+    switch strategy {
+    case .parameters:
+        iterator = try TokenIterator(
+            input: iterInput,
+            model: context.model,
+            cache: cache,
+            parameters: generationParameters
+        )
+
+    case .processorWrapper:
+        guard let baseProcessor, let fullHistory else {
+            throw PromptCacheIteratorError.unreachableStrategy(.processorWrapper)
+        }
+
+        let wrappedProcessor = FullHistoryLogitProcessor(inner: baseProcessor, fullHistory: fullHistory)
+        iterator = try TokenIterator(
+            input: iterInput,
+            model: context.model,
+            cache: cache,
+            processor: wrappedProcessor,
+            sampler: generationParameters.sampler(),
+            prefillStepSize: generationParameters.prefillStepSize,
+            maxTokens: generationParameters.maxTokens
+        )
+
+    case .bypass:
+        // Unreachable: `runChat` already rewrites a `.bypass` decision to
+        // `.miss(.kvQuantizationUnsupported, _)` before ever entering the branch that calls this
+        // function (see the `effectiveCacheDecision` override in `runChat`), so this function is
+        // only ever invoked for `.parameters`/`.processorWrapper`. Failing loudly rather than
+        // silently falling back to `.parameters` keeps this file's "assert, don't assume"
+        // register -- see `promptCacheLayerIsReusable`'s rotation guard -- without crashing a
+        // long-lived server (see `PromptCacheIteratorError`).
+        throw PromptCacheIteratorError.unreachableStrategy(.bypass)
+    }
     let prefillMs = Date().timeIntervalSince(prefillStart) * 1000
 
     let (stream, task) = generateTask(
@@ -629,10 +776,11 @@ private func logPromptCacheDecision(
     let cachedPrefix: Int
     let reason: PromptCacheMissReason?
     switch decision {
-    case let .reuse(matchedLength, _, reuseReason):
+    case let .reuse(matchedLength, _, reuseReason, _):
         cachedPrefix = matchedLength
         reason = reuseReason
-    case let .miss(missReason):
+
+    case let .miss(missReason, _):
         cachedPrefix = 0
         reason = missReason
     }
@@ -648,13 +796,16 @@ private func logPromptCacheDecision(
 /// After a generation completes cleanly, trims `cache` back down to exactly the prompt tokens
 /// (discarding the tokens generated during this turn -- see the plan's "what's in the cache
 /// after generation" note) and stores it for the next turn, unless rotation makes it unsafe to
-/// reuse, in which case the slot is simply not written and the miss is logged for diagnosability.
+/// reuse, or `epoch` has been invalidated by a `drop(modelName:)`/`dropAll()` that ran while this
+/// generation was in flight (see `PromptCacheEpoch`), in which case the slot is simply not
+/// written and the miss is logged for diagnosability.
 private func storePromptCacheIfReusable(
     cache: [KVCache],
     fullTokens: [Int],
     promptTokenCount: Int,
-    maxKVSize: Int,
+    kvConfig: PromptCacheKVConfig,
     modelName: String,
+    epoch: PromptCacheEpoch,
     store: PromptCacheStore
 ) {
     guard promptCacheIsReusable(cache) else {
@@ -668,8 +819,14 @@ private func storePromptCacheIfReusable(
         layer.trim(layer.offset - promptTokenCount)
     }
 
-    store.checkin(
+    let stored = store.checkin(
         modelName: modelName,
-        slot: PromptCacheSlot(tokens: fullTokens, cache: cache, maxKVSize: maxKVSize)
+        slot: PromptCacheSlot(tokens: fullTokens, cache: cache, kvConfig: kvConfig),
+        epoch: epoch
     )
+    if stored == false {
+        modelRunnerLogger.info(
+            "prompt_cache store skipped model=\(modelName, privacy: .public) reason=\(PromptCacheMissReason.invalidated.rawValue, privacy: .public)"
+        )
+    }
 }
