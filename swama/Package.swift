@@ -59,7 +59,10 @@ let package = Package(
         // Tests for SwamaKit
         .testTarget(
             name: "SwamaKitTests",
-            dependencies: ["SwamaKit"]
+            dependencies: [
+                "SwamaKit",
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+            ]
         ),
     ]
 )
