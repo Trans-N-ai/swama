@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import MLXLMCommon
 import NIOCore
 import NIOEmbedded
 import NIOHTTP1
@@ -84,6 +85,80 @@ final class CompletionsHandlerTests {
 
         #expect(payload != nil)
         #expect(payload?.messages.isEmpty == true)
+    }
+
+    // MARK: - Sampling Parameter Tests
+
+    private func createSamplingCompletionRequest() -> Data {
+        let request: [String: Any] = [
+            "model": "test-model",
+            "messages": [
+                [
+                    "role": "user",
+                    "content": "Hello, world!"
+                ]
+            ],
+            "top_k": 40,
+            "min_p": 0.05,
+            "repetition_penalty": 1.15,
+            "repetition_context_size": 64,
+            "presence_penalty": 0.5,
+            "frequency_penalty": 0.3
+        ]
+        return try! JSONSerialization.data(withJSONObject: request)
+    }
+
+    @Test func parseSamplingParameters() {
+        let requestData = createSamplingCompletionRequest()
+        let buffer = ByteBuffer(bytes: requestData)
+
+        let payload = CompletionsHandler.parsePayload(buffer)
+
+        #expect(payload != nil)
+        #expect(payload?.top_k == 40)
+        #expect(payload?.min_p == 0.05)
+        #expect(payload?.repetition_penalty == 1.15)
+        #expect(payload?.repetition_context_size == 64)
+        #expect(payload?.presence_penalty == 0.5)
+        #expect(payload?.frequency_penalty == 0.3)
+    }
+
+    @Test func samplingParametersMapToGenerateParameters() throws {
+        let requestData = createSamplingCompletionRequest()
+        let buffer = ByteBuffer(bytes: requestData)
+
+        let payload = try #require(CompletionsHandler.parsePayload(buffer))
+        let parameters = CompletionsHandler.generateParameters(from: payload)
+
+        #expect(parameters.topK == 40)
+        #expect(parameters.minP == 0.05)
+        #expect(parameters.repetitionPenalty == 1.15)
+        #expect(parameters.repetitionContextSize == 64)
+        #expect(parameters.presencePenalty == 0.5)
+        #expect(parameters.frequencyPenalty == 0.3)
+    }
+
+    @Test func absentSamplingParametersKeepEngineDefaults() throws {
+        let requestData = createValidCompletionRequest()
+        let buffer = ByteBuffer(bytes: requestData)
+
+        let payload = try #require(CompletionsHandler.parsePayload(buffer))
+        #expect(payload.top_k == nil)
+        #expect(payload.min_p == nil)
+        #expect(payload.repetition_penalty == nil)
+        #expect(payload.repetition_context_size == nil)
+        #expect(payload.presence_penalty == nil)
+        #expect(payload.frequency_penalty == nil)
+
+        let parameters = CompletionsHandler.generateParameters(from: payload)
+        let defaults = GenerateParameters()
+
+        #expect(parameters.topK == defaults.topK)
+        #expect(parameters.minP == defaults.minP)
+        #expect(parameters.repetitionPenalty == defaults.repetitionPenalty)
+        #expect(parameters.repetitionContextSize == defaults.repetitionContextSize)
+        #expect(parameters.presencePenalty == defaults.presencePenalty)
+        #expect(parameters.frequencyPenalty == defaults.frequencyPenalty)
     }
 
     // MARK: - Message Content Tests
