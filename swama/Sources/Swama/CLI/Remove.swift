@@ -19,7 +19,7 @@ struct Remove: AsyncParsableCommand {
     func run() async throws {
         let resolvedModelName: String =
             if let ttsModel = TTSModelResolver.resolve(model) {
-                ttsModel.kind.rawValue
+                ttsModel.repository
             }
             else {
                 // Resolve model name using the same logic as other commands

@@ -147,6 +147,7 @@ public actor ModelPool {
     public func runTTS<T: Sendable>(
         modelKey: String,
         kind: TTSModelKind,
+        repository: String? = nil,
         operation: @Sendable @escaping (TTSRunner) async throws -> T
     ) async throws -> T {
         while runningInferences >= maxConcurrentInferences || runningModels.contains(modelKey) {
@@ -162,7 +163,11 @@ public actor ModelPool {
             runningModels.remove(modelKey)
         }
 
-        let runner = try await getTTSRunner(modelKey: modelKey, kind: kind)
+        let runner = try await getTTSRunner(
+            modelKey: modelKey,
+            kind: kind,
+            repository: repository
+        )
         return try await operation(runner)
     }
 
@@ -208,7 +213,11 @@ public actor ModelPool {
     }
 
     /// Gets or loads a TTS runner for the given model key
-    private func getTTSRunner(modelKey: String, kind: TTSModelKind) async throws -> TTSRunner {
+    private func getTTSRunner(
+        modelKey: String,
+        kind: TTSModelKind,
+        repository: String?
+    ) async throws -> TTSRunner {
         ensureMemoryManagementStarted()
 
         if let runner = ttsRunnerCache[modelKey] {
@@ -228,7 +237,8 @@ public actor ModelPool {
         ensureCacheLimitConfigured()
 
         let task = Task {
-            let runner = TTSRunner(kind: kind)
+            let runner = repository.map { TTSRunner(kind: kind, repository: $0) }
+                ?? TTSRunner(kind: kind)
             try await runner.loadModel()
             self.setTTSRunner(runner, forKey: modelKey)
             return runner

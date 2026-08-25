@@ -60,7 +60,7 @@ public enum ModelPaths {
     /// for its on-disk directory; otherwise `nil` (i.e. it's a regular LLM/VLM model).
     static func audioRepo(for modelName: String) -> String? {
         if let tts = TTSModelResolver.resolve(modelName) {
-            return TTSModelResolver.repository(for: tts.kind)
+            return tts.repository
         }
         if ModelAliasResolver.isAudioModel(modelName) {
             return ModelAliasResolver.resolve(name: modelName)

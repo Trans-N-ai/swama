@@ -140,7 +140,7 @@ public enum ModelDownloader {
 
     private static func resolveRepoIDs(resolvedName: String) -> [String] {
         if let ttsModel = TTSModelResolver.resolve(resolvedName) {
-            return TTSModelResolver.repoIDs(for: ttsModel.kind)
+            return [ttsModel.repository]
         }
         return [resolvedName]
     }

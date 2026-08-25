@@ -157,6 +157,12 @@ swama list
 | `parakeet` | `mlx-community/parakeet-tdt-0.6b-v3` | - | Parakeet TDT 0.6B |
 | `voxtral` | `mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16` | - | Voxtral Mini 4B (realtime) |
 | `cohere-transcribe` | `beshkenadze/cohere-transcribe-03-2026-mlx-fp16` | - | Cohere Transcribe |
+| `whisper-base` | `mlx-community/whisper-base-4bit` | - | Native Whisper (4/8-bit and fp16 aliases available) |
+| `moss-transcribe-diarize` | `OpenMOSS-Team/MOSS-Transcribe-Diarize` | - | Transcription with speaker diarization |
+| `nemotron-asr` | `mlx-community/nemotron-3.5-asr-streaming-0.6b-8bit` | - | Nemotron 3.5 streaming ASR |
+| `canary` | `Mediform/canary-1b-v2-mlx-q8` | - | Canary 1B v2 |
+| `moonshine` | `UsefulSensors/moonshine-tiny` | - | Moonshine Tiny |
+| `wav2vec2` | `facebook/wav2vec2-base-960h` | - | Wav2Vec2 CTC |
 
 > FireRedASR2 is also supported — pass its full HuggingFace repo id as the model name.
 
@@ -173,7 +179,13 @@ swama list
 | `soprano` | `mlx-community/Soprano-80M-bf16` | - | Soprano 80M |
 | `pocket-tts` | `mlx-community/pocket-tts` | - | Pocket-TTS |
 | `moss-tts` | `OpenMOSS-Team/MOSS-TTS` | - | MOSS-TTS |
+| `moss-ttsd` | `OpenMOSS-Team/MOSS-TTSD-v1.0` | - | MOSS dialogue TTS |
+| `moss-tts-local` | `OpenMOSS-Team/MOSS-TTS-Local-Transformer` | - | MOSS local-transformer TTS |
 | `echo-tts` | `mlx-community/echo-tts-base` | - | Echo-TTS |
+| `kokoro` | `mlx-community/Kokoro-82M-bf16` | - | Kokoro multilingual 82M |
+| `kitten-tts` | `mlx-community/kitten-tts-mini-0.8` | - | KittenTTS Mini |
+| `irodori-tts` | `mlx-community/Irodori-TTS-600M-v3-VoiceDesign-8bit` | - | Japanese VoiceDesign TTS |
+| `omnivoice` | `mlx-community/OmniVoice-bf16` | - | Multilingual voice-design TTS |
 
 ### 3. Start API Service
 
@@ -241,11 +253,12 @@ curl -X POST http://localhost:28100/v1/audio/speech \
     "response_format": "wav"
   }' --output speech.wav
 
-# TTS models: qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts
-# Voice-supported models: orpheus, marvis, qwen3-tts, vyvo
+# TTS models: qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts, kokoro, kitten-tts, irodori-tts, omnivoice, moss-ttsd, moss-tts-local
+# Voice-supported models: orpheus, marvis, qwen3-tts, vyvo, kokoro, kitten-tts, irodori-tts, omnivoice
 # Orpheus voices: dan, jess, leo, mia, tara, zac, zoe
 # Marvis voices: conversational_a, conversational_b
 # Qwen3-TTS / VyvoTTS voice: en-us-1
+# Kokoro default voice: af_heart; KittenTTS default voice: Bella
 
 # Tool calling (function calling)
 curl -X POST http://localhost:28100/v1/chat/completions \

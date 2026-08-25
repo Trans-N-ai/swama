@@ -61,7 +61,13 @@ public enum TTSModelKind: String, CaseIterable, Sendable {
     case soprano
     case pocketTTS = "pocket-tts"
     case mossTTS = "moss-tts"
+    case mossTTSD = "moss-ttsd"
+    case mossTTSLocal = "moss-tts-local"
     case echoTTS = "echo-tts"
+    case kokoro
+    case kittenTTS = "kitten-tts"
+    case irodoriTTS = "irodori-tts"
+    case omniVoice = "omnivoice"
 
     // Legacy aliases kept so existing API model names continue resolving.
     case cosyVoice2 = "cosyvoice2"
@@ -74,6 +80,7 @@ public enum TTSModelKind: String, CaseIterable, Sendable {
 public struct TTSModelResolution: Sendable {
     public let kind: TTSModelKind
     public let cacheKey: String
+    public let repository: String
 }
 
 // MARK: - TTSModelResolver
@@ -92,14 +99,21 @@ public enum TTSModelResolver {
         "soprano",
         "pocket-tts",
         "moss-tts",
+        "moss-ttsd",
+        "moss-tts-local",
         "echo-tts",
+        "kokoro",
+        "kitten-tts",
+        "irodori-tts",
+        "omnivoice",
         "cosyvoice2",
         "cosyvoice3",
         "outetts",
     ]
 
     public static func resolve(_ modelName: String) -> TTSModelResolution? {
-        let normalized = modelName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let requested = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = requested.lowercased()
 
         switch normalized {
         case "mlx-community/orpheus-3b-0.1-ft-4bit",
@@ -119,9 +133,10 @@ public enum TTSModelResolver {
              "mlx-community/chatterbox-turbo-tts-q4":
             return resolution(.chatterboxTurbo)
         case "qwen3-tts",
-             "qwen3tts",
-             qwen3TTSRepo.lowercased():
+             "qwen3tts":
             return resolution(.qwen3TTS)
+        case qwen3TTSRepo.lowercased():
+            return resolution(.qwen3TTS, repository: requested)
         case "mlx-community/vyvotts-en-beta-4bit",
              "vyvo",
              "vyvotts":
@@ -142,10 +157,33 @@ public enum TTSModelResolver {
              "moss-tts",
              "openmoss-team/moss-tts":
             return resolution(.mossTTS)
+        case "moss-ttsd",
+             "openmoss-team/moss-ttsd-v1.0":
+            return resolution(.mossTTSD)
+        case "moss-tts-local",
+             "openmoss-team/moss-tts-local-transformer":
+            return resolution(.mossTTSLocal)
         case "echo",
              "echo-tts",
              "mlx-community/echo-tts-base":
             return resolution(.echoTTS)
+        case "kokoro":
+            return resolution(.kokoro)
+        case "hexgrad/kokoro-82m",
+             "mlx-community/kokoro-82m-bf16":
+            return resolution(.kokoro, repository: requested)
+        case "kitten-tts",
+             "mlx-community/kitten-tts-mini-0.8":
+            return resolution(.kittenTTS)
+        case "irodori",
+             "irodori-tts",
+             "mlx-community/irodori-tts-600m-v3-voicedesign-8bit":
+            return resolution(.irodoriTTS)
+        case "omnivoice",
+             "mlx-community/omnivoice-bf16":
+            return resolution(.omniVoice)
+        case "mlx-community/omnivoice":
+            return resolution(.omniVoice, repository: requested)
         case "cosy-voice2",
              "cosyvoice2",
              "mlx-community/cosyvoice2-0.5b-4bit":
@@ -158,7 +196,7 @@ public enum TTSModelResolver {
              "outetts":
             return resolution(.outetts)
         default:
-            return resolveRepository(normalized)
+            return resolveRepository(requested: requested, normalized: normalized)
         }
     }
 
@@ -171,13 +209,21 @@ public enum TTSModelResolver {
         case .qwen3TTS,
              .vyvo:
             ["en-us-1"]
+        case .kokoro:
+            ["af_heart", "af_bella", "am_adam", "bf_emma", "jf_alpha", "zf_xiaobei"]
+        case .kittenTTS:
+            ["Bella", "Jasper", "Luna", "Bruno", "Rosie", "Hugo", "Kiki", "Leo"]
         case .chatterbox,
              .chatterboxTurbo,
              .cosyVoice2,
              .cosyVoice3,
              .echoTTS,
              .fishSpeech,
+             .irodoriTTS,
              .mossTTS,
+             .mossTTSD,
+             .mossTTSLocal,
+             .omniVoice,
              .outetts,
              .pocketTTS,
              .soprano:
@@ -213,18 +259,41 @@ public enum TTSModelResolver {
             "mlx-community/pocket-tts"
         case .mossTTS:
             "OpenMOSS-Team/MOSS-TTS"
+        case .mossTTSD:
+            "OpenMOSS-Team/MOSS-TTSD-v1.0"
+        case .mossTTSLocal:
+            "OpenMOSS-Team/MOSS-TTS-Local-Transformer"
         case .echoTTS:
             "mlx-community/echo-tts-base"
+        case .kokoro:
+            "mlx-community/Kokoro-82M-bf16"
+        case .kittenTTS:
+            "mlx-community/kitten-tts-mini-0.8"
+        case .irodoriTTS:
+            "mlx-community/Irodori-TTS-600M-v3-VoiceDesign-8bit"
+        case .omniVoice:
+            "mlx-community/OmniVoice-bf16"
         }
     }
 
-    private static func resolution(_ kind: TTSModelKind) -> TTSModelResolution {
-        TTSModelResolution(kind: kind, cacheKey: kind.rawValue)
+    private static func resolution(
+        _ kind: TTSModelKind,
+        repository: String? = nil
+    ) -> TTSModelResolution {
+        let repository = repository ?? self.repository(for: kind)
+        return TTSModelResolution(
+            kind: kind,
+            cacheKey: repository.lowercased(),
+            repository: repository
+        )
     }
 
-    private static func resolveRepository(_ normalized: String) -> TTSModelResolution? {
+    private static func resolveRepository(
+        requested: String,
+        normalized: String
+    ) -> TTSModelResolution? {
         if normalized.contains("qwen3-tts") {
-            return resolution(.qwen3TTS)
+            return resolution(.qwen3TTS, repository: requested)
         }
         if normalized.contains("vyvotts") {
             return resolution(.vyvo)
@@ -248,10 +317,28 @@ public enum TTSModelResolver {
             return resolution(.pocketTTS)
         }
         if normalized.contains("moss") {
-            return resolution(.mossTTS)
+            if normalized.contains("ttsd") {
+                return resolution(.mossTTSD, repository: requested)
+            }
+            if normalized.contains("local-transformer") {
+                return resolution(.mossTTSLocal, repository: requested)
+            }
+            return resolution(.mossTTS, repository: requested)
         }
         if normalized.contains("echo") {
             return resolution(.echoTTS)
+        }
+        if normalized.contains("kokoro") {
+            return resolution(.kokoro, repository: requested)
+        }
+        if normalized.contains("kitten") {
+            return resolution(.kittenTTS, repository: requested)
+        }
+        if normalized.contains("irodori") {
+            return resolution(.irodoriTTS, repository: requested)
+        }
+        if normalized.contains("omnivoice") {
+            return resolution(.omniVoice, repository: requested)
         }
         return nil
     }
@@ -261,10 +348,17 @@ public enum TTSModelResolver {
 
 public final class TTSRunner: @unchecked Sendable {
     private let kind: TTSModelKind
+    private let repository: String
     private var model: (any SpeechGenerationModel)?
 
     public init(kind: TTSModelKind) {
         self.kind = kind
+        self.repository = TTSModelResolver.repository(for: kind)
+    }
+
+    public init(kind: TTSModelKind, repository: String) {
+        self.kind = kind
+        self.repository = repository
     }
 
     public func loadModel() async throws {
@@ -277,7 +371,7 @@ public final class TTSRunner: @unchecked Sendable {
             // loaded weights resolve to the same place (see ModelPaths.audioModelDirectory).
             let cache = HubCache(cacheDirectory: ModelPaths.activeModelsDirectory)
             model = try await TTS.loadModel(
-                modelRepo: TTSModelResolver.repository(for: kind),
+                modelRepo: repository,
                 cache: cache
             )
         }
@@ -340,6 +434,10 @@ public final class TTSRunner: @unchecked Sendable {
                 return "conversational_a"
             case .vyvo:
                 return "en-us-1"
+            case .kokoro:
+                return "af_heart"
+            case .kittenTTS:
+                return "Bella"
             default:
                 return nil
             }

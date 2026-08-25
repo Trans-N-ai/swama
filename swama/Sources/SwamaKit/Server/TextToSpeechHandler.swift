@@ -58,7 +58,8 @@ public enum TextToSpeechHandler {
 
             let result = try await ModelPool.shared.runTTS(
                 modelKey: modelResolution.cacheKey,
-                kind: modelResolution.kind
+                kind: modelResolution.kind,
+                repository: modelResolution.repository
             ) { runner in
                 try await runner.generate(
                     text: trimmedInput,

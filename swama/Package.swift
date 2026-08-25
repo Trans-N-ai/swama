@@ -19,11 +19,16 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", .upToNextMajor(from: "3.31.3")),
-        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMajor(from: "0.31.3")),
+        // Last revision before FoundationModelsIntegration became a default trait;
+        // newer commits require a newer Xcode 27 FoundationModels SDK.
+        .package(
+            url: "https://github.com/ml-explore/mlx-swift-lm",
+            revision: "10e0cb7442920d3f67a08e067d6670334e9dadef"
+        ),
+        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMajor(from: "0.31.4")),
         .package(
             url: "https://github.com/Blaizzy/mlx-audio-swift.git",
-            revision: "856e04afb3c6eb931d92bb0d6ae7bbfbdfa89b15"
+            revision: "cae704f53bc32a3d0b606823828fbc5bedaaf388"
         ),
     ],
     targets: [
