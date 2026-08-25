@@ -118,7 +118,10 @@ public class SpeechToTextRunner: @unchecked Sendable {
                 chunkDuration: params.chunkDuration,
                 minChunkDuration: params.minChunkDuration,
                 repetitionPenalty: params.repetitionPenalty,
-                repetitionContextSize: params.repetitionContextSize
+                repetitionContextSize: params.repetitionContextSize,
+                kvBits: params.kvBits,
+                kvGroupSize: params.kvGroupSize,
+                quantizedKVStart: params.quantizedKVStart
             )
 
             let output = stt.generate(audio: audio, generationParameters: params)
@@ -183,50 +186,20 @@ public enum AudioError: Error, LocalizedError {
 private extension SpeechToTextRunner {
     func createSTT(for modelName: String) async throws -> any STTGenerationModel {
         let repo = resolveSTTRepo(modelName)
-        let normalized = repo.lowercased()
         let cache = HubCache(cacheDirectory: ModelPaths.activeModelsDirectory)
 
-        if normalized.contains("glmasr") || normalized.contains("glm-asr") {
-            return try await GLMASRModel.fromPretrained(repo, cache: cache)
+        do {
+            return try await STT.loadModel(modelRepo: repo, cache: cache)
         }
-        if normalized.contains("voxtral") {
-            // Voxtral/Cohere fromPretrained in mlx-audio-swift do not accept a cache
-            // override yet, so they fall back to the library's default HF cache.
-            return try await VoxtralRealtimeModel.fromPretrained(repo)
+        catch {
+            throw AudioError.modelLoadFailed(
+                "Unable to load STT model '\(repo)': \(error.localizedDescription)"
+            )
         }
-        if normalized.contains("cohere") {
-            return try await CohereTranscribeModel.fromPretrained(repo)
-        }
-        if normalized.contains("parakeet") {
-            return try await ParakeetModel.fromPretrained(repo, cache: cache)
-        }
-        if normalized.contains("firered") || normalized.contains("fire-red") {
-            return try await FireRedASR2Model.fromPretrained(repo, cache: cache)
-        }
-        if normalized.contains("sensevoice") {
-            return try await SenseVoiceModel.fromPretrained(repo, cache: cache)
-        }
-        if normalized.contains("qwen3-asr") || normalized.contains("qwen3_asr") {
-            return try await Qwen3ASRModel.fromPretrained(repo, cache: cache)
-        }
-
-        throw AudioError.modelNotFound("Unsupported STT model: \(modelName)")
     }
 
     func resolveSTTRepo(_ modelName: String) -> String {
-        let resolved = ModelAliasResolver.resolve(name: modelName)
-        let normalized = resolved.lowercased()
-
-        if normalized.hasPrefix("whisper-") ||
-            normalized.hasPrefix("mlx-community/whisper") ||
-            normalized.hasPrefix("funasr") ||
-            normalized.hasPrefix("fun-asr") ||
-            normalized.hasPrefix("mlx-community/fun-asr")
-        {
-            return "mlx-community/Qwen3-ASR-0.6B-4bit"
-        }
-
-        return resolved
+        ModelAliasResolver.resolve(name: modelName)
     }
 
     func normalizeLanguage(_ language: String?) -> String? {

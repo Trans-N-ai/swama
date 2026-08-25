@@ -157,6 +157,12 @@ swama list
 | `parakeet` | `mlx-community/parakeet-tdt-0.6b-v3` | - | Parakeet TDT 0.6B |
 | `voxtral` | `mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16` | - | Voxtral Mini 4B（リアルタイム） |
 | `cohere-transcribe` | `beshkenadze/cohere-transcribe-03-2026-mlx-fp16` | - | Cohere Transcribe |
+| `whisper-base` | `mlx-community/whisper-base-4bit` | - | ネイティブ Whisper（4/8-bit、fp16 エイリアスあり） |
+| `moss-transcribe-diarize` | `OpenMOSS-Team/MOSS-Transcribe-Diarize` | - | 文字起こしと話者分離 |
+| `nemotron-asr` | `mlx-community/nemotron-3.5-asr-streaming-0.6b-8bit` | - | Nemotron 3.5 ストリーミング ASR |
+| `canary` | `Mediform/canary-1b-v2-mlx-q8` | - | Canary 1B v2 |
+| `moonshine` | `UsefulSensors/moonshine-tiny` | - | Moonshine Tiny |
+| `wav2vec2` | `facebook/wav2vec2-base-960h` | - | Wav2Vec2 CTC |
 
 > FireRedASR2 もサポート —— 完全な HuggingFace repo id をモデル名として指定してください。
 
@@ -173,7 +179,13 @@ swama list
 | `soprano` | `mlx-community/Soprano-80M-bf16` | - | Soprano 80M |
 | `pocket-tts` | `mlx-community/pocket-tts` | - | Pocket-TTS |
 | `moss-tts` | `OpenMOSS-Team/MOSS-TTS` | - | MOSS-TTS |
+| `moss-ttsd` | `OpenMOSS-Team/MOSS-TTSD-v1.0` | - | MOSS 対話 TTS |
+| `moss-tts-local` | `OpenMOSS-Team/MOSS-TTS-Local-Transformer` | - | MOSS Local Transformer TTS |
 | `echo-tts` | `mlx-community/echo-tts-base` | - | Echo-TTS |
+| `kokoro` | `mlx-community/Kokoro-82M-bf16` | - | Kokoro 多言語 82M |
+| `kitten-tts` | `mlx-community/kitten-tts-mini-0.8` | - | KittenTTS Mini |
+| `irodori-tts` | `mlx-community/Irodori-TTS-600M-v3-VoiceDesign-8bit` | - | 日本語 VoiceDesign TTS |
+| `omnivoice` | `mlx-community/OmniVoice-bf16` | - | 多言語ボイスデザイン TTS |
 
 ### 3. APIサービスの開始
 
@@ -241,11 +253,12 @@ curl -X POST http://localhost:28100/v1/audio/speech \
     "response_format": "wav"
   }' --output speech.wav
 
-# TTSモデル: qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts
-# 音色対応モデル: orpheus, marvis, qwen3-tts, vyvo
+# TTSモデル: qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts, kokoro, kitten-tts, irodori-tts, omnivoice, moss-ttsd, moss-tts-local
+# 音色対応モデル: orpheus, marvis, qwen3-tts, vyvo, kokoro, kitten-tts, irodori-tts, omnivoice
 # Orpheus音色: dan, jess, leo, mia, tara, zac, zoe
 # Marvis音色: conversational_a, conversational_b
 # Qwen3-TTS / VyvoTTS 音色: en-us-1
+# Kokoroデフォルト音色: af_heart、KittenTTSデフォルト音色: Bella
 
 # ツール呼び出し（関数呼び出し）
 curl -X POST http://localhost:28100/v1/chat/completions \

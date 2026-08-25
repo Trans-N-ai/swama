@@ -44,15 +44,7 @@ public enum ModelAliasResolver {
         let lowercasedName = modelName.lowercased()
         return lowercasedName.hasPrefix("whisper-") ||
             lowercasedName.hasPrefix("funasr-") ||
-            lowercasedName.contains("qwen3-asr") ||
-            lowercasedName.contains("glm-asr") ||
-            lowercasedName.contains("glmasr") ||
-            lowercasedName.contains("sensevoice") ||
-            lowercasedName.contains("voxtral") ||
-            lowercasedName.contains("cohere") ||
-            lowercasedName.contains("parakeet") ||
-            lowercasedName.contains("firered") ||
-            lowercasedName.contains("fire-red") ||
+            sttModelMarkers.contains(where: lowercasedName.contains) ||
             sttAliases.keys.contains(lowercasedName) ||
             sttAliases.values.contains(where: { $0.lowercased() == lowercasedName })
     }
@@ -164,21 +156,38 @@ public enum ModelAliasResolver {
     /// STT model aliases for MLXAudio.
     /// All keys should be lowercase for case-insensitive matching.
     static let sttAliases: [String: String] = [
-        // Legacy Whisper/FunASR API names are preserved and mapped to the new ASR backend.
-        "whisper-tiny": "mlx-community/Qwen3-ASR-0.6B-4bit",
-        "whisper-base": "mlx-community/Qwen3-ASR-0.6B-4bit",
-        "whisper-small": "mlx-community/Qwen3-ASR-0.6B-4bit",
-        "whisper-medium": "mlx-community/Qwen3-ASR-0.6B-4bit",
-        "whisper-large": "mlx-community/Qwen3-ASR-0.6B-4bit",
-        "whisper-large-v3": "mlx-community/Qwen3-ASR-0.6B-4bit",
-        "whisper-large-turbo": "mlx-community/Qwen3-ASR-0.6B-4bit",
-        "whisper": "mlx-community/Qwen3-ASR-0.6B-4bit",
-
-        // English-only variants
-        "whisper-tiny-en": "mlx-community/Qwen3-ASR-0.6B-4bit",
-        "whisper-base-en": "mlx-community/Qwen3-ASR-0.6B-4bit",
-        "whisper-small-en": "mlx-community/Qwen3-ASR-0.6B-4bit",
-        "whisper-medium-en": "mlx-community/Qwen3-ASR-0.6B-4bit",
+        // Whisper is native again in mlx-audio-swift. Keep aliases quantized by default.
+        "whisper": "mlx-community/whisper-large-v3-turbo-4bit",
+        "whisper-tiny": "mlx-community/whisper-tiny-4bit",
+        "whisper-tiny-4bit": "mlx-community/whisper-tiny-4bit",
+        "whisper-tiny-8bit": "mlx-community/whisper-tiny-8bit",
+        "whisper-tiny-fp16": "mlx-community/whisper-tiny-fp16",
+        "whisper-base": "mlx-community/whisper-base-4bit",
+        "whisper-base-4bit": "mlx-community/whisper-base-4bit",
+        "whisper-base-8bit": "mlx-community/whisper-base-8bit",
+        "whisper-base-fp16": "mlx-community/whisper-base-fp16",
+        "whisper-small": "mlx-community/whisper-small-4bit",
+        "whisper-small-4bit": "mlx-community/whisper-small-4bit",
+        "whisper-small-8bit": "mlx-community/whisper-small-8bit",
+        "whisper-small-fp16": "mlx-community/whisper-small-fp16",
+        "whisper-medium": "mlx-community/whisper-medium-4bit",
+        "whisper-medium-4bit": "mlx-community/whisper-medium-4bit",
+        "whisper-medium-8bit": "mlx-community/whisper-medium-8bit",
+        "whisper-medium-fp16": "mlx-community/whisper-medium-fp16",
+        "whisper-large": "mlx-community/whisper-large-v3-4bit",
+        "whisper-large-v3": "mlx-community/whisper-large-v3-4bit",
+        "whisper-large-v3-4bit": "mlx-community/whisper-large-v3-4bit",
+        "whisper-large-v3-8bit": "mlx-community/whisper-large-v3-8bit",
+        "whisper-large-v3-fp16": "mlx-community/whisper-large-v3-fp16",
+        "whisper-large-turbo": "mlx-community/whisper-large-v3-turbo-4bit",
+        "whisper-large-v3-turbo": "mlx-community/whisper-large-v3-turbo-4bit",
+        "whisper-large-v3-turbo-4bit": "mlx-community/whisper-large-v3-turbo-4bit",
+        "whisper-large-v3-turbo-8bit": "mlx-community/whisper-large-v3-turbo-8bit",
+        "whisper-large-v3-turbo-fp16": "mlx-community/whisper-large-v3-turbo-fp16",
+        "whisper-tiny-en": "mlx-community/whisper-tiny.en-4bit",
+        "whisper-base-en": "mlx-community/whisper-base.en-4bit",
+        "whisper-small-en": "mlx-community/whisper-small.en-4bit",
+        "whisper-medium-en": "mlx-community/whisper-medium.en-4bit",
 
         // FunASR models
         "funasr": "mlx-community/Qwen3-ASR-0.6B-4bit",
@@ -194,6 +203,14 @@ public enum ModelAliasResolver {
         "parakeet": "mlx-community/parakeet-tdt-0.6b-v3",
         "voxtral": "mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16",
         "cohere-transcribe": "beshkenadze/cohere-transcribe-03-2026-mlx-fp16",
+        "moss-transcribe": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+        "moss-transcribe-diarize": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+        "nemotron-asr": "mlx-community/nemotron-3.5-asr-streaming-0.6b-8bit",
+        "nemotron-asr-en": "animaslabs/nemotron-speech-streaming-en-0.6b-mlx-8bit",
+        "canary": "Mediform/canary-1b-v2-mlx-q8",
+        "moonshine": "UsefulSensors/moonshine-tiny",
+        "wav2vec2": "facebook/wav2vec2-base-960h",
+        "mms-asr": "facebook/mms-1b-fl102",
     ]
 
     /// TTS (Text-to-Speech) model aliases
@@ -218,6 +235,12 @@ public enum ModelAliasResolver {
         "pocket-tts": "mlx-community/pocket-tts",
         "moss-tts": "OpenMOSS-Team/MOSS-TTS",
         "echo-tts": "mlx-community/echo-tts-base",
+        "kokoro": "mlx-community/Kokoro-82M-bf16",
+        "kitten-tts": "mlx-community/kitten-tts-mini-0.8",
+        "irodori-tts": "mlx-community/Irodori-TTS-600M-v3-VoiceDesign-8bit",
+        "omnivoice": "mlx-community/OmniVoice-bf16",
+        "moss-ttsd": "OpenMOSS-Team/MOSS-TTSD-v1.0",
+        "moss-tts-local": "OpenMOSS-Team/MOSS-TTS-Local-Transformer",
 
         // Legacy names mapped to Qwen3-TTS to keep request compatibility.
         "outetts": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
@@ -225,5 +248,26 @@ public enum ModelAliasResolver {
         // CosyVoice models
         "cosyvoice2": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
         "cosyvoice3": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+    ]
+
+    private static let sttModelMarkers = [
+        "whisper",
+        "qwen3-asr",
+        "glm-asr",
+        "glmasr",
+        "sensevoice",
+        "voxtral",
+        "cohere",
+        "parakeet",
+        "firered",
+        "fire-red",
+        "moss-transcribe-diarize",
+        "nemotron",
+        "canary",
+        "moonshine",
+        "wav2vec",
+        "mms-",
+        "lasr",
+        "granite-speech",
     ]
 }

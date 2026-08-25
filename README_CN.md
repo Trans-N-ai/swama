@@ -157,6 +157,12 @@ swama list
 | `parakeet` | `mlx-community/parakeet-tdt-0.6b-v3` | - | Parakeet TDT 0.6B |
 | `voxtral` | `mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16` | - | Voxtral Mini 4B（实时） |
 | `cohere-transcribe` | `beshkenadze/cohere-transcribe-03-2026-mlx-fp16` | - | Cohere Transcribe |
+| `whisper-base` | `mlx-community/whisper-base-4bit` | - | 原生 Whisper（另有 4/8-bit 和 fp16 别名） |
+| `moss-transcribe-diarize` | `OpenMOSS-Team/MOSS-Transcribe-Diarize` | - | 转录与说话人分离 |
+| `nemotron-asr` | `mlx-community/nemotron-3.5-asr-streaming-0.6b-8bit` | - | Nemotron 3.5 流式 ASR |
+| `canary` | `Mediform/canary-1b-v2-mlx-q8` | - | Canary 1B v2 |
+| `moonshine` | `UsefulSensors/moonshine-tiny` | - | Moonshine Tiny |
+| `wav2vec2` | `facebook/wav2vec2-base-960h` | - | Wav2Vec2 CTC |
 
 > 同时支持 FireRedASR2 —— 用完整的 HuggingFace repo id 作为模型名即可。
 
@@ -173,7 +179,13 @@ swama list
 | `soprano` | `mlx-community/Soprano-80M-bf16` | - | Soprano 80M |
 | `pocket-tts` | `mlx-community/pocket-tts` | - | Pocket-TTS |
 | `moss-tts` | `OpenMOSS-Team/MOSS-TTS` | - | MOSS-TTS |
+| `moss-ttsd` | `OpenMOSS-Team/MOSS-TTSD-v1.0` | - | MOSS 对话 TTS |
+| `moss-tts-local` | `OpenMOSS-Team/MOSS-TTS-Local-Transformer` | - | MOSS Local Transformer TTS |
 | `echo-tts` | `mlx-community/echo-tts-base` | - | Echo-TTS |
+| `kokoro` | `mlx-community/Kokoro-82M-bf16` | - | Kokoro 多语言 82M |
+| `kitten-tts` | `mlx-community/kitten-tts-mini-0.8` | - | KittenTTS Mini |
+| `irodori-tts` | `mlx-community/Irodori-TTS-600M-v3-VoiceDesign-8bit` | - | 日语 VoiceDesign TTS |
+| `omnivoice` | `mlx-community/OmniVoice-bf16` | - | 多语言音色设计 TTS |
 
 ### 3. 启动 API 服务
 
@@ -241,11 +253,12 @@ curl -X POST http://localhost:28100/v1/audio/speech \
     "response_format": "wav"
   }' --output speech.wav
 
-# TTS 模型：qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts
-# 支持音色的模型：orpheus, marvis, qwen3-tts, vyvo
+# TTS 模型：qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts, kokoro, kitten-tts, irodori-tts, omnivoice, moss-ttsd, moss-tts-local
+# 支持音色的模型：orpheus, marvis, qwen3-tts, vyvo, kokoro, kitten-tts, irodori-tts, omnivoice
 # Orpheus 音色：dan, jess, leo, mia, tara, zac, zoe
 # Marvis 音色：conversational_a, conversational_b
 # Qwen3-TTS / VyvoTTS 音色：en-us-1
+# Kokoro 默认音色：af_heart；KittenTTS 默认音色：Bella
 
 # 工具调用（函数调用）
 curl -X POST http://localhost:28100/v1/chat/completions \
