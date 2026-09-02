@@ -1,0 +1,98 @@
+{
+  "schema_version": 2,
+  "models": [
+    {
+      "id": "mlx-community/SmolLM-135M-Instruct-4bit",
+      "role": "small-control",
+      "benchmark": true
+    },
+    {
+      "id": "Qwen/Qwen3-1.7B-MLX-4bit",
+      "role": "reliability",
+      "benchmark": false
+    },
+    {
+      "id": "Qwen/Qwen3-4B-MLX-4bit",
+      "role": "large-reference",
+      "benchmark": true
+    }
+  ],
+  "benchmark": {
+    "max_tokens": 64,
+    "rounds": 7,
+    "warmup_rounds": 2,
+    "minimum_measured_rounds": 5,
+    "prompt": "Write one short sentence containing the exact marker SWAMA_ACCEPTANCE_OK.",
+    "comparison": {
+      "ttft_ratio_max": 1.1,
+      "ttft_absolute_slack_ms": 50.0,
+      "tokens_per_second_ratio_min": 0.95,
+      "peak_resident_ratio_max": 1.1,
+      "peak_resident_absolute_slack_bytes": 134217728
+    }
+  },
+  "reliability": {
+    "cancel_max_tokens": 512,
+    "cancel_observed_token_ceiling": 8,
+    "cancellation_latency_ms_max": 1000,
+    "concurrent_requests": 2,
+    "concurrent_max_tokens": 48,
+    "repeat_rounds": 12,
+    "repeat_max_tokens": 32,
+    "switch_cycles": 2,
+    "switch_max_tokens": 16,
+    "release_settle_ms": 1000,
+    "release_rss_ratio_max": 1.25,
+    "release_rss_absolute_slack_bytes": 268435456,
+    "disconnect_recovery_ttft_ms_max": 1000,
+    "timeout_seconds": 300
+  },
+  "architecture": {
+    "legacy_forbidden_import_allowlist": [
+      "swama/Sources/SwamaKit/MenuBarApp.swift:AppKit",
+      "swama/Sources/SwamaKit/Model/SpeechToTextRunner.swift:MLXAudioCore",
+      "swama/Sources/SwamaKit/Model/SpeechToTextRunner.swift:MLXAudioSTT",
+      "swama/Sources/SwamaKit/Model/TTSRunner.swift:MLXAudioTTS",
+      "swama/Sources/SwamaKit/Server/CompletionsHandler.swift:NIOCore",
+      "swama/Sources/SwamaKit/Server/CompletionsHandler.swift:NIOHTTP1",
+      "swama/Sources/SwamaKit/Server/EmbeddingsHandler.swift:NIOCore",
+      "swama/Sources/SwamaKit/Server/EmbeddingsHandler.swift:NIOHTTP1",
+      "swama/Sources/SwamaKit/Server/HTTPHandler.swift:NIOCore",
+      "swama/Sources/SwamaKit/Server/HTTPHandler.swift:NIOHTTP1",
+      "swama/Sources/SwamaKit/Server/ModelsHandler.swift:NIOCore",
+      "swama/Sources/SwamaKit/Server/ModelsHandler.swift:NIOHTTP1",
+      "swama/Sources/SwamaKit/Server/ServerManager.swift:NIO",
+      "swama/Sources/SwamaKit/Server/ServerManager.swift:NIOHTTP1",
+      "swama/Sources/SwamaKit/Server/TextToSpeechHandler.swift:MLXAudioCore",
+      "swama/Sources/SwamaKit/Server/TextToSpeechHandler.swift:NIOCore",
+      "swama/Sources/SwamaKit/Server/TextToSpeechHandler.swift:NIOHTTP1",
+      "swama/Sources/SwamaKit/Server/TranscriptionsHandler.swift:NIOCore",
+      "swama/Sources/SwamaKit/Server/TranscriptionsHandler.swift:NIOHTTP1"
+    ],
+    "legacy_public_mlx_leak_allowlist": [
+      "swama/Sources/SwamaKit/Model/ModelRunner.swift:public let completionInfo: GenerateCompletionInfo?",
+      "swama/Sources/SwamaKit/Model/ModelRunner.swift:public let toolCalls: [MLXLMCommon.ToolCall]",
+      "swama/Sources/SwamaKit/Model/ModelRunner.swift:public init(container: ModelContainer, promptCacheStore: PromptCacheStore = .shared) {",
+      "swama/Sources/SwamaKit/Model/ModelRunner.swift:public func run(prompt: String, images _: [Data]? = nil, parameters: GenerateParameters) async throws -> String {",
+      "swama/Sources/SwamaKit/Model/ModelRunner.swift:public nonisolated func runWithChatUsage( chatMessages: [MLXLMCommon.Chat.Message], parameters: GenerateParameters ) async throws -> ChatRunResult {",
+      "swama/Sources/SwamaKit/Model/ModelRunner.swift:public nonisolated func runChatNonStream( userInput: MLXLMCommon.UserInput, parameters: GenerateParameters ) async throws -> ChatRunResult {",
+      "swama/Sources/SwamaKit/Model/ModelRunner.swift:public nonisolated func runChat( userInput: MLXLMCommon.UserInput, parameters: GenerateParameters, onToken: (@Sendable (String) async throws -> Void)? = nil, onToolCall: (@Sendable (MLXLMCommon.ToolCall) async throws -> Void)? = nil ) async throws -> ChatRunResult {",
+      "swama/Sources/SwamaKit/Model/PromptCacheStore.swift:public init(parameters: GenerateParameters, maxKVSize: Int) {",
+      "swama/Sources/SwamaKit/Server/CompletionsHandler.swift:public static func sendNonStreamResponse( channel: Channel, modelName: String, chatMessages: [MLXLMCommon.Chat.Message], model: String, parameters: GenerateParameters, mlxTools: [ToolSpec]? = nil ) async throws {",
+      "swama/Sources/SwamaKit/Server/CompletionsHandler.swift:public static func sendStreamResponse( channel: Channel, modelName: String, chatMessages: [MLXLMCommon.Chat.Message], model: String, parameters: GenerateParameters, tools: [ToolSpec]? = nil ) async throws {"
+    ],
+    "goal_core_target": "SwamaCore",
+    "goal_forbidden_imports": [
+      "AppKit",
+      "ArgumentParser",
+      "NIO",
+      "NIOCore",
+      "NIOHTTP1",
+      "MLXAudioCore",
+      "MLXAudioSTT",
+      "MLXAudioTTS",
+      "SwamaServer",
+      "SwamaAppSupport"
+    ]
+  }
+}
