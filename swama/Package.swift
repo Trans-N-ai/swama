@@ -11,6 +11,14 @@ let package = Package(
             name: "SwamaKit",
             targets: ["SwamaKit"]
         ),
+        .library(
+            name: "SwamaServer",
+            targets: ["SwamaServer"]
+        ),
+        .library(
+            name: "SwamaAppSupport",
+            targets: ["SwamaAppSupport"]
+        ),
         .executable(
             name: "swama",
             targets: ["Swama"]
@@ -35,8 +43,6 @@ let package = Package(
         .target(
             name: "SwamaKit",
             dependencies: [
-                .product(name: "NIO", package: "swift-nio"),
-                .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXVLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
@@ -47,15 +53,35 @@ let package = Package(
                 .product(name: "MLXAudioCore", package: "mlx-audio-swift"),
                 .product(name: "MLXAudioSTT", package: "mlx-audio-swift"),
                 .product(name: "MLXAudioTTS", package: "mlx-audio-swift"),
-                .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/SwamaKit",
             resources: []
+        ),
+        .target(
+            name: "SwamaServer",
+            dependencies: [
+                .target(name: "SwamaKit"),
+                .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXAudioCore", package: "mlx-audio-swift"),
+            ],
+            path: "Sources/SwamaServer"
+        ),
+        .target(
+            name: "SwamaAppSupport",
+            dependencies: [
+                .target(name: "SwamaKit"),
+                .target(name: "SwamaServer"),
+            ],
+            path: "Sources/SwamaAppSupport"
         ),
         .executableTarget(
             name: "Swama",
             dependencies: [
                 .target(name: "SwamaKit"),
+                .target(name: "SwamaServer"),
+                .target(name: "SwamaAppSupport"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/Swama",
@@ -66,6 +92,7 @@ let package = Package(
             name: "SwamaKitTests",
             dependencies: [
                 "SwamaKit",
+                "SwamaServer",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
             ]
         ),

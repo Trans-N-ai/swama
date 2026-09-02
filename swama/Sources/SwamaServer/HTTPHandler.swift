@@ -7,6 +7,7 @@ import Foundation
 import MLXLMCommon
 import NIOCore
 import NIOHTTP1
+import SwamaKit
 
 /// This modelPool instance should ideally be managed and injected by ServerManager or a DI system.
 /// For now, keeping it global within SwamaKit as per original Router.swift structure.

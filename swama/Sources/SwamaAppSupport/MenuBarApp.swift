@@ -1,5 +1,7 @@
 import AppKit
 import Foundation
+import SwamaKit
+import SwamaServer
 
 // MARK: - CLIToolStatus
 

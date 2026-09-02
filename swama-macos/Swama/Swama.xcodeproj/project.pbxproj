@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		894B2BC62DD33F930081F47B /* SwamaKit in Frameworks */ = {isa = PBXBuildFile; productRef = 894B2BC52DD33F930081F47B /* SwamaKit */; };
+		89A100012F52A00100000001 /* SwamaAppSupport in Frameworks */ = {isa = PBXBuildFile; productRef = 89A100022F52A00100000001 /* SwamaAppSupport */; };
 		8983B0302DD7316B00840502 /* swama-bin in CopyFiles */ = {isa = PBXBuildFile; fileRef = 894B2BC82DD3428A0081F47B /* swama-bin */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		89E5EE6A2F04DD010093AB6A /* swift-nio_NIOPosix.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8983B0352DD733CB00840502 /* swift-nio_NIOPosix.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		89E5EE6B2F04DD010093AB6A /* swift-transformers_Hub.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8983B0332DD733C600840502 /* swift-transformers_Hub.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -84,6 +85,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				894B2BC62DD33F930081F47B /* SwamaKit in Frameworks */,
+				89A100012F52A00100000001 /* SwamaAppSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -151,6 +153,7 @@
 			name = Swama;
 			packageProductDependencies = (
 				894B2BC52DD33F930081F47B /* SwamaKit */,
+				89A100022F52A00100000001 /* SwamaAppSupport */,
 			);
 			productName = Swama;
 			productReference = 894B2B992DD33F680081F47B /* Swama.app */;
@@ -609,6 +612,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 894B4F8E2DF6DD3C000E0E11 /* XCLocalSwiftPackageReference "../../swama" */;
 			productName = SwamaKit;
+		};
+		89A100022F52A00100000001 /* SwamaAppSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 894B4F8E2DF6DD3C000E0E11 /* XCLocalSwiftPackageReference "../../swama" */;
+			productName = SwamaAppSupport;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
