@@ -43,6 +43,73 @@ struct AcceptanceTests {
         #expect((result["findings"] as? [JSONObject])?
             .contains { $0["metric"] as? String == "tokens_per_second" } == true
         )
+        let coverage = try result.object("comparison_coverage")
+        #expect(try coverage.integer("benchmark_models") == 1)
+        #expect(try coverage.integer("benchmark_routes") == 2)
+    }
+
+    @Test func compareRejectsAnEmptyBaselineBenchmarkSet() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract)
+        var baseline = try syntheticReport(paths: paths)
+        var candidate = baseline
+        baseline["benchmarks"] = JSONObject()
+        candidate["benchmarks"] = JSONObject()
+        try sealReport(&baseline)
+        try sealReport(&candidate)
+
+        do {
+            _ = try compareReports(
+                baseline: baseline,
+                candidate: candidate,
+                contract: contract,
+                contractURL: paths.contract,
+                paths: paths
+            )
+            Issue.record("an empty baseline benchmark set must not compare as passing")
+        }
+        catch let error as AcceptanceFailure {
+            if case .failed = error.kind {
+                Issue.record("an empty benchmark set is invalid evidence, not a product failure")
+            }
+            #expect(error.message == "baseline contains no benchmark models")
+        }
+    }
+
+    @Test func compareRejectsNonStringMetalIdentityValues() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract)
+        var baseline = try syntheticReport(paths: paths)
+        var candidate = baseline
+        var baselineBuild = try baseline.object("build")
+        var baselineMetal = try baselineBuild.object("metal_build")
+        baselineMetal["metal_version"] = 1
+        baselineBuild["metal_build"] = baselineMetal
+        baseline["build"] = baselineBuild
+        var candidateBuild = try candidate.object("build")
+        var candidateMetal = try candidateBuild.object("metal_build")
+        candidateMetal["metal_version"] = 1
+        candidateBuild["metal_build"] = candidateMetal
+        candidate["build"] = candidateBuild
+        try sealReport(&baseline)
+        try sealReport(&candidate)
+
+        do {
+            _ = try compareReports(
+                baseline: baseline,
+                candidate: candidate,
+                contract: contract,
+                contractURL: paths.contract,
+                paths: paths
+            )
+            Issue.record("non-string metal identity values must not compare as equal")
+        }
+        catch let error as AcceptanceFailure {
+            if case .failed = error.kind {
+                Issue.record("metal identity schema drift is invalid evidence, not a product failure")
+            }
+            #expect(error.message == "missing JSON string: metal_version")
+        }
     }
 
     @Test func compareRejectsPostHocInstrumentIdentityChange() throws {

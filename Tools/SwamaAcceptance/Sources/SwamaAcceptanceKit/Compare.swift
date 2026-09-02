@@ -59,9 +59,10 @@ func compareReports(
         "mlx_swift_revision",
         "sha256"
     ]
-    var metalComparable = Dictionary(uniqueKeysWithValues: metalKeys.map { key in
-        (key, baselineMetal[key] as? String == candidateMetal[key] as? String && baselineMetal[key] != nil)
-    })
+    var metalComparable: JSONObject = [:]
+    for key in metalKeys {
+        metalComparable[key] = try baselineMetal.string(key) == candidateMetal.string(key)
+    }
     metalComparable["source_inputs"] = try metalSourceIdentities(baselineMetal) == metalSourceIdentities(candidateMetal)
         && !metalSourceIdentities(baselineMetal).isEmpty
     comparable["metal_toolchain"] = metalComparable
@@ -74,6 +75,12 @@ func compareReports(
     var findings: [JSONObject] = []
     let baselineBenchmarks = try baseline.object("benchmarks")
     let candidateBenchmarks = try candidate.object("benchmarks")
+    guard !baselineBenchmarks.isEmpty else {
+        throw AcceptanceFailure.unknown("baseline contains no benchmark models")
+    }
+
+    let benchmarkRoutes = ["core", "http"]
+    var comparedRouteCount = 0
     for model in baselineBenchmarks.keys.sorted() {
         guard let baselineRoutes = baselineBenchmarks[model] as? JSONObject,
               let candidateRoutes = candidateBenchmarks[model] as? JSONObject
@@ -81,7 +88,7 @@ func compareReports(
             throw AcceptanceFailure.unknown("candidate is missing benchmark model: \(model)")
         }
 
-        for route in ["core", "http"] {
+        for route in benchmarkRoutes {
             let baselineSummary = try baselineRoutes.object(route).object("summary")
             let candidateSummary = try candidateRoutes.object(route).object("summary")
             let baseTTFT = try baselineSummary.double("ttft_median_ms")
@@ -115,6 +122,7 @@ func compareReports(
                     memoryLimit
                 ))
             }
+            comparedRouteCount += 1
         }
     }
     if candidate["passed"] as? Bool != true {
@@ -123,7 +131,15 @@ func compareReports(
             "candidate": "failed reliability or architecture gate"
         ])
     }
-    return ["comparable": comparable, "findings": findings, "passed": findings.isEmpty]
+    return [
+        "comparable": comparable,
+        "comparison_coverage": [
+            "benchmark_models": baselineBenchmarks.count,
+            "benchmark_routes": comparedRouteCount
+        ],
+        "findings": findings,
+        "passed": findings.isEmpty
+    ]
 }
 
 private func metricFinding(
