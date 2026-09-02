@@ -262,6 +262,10 @@ private func makeTestContainer(
     return (MLXLMCommon.ModelContainer(context: context), tokenizer)
 }
 
+func makeLifetimeTestContainer() -> MLXLMCommon.ModelContainer {
+    makeTestContainer().container
+}
+
 /// Feeds `tokens` through fresh `KVCacheSimple` layers in one `update` call each, as a stand-in
 /// for "a slot stored after some earlier, already-completed turn". Unbounded (no rotation), so
 /// suitable for prefix-matching tests that aren't about rotation.

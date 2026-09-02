@@ -53,6 +53,18 @@ private struct ModelUsageInfo {
     }
 }
 
+// MARK: - ModelPoolMemoryHooks
+
+struct ModelPoolMemoryHooks: Sendable {
+    let activeMemory: @Sendable () -> Int
+    let clearCache: @Sendable () -> Void
+
+    static let live: ModelPoolMemoryHooks = .init(
+        activeMemory: { MLX.Memory.snapshot().activeMemory },
+        clearCache: { MLX.Memory.clearCache() }
+    )
+}
+
 // MARK: - ModelPool
 
 /// A pool to manage and cache `ModelContainer` instances with built-in concurrency control.
@@ -65,6 +77,7 @@ public actor ModelPool {
     // MARK: Lifecycle
 
     public init() {
+        memoryHooks = .live
         // Cache limit and memory management timer are both deferred: the former until MLX is
         // genuinely about to be used (see `ensureCacheLimitConfigured()`), the latter until
         // first model access (see `ensureMemoryManagementStarted()`). Neither may run here --
@@ -72,6 +85,10 @@ public actor ModelPool {
         // library load, so calling it eagerly from `init()` would force that initialization
         // just to construct a `ModelPool`, which is what made `ModelPool` impossible to
         // construct under `swift test` (no colocated `mlx.metallib` for the test binary).
+    }
+
+    init(memoryHooks: ModelPoolMemoryHooks) {
+        self.memoryHooks = memoryHooks
     }
 
     /// Ensures memory management timer is running (called on first model access)
@@ -95,6 +112,7 @@ public actor ModelPool {
         guard !didConfigureCacheLimit else {
             return
         }
+
         didConfigureCacheLimit = true
         Self.configureCacheLimit()
     }
@@ -416,65 +434,50 @@ public actor ModelPool {
 
     /// Clears the entire model cache and cancels any ongoing loading tasks.
     public func clearCache() {
-        // Get memory snapshot before clearing
-        let memoryBefore = MLX.Memory.snapshot()
+        let memoryBefore = memoryHooks.activeMemory()
+        let evictedCount = cache.count
 
-        // Store references to help with cleanup
-        let containersToEvict = Array(cache.values)
-        let tasksToCancel = Array(tasks.values)
-        let sttTasksToCancel = Array(sttTasks.values)
-        let ttsTasksToCancel = Array(ttsTasks.values)
+        // Cancel loading work before dropping the task dictionaries. Do not snapshot their
+        // values into local arrays: completed Task values can retain loaded model containers.
+        for task in tasks.values {
+            task.cancel()
+        }
+        for task in sttTasks.values {
+            task.cancel()
+        }
+        for task in ttsTasks.values {
+            task.cancel()
+        }
 
-        // Clear all caches to remove strong references
+        // Release every owner before asking MLX to return unused allocations. The previous
+        // implementation copied `cache.values` into `containersToEvict`, then captured that
+        // array in an asynchronous cleanup Task. MLX therefore cleared while all model weights
+        // were still strongly retained; after the Task released them, no second clear occurred.
         cache.removeAll()
-        modelTypeCache.removeAll() // Clear type cache too
-        vlmRegistryCache = nil // Reset VLM registry cache
-        embeddingRunnerCache.removeAll() // Clear embedding cache
-        PromptCacheStore.shared.dropAll() // Clear prompt/KV-cache slots
-        sttRunnerCache.removeAll() // Clear speech-to-text cache
-        ttsRunnerCache.removeAll() // Clear TTS cache
-        modelUsageInfo.removeAll() // Clear usage tracking
-
-        // Cancel all loading tasks
-        for task in tasksToCancel {
-            task.cancel()
-        }
         tasks.removeAll()
-
-        // Cancel all speech-to-text loading tasks
-        for task in sttTasksToCancel {
-            task.cancel()
-        }
         sttTasks.removeAll()
-
-        // Cancel all TTS loading tasks
-        for task in ttsTasksToCancel {
-            task.cancel()
-        }
         ttsTasks.removeAll()
+        modelTypeCache.removeAll()
+        vlmRegistryCache = nil
+        embeddingRunnerCache.removeAll()
+        PromptCacheStore.shared.dropAll()
+        sttRunnerCache.removeAll()
+        ttsRunnerCache.removeAll()
+        modelUsageInfo.removeAll()
 
-        // Explicitly release container references
-        _ = containersToEvict
+        // Synchronous completion is part of the contract: when clearCache returns, model owners
+        // are gone and MLX cleanup has run. Callers no longer race a detached cleanup Task.
+        memoryHooks.clearCache()
 
-        // Light cleanup only; MLX uses internal caching
-        Task {
-            MLX.Memory.clearCache()
-
-            let memoryAfter = MLX.Memory.snapshot()
-            let memoryReleased = memoryBefore.activeMemory - memoryAfter.activeMemory
-            NSLog(
-                "SwamaKit.ModelPool: Cache cleared (\(containersToEvict.count) models). Released \(memoryReleased / (1024 * 1024))MB active memory. Active: \(memoryAfter.activeMemory / (1024 * 1024))MB"
-            )
-        }
-
-        NSLog("SwamaKit.ModelPool: Cache clearing initiated for \(containersToEvict.count) models")
+        let memoryAfter = memoryHooks.activeMemory()
+        let memoryReleased = max(0, memoryBefore - memoryAfter)
+        NSLog(
+            "SwamaKit.ModelPool: Cache cleared (\(evictedCount) models). Released \(memoryReleased / (1024 * 1024))MB active memory. Active: \(memoryAfter / (1024 * 1024))MB"
+        )
     }
 
     /// Removes a specific model from the cache and cancels its loading task if active.
     public func remove(modelName: String) {
-        // Get reference before removing
-        let containerToRemove = cache[modelName]
-
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName) // Clear type cache for this model
         embeddingRunnerCache.removeValue(forKey: modelName) // Clear embedding cache for this model
@@ -495,12 +498,19 @@ public actor ModelPool {
             ttsTask.cancel()
         }
 
-        // Release container reference
-        _ = containerToRemove
-
-        // Clear MLX GPU cache after removing model
-        MLX.Memory.clearCache()
+        // All strong owners have been removed before MLX cleanup runs.
+        memoryHooks.clearCache()
     }
+
+    #if DEBUG
+        func cacheContainerForTesting(_ container: MLXLMCommon.ModelContainer, modelName: String) {
+            cache[modelName] = container
+        }
+
+        func evictModelForTesting(modelName: String) async {
+            await evictModel(modelName: modelName, reason: "test")
+        }
+    #endif
 
     // MARK: Private
 
@@ -517,6 +527,7 @@ public actor ModelPool {
 
     private var modelTypeCache: [String: Bool] = .init()
     private var vlmRegistryCache: [String: MLXLMCommon.ModelConfiguration]?
+    private let memoryHooks: ModelPoolMemoryHooks
 
     /// Unified VLM detection logic with registry priority
     private func determineIfVLMModel(modelName: String) -> Bool {
@@ -958,11 +969,7 @@ public actor ModelPool {
             return
         }
 
-        // Get memory snapshot before eviction
-        let memoryBefore = MLX.Memory.snapshot()
-
-        // Get reference to the model container before removing it
-        let containerToEvict = cache[modelName]
+        let memoryBefore = memoryHooks.activeMemory()
 
         // Remove from all caches to release strong references
         cache.removeValue(forKey: modelName)
@@ -987,18 +994,15 @@ public actor ModelPool {
             ttsTask.cancel()
         }
 
-        // Explicitly nil out the container reference to help ARC
-        _ = containerToEvict
-
-        // Light cleanup only; MLX uses internal caching
-        MLX.Memory.clearCache()
+        // All strong owners have been removed before MLX cleanup runs.
+        memoryHooks.clearCache()
 
         // Get memory snapshot after cleanup to measure actual release
-        let memoryAfter = MLX.Memory.snapshot()
-        let memoryReleased = memoryBefore.activeMemory - memoryAfter.activeMemory
+        let memoryAfter = memoryHooks.activeMemory()
+        let memoryReleased = max(0, memoryBefore - memoryAfter)
 
         NSLog(
-            "SwamaKit.ModelPool: Evicted model \(modelName) - \(reason). Released \(memoryReleased / (1024 * 1024))MB active memory. Active: \(memoryAfter.activeMemory / (1024 * 1024))MB"
+            "SwamaKit.ModelPool: Evicted model \(modelName) - \(reason). Released \(memoryReleased / (1024 * 1024))MB active memory. Active: \(memoryAfter / (1024 * 1024))MB"
         )
     }
 
