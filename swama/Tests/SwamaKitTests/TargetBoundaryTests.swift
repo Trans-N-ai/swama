@@ -27,7 +27,7 @@ struct TargetBoundaryTests {
 
     @Test func coreSourcesDoNotImportShellFrameworks() throws {
         let coreRoot = packageRoot.appendingPathComponent("Sources/SwamaKit")
-        let forbiddenModules = [
+        let forbiddenModules: Set = [
             "AppKit",
             "ArgumentParser",
             "NIO",
@@ -36,6 +36,7 @@ struct TargetBoundaryTests {
             "SwamaServer",
             "SwamaAppSupport"
         ]
+        let importExpression = try NSRegularExpression(pattern: swiftImportDeclarationPattern)
 
         let sourceURLs = try #require(
             FileManager.default
@@ -49,16 +50,35 @@ struct TargetBoundaryTests {
 
         for sourceURL in sourceURLs {
             let source = try String(contentsOf: sourceURL, encoding: .utf8)
-            let imports = source.split(separator: "\n").map {
-                $0.trimmingCharacters(in: .whitespaces)
-            }
-
-            for module in forbiddenModules {
-                if imports.contains("import \(module)") {
+            for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
+                if let module = importedModule(in: String(line), matching: importExpression),
+                   forbiddenModules.contains(module)
+                {
                     Issue.record("SwamaKit must not import shell module \(module): \(sourceURL.lastPathComponent)")
                 }
             }
         }
+    }
+
+    @Test func importParserHandlesAttributesAccessAndScopedImports() throws {
+        let expression = try NSRegularExpression(pattern: swiftImportDeclarationPattern)
+        let imports = [
+            "import SwamaServer": "SwamaServer",
+            "@_exported import NIO": "NIO",
+            "@preconcurrency import AppKit": "AppKit",
+            "@testable import SwamaServer": "SwamaServer",
+            "@_implementationOnly import ArgumentParser": "ArgumentParser",
+            "@_spi(Testing) import NIOHTTP1": "NIOHTTP1",
+            "internal import SwamaAppSupport": "SwamaAppSupport",
+            "package import struct NIOCore.ByteBuffer": "NIOCore",
+            "@preconcurrency import MLXLMCommon": "MLXLMCommon"
+        ]
+
+        for (line, module) in imports {
+            #expect(importedModule(in: line, matching: expression) == module)
+        }
+        #expect(importedModule(in: "// @_exported import NIO", matching: expression) == nil)
+        #expect(importedModule(in: "let example = \"import NIO\"", matching: expression) == nil)
     }
 
     @Test func shellSourcesLiveOutsideTheCoreTarget() {
@@ -81,6 +101,23 @@ struct TargetBoundaryTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+    }
+
+    private var swiftImportDeclarationPattern: String {
+        // Keep this grammar aligned with the external acceptance scanner. This committed test
+        // must still protect the boundary when that external tool is not being run.
+        #"^\s*(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|package|public|open)\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func|macro)\s+)?([A-Za-z_][A-Za-z0-9_]*)\b"#
+    }
+
+    private func importedModule(in line: String, matching expression: NSRegularExpression) -> String? {
+        let range = NSRange(line.startIndex ..< line.endIndex, in: line)
+        guard let match = expression.firstMatch(in: line, range: range),
+              let moduleRange = Range(match.range(at: 1), in: line)
+        else {
+            return nil
+        }
+
+        return String(line[moduleRange])
     }
 
     private func targetDeclaration(named name: String, in manifest: String) throws -> Substring {

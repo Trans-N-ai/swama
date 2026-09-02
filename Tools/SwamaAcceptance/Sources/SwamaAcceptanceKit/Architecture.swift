@@ -1,5 +1,22 @@
 import Foundation
 
+/// Import attributes are open-ended (`@_exported`, `@_spi(...)`, etc.), so match their
+/// grammar rather than enumerating spellings. Access modifiers and scoped-import kinds are
+/// finite parts of the Swift import declaration grammar.
+let swiftImportDeclarationPattern =
+    #"^\s*(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|package|public|open)\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func|macro)\s+)?([A-Za-z_][A-Za-z0-9_]*)\b"#
+
+func swiftImportedModule(in line: String, matching expression: NSRegularExpression) -> String? {
+    let range = NSRange(line.startIndex ..< line.endIndex, in: line)
+    guard let match = expression.firstMatch(in: line, range: range),
+          let moduleRange = Range(match.range(at: 1), in: line)
+    else {
+        return nil
+    }
+
+    return String(line[moduleRange])
+}
+
 // MARK: - ArchitectureStage
 
 enum ArchitectureStage: String, Sendable {
@@ -70,21 +87,17 @@ private func imports(
         return []
     }
 
-    let expression = try NSRegularExpression(pattern: #"^\s*(?:@preconcurrency\s+)?import\s+([A-Za-z0-9_]+)"#)
+    let expression = try NSRegularExpression(pattern: swiftImportDeclarationPattern)
     var hits: [JSONObject] = []
 
     for file in try regularFiles(in: root, extensions: ["swift"]).sorted(by: { $0.path < $1.path }) {
         let text = try String(contentsOf: file, encoding: .utf8)
         for (index, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let value = String(line)
-            let range = NSRange(value.startIndex ..< value.endIndex, in: value)
-            guard let match = expression.firstMatch(in: value, range: range),
-                  let moduleRange = Range(match.range(at: 1), in: value)
-            else {
+            guard let module = swiftImportedModule(in: value, matching: expression) else {
                 continue
             }
 
-            let module = String(value[moduleRange])
             if forbidden.contains(module) {
                 hits.append([
                     "file": relativePath(file, to: repository),
