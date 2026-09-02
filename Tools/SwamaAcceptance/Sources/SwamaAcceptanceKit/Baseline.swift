@@ -8,6 +8,7 @@ func runBaseline(
     architectureStage: ArchitectureStage,
     paths: WorkspacePaths
 ) async throws -> JSONObject {
+    try requireCleanWorktree(paths: paths)
     var environment = try developerEnvironment(developerDirectory)
     environment["SWAMA_PROMPT_CACHE"] = "0"
     let architecture = try architectureReport(

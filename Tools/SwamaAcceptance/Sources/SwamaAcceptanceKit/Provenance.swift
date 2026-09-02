@@ -8,6 +8,19 @@ enum SystemTool {
     static let swVers = "/usr/bin/sw_vers"
 }
 
+func requireCleanWorktree(paths: WorkspacePaths) throws {
+    let status = try commandOutput(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        currentDirectory: paths.repository
+    )
+    guard status.isEmpty else {
+        let entries = status.split(separator: "\n").prefix(20).joined(separator: "\n")
+        throw AcceptanceFailure.unknown(
+            "working tree is dirty; refusing to bind a report to HEAD:\n\(entries)"
+        )
+    }
+}
+
 func captureProvenance(
     developerDirectory: URL,
     models: [String],

@@ -33,7 +33,7 @@ func buildProducts(
         sampleMemory: false
     )
     guard releaseBuild.returnCode == 0 else {
-        throw AcceptanceFailure.failed("Swama release build failed:\n\(releaseBuild.stderr.suffix(4000))")
+        throw AcceptanceFailure.failed("Swama release build failed:\n\(commandFailureSummary(releaseBuild))")
     }
 
     let fixtureBuild = try runCommand(
@@ -55,7 +55,8 @@ func buildProducts(
         sampleMemory: false
     )
     guard fixtureBuild.returnCode == 0 else {
-        throw AcceptanceFailure.failed("external consumer fixture build failed:\n\(fixtureBuild.stderr.suffix(4000))")
+        throw AcceptanceFailure
+            .failed("external consumer fixture build failed:\n\(commandFailureSummary(fixtureBuild))")
     }
 
     let testBuild = try runCommand(
@@ -76,7 +77,7 @@ func buildProducts(
         sampleMemory: false
     )
     guard testBuild.returnCode == 0 else {
-        throw AcceptanceFailure.failed("Swama test build failed:\n\(testBuild.stderr.suffix(4000))")
+        throw AcceptanceFailure.failed("Swama test build failed:\n\(commandFailureSummary(testBuild))")
     }
 
     let releaseBin = try URL(fileURLWithPath: commandOutput(
@@ -157,7 +158,7 @@ func buildProducts(
     )
     guard tests.returnCode == 0 else {
         throw AcceptanceFailure.failed(
-            "Swift tests failed:\n\(tests.stdout.suffix(2000))\n\(tests.stderr.suffix(2000))"
+            "Swift tests failed:\n\(commandFailureSummary(tests))"
         )
     }
 
@@ -180,6 +181,20 @@ func buildProducts(
             ]
         ]
     )
+}
+
+func commandFailureSummary(_ result: CommandResult, maximumCharacters: Int = 4000) -> String {
+    let combined = result.stdout + "\n" + result.stderr
+    let errorLines = combined.split(separator: "\n")
+        .filter { $0.localizedCaseInsensitiveContains("error:") }
+        .suffix(20)
+        .joined(separator: "\n")
+    let tail = String(combined.suffix(maximumCharacters))
+    guard !errorLines.isEmpty else {
+        return tail
+    }
+
+    return "error lines:\n\(errorLines)\noutput tail:\n\(tail)"
 }
 
 func firstCapture(_ pattern: String, in text: String) -> String? {

@@ -212,6 +212,47 @@ struct AcceptanceTests {
         }
     }
 
+    @Test func cleanWorktreeCanBeBoundToHead() throws {
+        let repository = try temporaryRepository()
+        defer { try? FileManager.default.removeItem(at: repository) }
+        let paths = try WorkspacePaths.discover(explicit: repository.path)
+        try requireCleanWorktree(paths: paths)
+    }
+
+    @Test func trackedDirtyWorktreeIsUnknown() throws {
+        let repository = try temporaryRepository()
+        defer { try? FileManager.default.removeItem(at: repository) }
+        try Data("changed\n".utf8).write(to: repository.appendingPathComponent("swama/Package.swift"))
+        let paths = try WorkspacePaths.discover(explicit: repository.path)
+        #expect(throws: AcceptanceFailure.self) {
+            try requireCleanWorktree(paths: paths)
+        }
+    }
+
+    @Test func untrackedDirtyWorktreeIsUnknown() throws {
+        let repository = try temporaryRepository()
+        defer { try? FileManager.default.removeItem(at: repository) }
+        try Data("untracked\n".utf8).write(to: repository.appendingPathComponent("untracked.txt"))
+        let paths = try WorkspacePaths.discover(explicit: repository.path)
+        #expect(throws: AcceptanceFailure.self) {
+            try requireCleanWorktree(paths: paths)
+        }
+    }
+
+    @Test func buildFailureSummaryKeepsErrorLines() {
+        let result = CommandResult(
+            command: ["swift", "build"],
+            returnCode: 1,
+            stdout: String(repeating: "warning: setup\n", count: 500) + "error: root cause\n",
+            stderr: "warning: final warning\n",
+            durationMilliseconds: 1,
+            peakResidentBytes: 0
+        )
+        let summary = commandFailureSummary(result, maximumCharacters: 80)
+        #expect(summary.contains("error: root cause"))
+        #expect(summary.contains("output tail:"))
+    }
+
     private var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -267,5 +308,46 @@ struct AcceptanceTests {
                 "followup": ["output": "ok", "ttft_ms": 10.0]
             ]
         ]
+    }
+
+    private func temporaryRepository() throws -> URL {
+        let root = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-clean-tree-test-\(UUID().uuidString)")
+        for directory in [
+            "swama",
+            "Tools/SwamaAcceptance",
+            "Tests/AcceptanceFixture"
+        ] {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(directory),
+                withIntermediateDirectories: true
+            )
+        }
+        for file in [
+            "swama/Package.swift",
+            "Tools/SwamaAcceptance/Package.swift",
+            "Tests/AcceptanceFixture/Package.swift"
+        ] {
+            try Data("fixture\n".utf8).write(to: root.appendingPathComponent(file))
+        }
+        for command in [
+            ["git", "init"],
+            ["git", "config", "user.email", "acceptance@example.invalid"],
+            ["git", "config", "user.name", "Acceptance Test"],
+            ["git", "add", "."],
+            ["git", "commit", "-m", "fixture"]
+        ] {
+            let result = try runCommand(
+                command,
+                currentDirectory: root,
+                timeout: 30,
+                sampleMemory: false
+            )
+            guard result.returnCode == 0 else {
+                throw AcceptanceFailure.unknown("cannot prepare clean repository: \(commandFailureSummary(result))")
+            }
+        }
+        return root
     }
 }
