@@ -5,14 +5,15 @@
 //  Created by Xingyue on 2025/05/08.
 //
 
+import SwamaAppSupport
 import SwamaKit
 import SwiftUI
 
 @main
 struct SwamaApp: App {
     /// Use NSApplicationDelegateAdaptor to integrate the existing AppDelegate
-    /// from SwamaKit for managing the application lifecycle and menu bar.
-    @NSApplicationDelegateAdaptor(SwamaKit.AppDelegate.self) var appDelegate
+    /// from SwamaAppSupport for managing the application lifecycle and menu bar.
+    @NSApplicationDelegateAdaptor(SwamaAppSupport.AppDelegate.self) var appDelegate
 
     @State private var cliToolStatus: CLIToolStatus = .notInstalled
     @State private var contextLimit: Int = ContextLimitConfig.Constants.defaultLimit

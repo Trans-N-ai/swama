@@ -1,5 +1,6 @@
 import Foundation
 @testable import SwamaKit
+@testable import SwamaServer
 import Testing
 
 @MainActor @Suite(.serialized)

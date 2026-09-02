@@ -1,7 +1,6 @@
 import ArgumentParser
-import NIO
-import NIOHTTP1
 import SwamaKit
+import SwamaServer
 
 struct Serve: AsyncParsableCommand {
     static let configuration: CommandConfiguration = .init(
@@ -22,11 +21,11 @@ struct Serve: AsyncParsableCommand {
         // Create a new instance of ServerManager for the CLI.
         // The ServerManager's properties (group, channel) are not used by runForCLI directly,
         // as runForCLI manages its own NIO resources.
-        let serverManager = SwamaKit.ServerManager()
+        let serverManager = SwamaServer.ServerManager()
         print("CLI Serve: Initialized SwamaKit.ServerManager for CLI operation.")
 
         // Use provided port or fallback to environment variable/default
-        let actualPort = port ?? SwamaKit.ServerManager.defaultPort()
+        let actualPort = port ?? SwamaServer.ServerManager.defaultPort()
 
         if let limit = commonOptions.resolvedContextLimit {
             await ContextLimitConfig.shared.updateLimit(limit)

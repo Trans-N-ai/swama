@@ -1,5 +1,6 @@
 import AppKit // Required for NSApplication
 import ArgumentParser
+import SwamaAppSupport
 import SwamaKit
 
 // MARK: - Swama
@@ -44,9 +45,8 @@ struct MenuBar: AsyncParsableCommand {
         // Re-implementing the core logic of the old bootstrapMenuBarApp here
         let app = NSApplication.shared
 
-        // Create and assign the AppDelegate from SwamaKit
-        // SwamaKit.AppDelegate's applicationDidFinishLaunching will handle icon and menu setup.
-        let delegate = SwamaKit.AppDelegate()
+        // Create and assign the menu-bar shell delegate.
+        let delegate = SwamaAppSupport.AppDelegate()
         app.delegate = delegate
 
         // Set activation policy for a menu bar app (no Dock icon, no main window usually)

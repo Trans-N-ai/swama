@@ -7,6 +7,7 @@ import Foundation
 @preconcurrency import MLXLMCommon
 import NIOCore
 import NIOHTTP1
+import SwamaKit
 import struct Tokenizers.ToolSpec
 
 // MARK: - CompletionsHandler

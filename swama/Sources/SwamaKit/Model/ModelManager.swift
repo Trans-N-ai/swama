@@ -25,7 +25,7 @@ public enum ModelManager {
     ///   • flat:   `{root}/{model}/.swama-meta.json`
     ///   • nested: `{root}/{org}/{model}/.swama-meta.json`
     /// The nested case also covers the audio layout `{root}/mlx-audio/{repo_underscore}/`.
-    static func scanModelsDirectory(at modelsRootDirectory: URL) -> [ModelInfo] {
+    package static func scanModelsDirectory(at modelsRootDirectory: URL) -> [ModelInfo] {
         var modelInfos: [ModelInfo] = []
 
         let topLevel: [URL]

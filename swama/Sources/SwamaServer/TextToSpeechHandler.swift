@@ -2,6 +2,7 @@ import Foundation
 import MLXAudioCore
 import NIOCore
 import NIOHTTP1
+import SwamaKit
 
 // MARK: - TextToSpeechHandler
 

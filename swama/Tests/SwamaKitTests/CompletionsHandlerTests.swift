@@ -4,6 +4,7 @@ import NIOCore
 import NIOEmbedded
 import NIOHTTP1
 @testable import SwamaKit
+@testable import SwamaServer
 import Testing
 
 // MARK: - CompletionsHandlerTests
