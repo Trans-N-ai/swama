@@ -4,7 +4,7 @@ import SwamaKit
 
 // MARK: - List
 
-struct List: SwamaLoggedCommand {
+struct List: AsyncParsableCommand {
     // MARK: Internal
 
     enum OutputFormat: String, ExpressibleByArgument {
@@ -20,19 +20,21 @@ struct List: SwamaLoggedCommand {
     @Option(name: .shortAndLong, help: "Format for the output: text, json.")
     var format: OutputFormat = .text
 
-    func runLogged() async throws {
-        let models = ModelManager.models()
+    func run() async throws {
+        try await SwamaDiagnostics.withSession(mode: .cli) {
+            let models = ModelManager.models()
 
-        if models.isEmpty {
-            print("No models found.")
-            return
-        }
+            if models.isEmpty {
+                print("No models found.")
+                return
+            }
 
-        switch format {
-        case .text:
-            printModelsText(models)
-        case .json:
-            try printModelsJSON(models)
+            switch format {
+            case .text:
+                printModelsText(models)
+            case .json:
+                try printModelsJSON(models)
+            }
         }
     }
 

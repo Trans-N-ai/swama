@@ -22,7 +22,7 @@ enum ResponseFormat: String, CaseIterable, ExpressibleByArgument {
 
 // MARK: - Transcribe
 
-struct Transcribe: SwamaLoggedCommand {
+struct Transcribe: AsyncParsableCommand {
     static let configuration: CommandConfiguration = .init(
         abstract: "Transcribe audio file to text using MLXAudio STT"
     )
@@ -51,73 +51,75 @@ struct Transcribe: SwamaLoggedCommand {
     @Flag(name: .long, help: "Show detailed output with timestamps (equivalent to --format verbose)")
     var verbose: Bool = false
 
-    func runLogged() async throws {
-        let audioURL = URL(fileURLWithPath: audioFile)
+    func run() async throws {
+        try await SwamaDiagnostics.withSession(mode: .cli) {
+            let audioURL = URL(fileURLWithPath: audioFile)
 
-        // Check if file exists
-        guard FileManager.default.fileExists(atPath: audioFile) else {
-            print("Error: Audio file not found at \(audioFile)")
-            throw ExitCode.failure
-        }
-
-        // Validate temperature range
-        guard temperature >= 0.0, temperature <= 1.0 else {
-            print("❌ Error: Temperature must be between 0.0 and 1.0")
-            throw ExitCode.failure
-        }
-
-        // Determine final response format (verbose flag overrides format option)
-        let finalFormat: TranscriptionResponseFormat = verbose ? .verboseJson : {
-            switch format {
-            case .simple: .simple
-            case .json: .simple // CLI treats json same as simple for now
-            case .verbose: .verboseJson
+            // Check if file exists
+            guard FileManager.default.fileExists(atPath: audioFile) else {
+                print("Error: Audio file not found at \(audioFile)")
+                throw ExitCode.failure
             }
-        }()
 
-        print("🎤 Loading STT model: \(model)")
-        if let lang = language {
-            print("🌍 Language: \(lang)")
-        }
-        if temperature > 0.0 {
-            print("🌡️ Temperature: \(temperature)")
-        }
-        if let promptText = prompt {
-            print("💭 Prompt: \(promptText)")
-        }
+            // Validate temperature range
+            guard temperature >= 0.0, temperature <= 1.0 else {
+                print("❌ Error: Temperature must be between 0.0 and 1.0")
+                throw ExitCode.failure
+            }
 
-        // Check if this is a supported audio model
-        guard ModelAliasResolver.isAudioModel(model) else {
-            print("❌ Error: '\(model)' is not a supported audio model.")
-            print("   Use qwen3-asr, whisper-* compatibility aliases, or another supported STT model")
-            throw ExitCode.failure
-        }
+            // Determine final response format (verbose flag overrides format option)
+            let finalFormat: TranscriptionResponseFormat = verbose ? .verboseJson : {
+                switch format {
+                case .simple: .simple
+                case .json: .simple // CLI treats json same as simple for now
+                case .verbose: .verboseJson
+                }
+            }()
 
-        do {
-            // Load MLXAudio STT model
-            print("📥 Loading model...")
-            let runner = await MainActor.run { SpeechToTextRunner() }
+            print("🎤 Loading STT model: \(model)")
+            if let lang = language {
+                print("🌍 Language: \(lang)")
+            }
+            if temperature > 0.0 {
+                print("🌡️ Temperature: \(temperature)")
+            }
+            if let promptText = prompt {
+                print("💭 Prompt: \(promptText)")
+            }
 
-            // Load using MLXAudio STT-specific logic
-            try await runner.loadModel(model)
-            print("✅ Model loaded successfully")
+            // Check if this is a supported audio model
+            guard ModelAliasResolver.isAudioModel(model) else {
+                print("❌ Error: '\(model)' is not a supported audio model.")
+                print("   Use qwen3-asr, whisper-* compatibility aliases, or another supported STT model")
+                throw ExitCode.failure
+            }
 
-            print("🎧 Processing audio file...")
+            do {
+                // Load MLXAudio STT model
+                print("📥 Loading model...")
+                let runner = await MainActor.run { SpeechToTextRunner() }
 
-            // Use the new unified transcribe method with user parameters
-            let result = try await runner.transcribe(
-                audioFile: audioURL,
-                language: language,
-                temperature: temperature,
-                responseFormat: finalFormat
-            )
+                // Load using MLXAudio STT-specific logic
+                try await runner.loadModel(model)
+                print("✅ Model loaded successfully")
 
-            // Handle different output formats
-            try await handleOutput(result: result, format: format, verbose: verbose)
-        }
-        catch {
-            print("❌ Transcription failed: \(error.localizedDescription)")
-            throw ExitCode.failure
+                print("🎧 Processing audio file...")
+
+                // Use the new unified transcribe method with user parameters
+                let result = try await runner.transcribe(
+                    audioFile: audioURL,
+                    language: language,
+                    temperature: temperature,
+                    responseFormat: finalFormat
+                )
+
+                // Handle different output formats
+                try await handleOutput(result: result, format: format, verbose: verbose)
+            }
+            catch {
+                print("❌ Transcription failed: \(error.localizedDescription)")
+                throw ExitCode.failure
+            }
         }
     }
 

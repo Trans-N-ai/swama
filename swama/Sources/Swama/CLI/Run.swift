@@ -118,7 +118,7 @@ private enum RunError: Error, LocalizedError {
 
 // MARK: - Run
 
-struct Run: SwamaLoggedCommand {
+struct Run: AsyncParsableCommand {
     static let configuration: CommandConfiguration = .init(
         abstract: "Run a local model with a prompt using Swama",
         discussion: """
@@ -175,26 +175,16 @@ struct Run: SwamaLoggedCommand {
     @OptionGroup()
     var commonOptions: CommonRunOptions
 
-    func runLogged() async throws {
-        let resolvedModelName = try await ModelDownloader.fetchModel(modelName: modelName)
+    func run() async throws {
+        try await SwamaDiagnostics.withSession(mode: .cli) {
+            let resolvedModelName = try await ModelDownloader.fetchModel(modelName: modelName)
 
-        if let limit = commonOptions.resolvedContextLimit {
-            await ContextLimitConfig.shared.updateLimit(limit)
-        }
-
-        if !direct {
-            if await isServerRunning() {
-                do {
-                    try await runViaServer(modelName: resolvedModelName)
-                    return
-                }
-                catch {
-                    print("⚠️  Server request failed, falling back to direct execution...")
-                }
+            if let limit = commonOptions.resolvedContextLimit {
+                await ContextLimitConfig.shared.updateLimit(limit)
             }
-            else {
-                // Try to start server silently
-                if await startServerAndWait() {
+
+            if !direct {
+                if await isServerRunning() {
                     do {
                         try await runViaServer(modelName: resolvedModelName)
                         return
@@ -204,13 +194,25 @@ struct Run: SwamaLoggedCommand {
                     }
                 }
                 else {
-                    print("⚠️  Server startup failed, falling back to direct execution...")
+                    // Try to start server silently
+                    if await startServerAndWait() {
+                        do {
+                            try await runViaServer(modelName: resolvedModelName)
+                            return
+                        }
+                        catch {
+                            print("⚠️  Server request failed, falling back to direct execution...")
+                        }
+                    }
+                    else {
+                        print("⚠️  Server startup failed, falling back to direct execution...")
+                    }
                 }
             }
-        }
 
-        // Fallback: Direct execution
-        try await runDirectly(modelName: resolvedModelName)
+            // Fallback: Direct execution
+            try await runDirectly(modelName: resolvedModelName)
+        }
     }
 
     // MARK: - Server Detection and Management

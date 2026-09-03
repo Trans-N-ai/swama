@@ -2,7 +2,7 @@ import ArgumentParser
 import Foundation
 import SwamaKit
 
-struct Create: SwamaLoggedCommand {
+struct Create: AsyncParsableCommand {
     static let configuration: CommandConfiguration = .init(
         abstract: "Create a model entry from a user-specified path and name. The model metadata (.swama-meta.json) will be saved to ~/.swama/models/<name>, allowing the model to be run later using this name."
     )
@@ -13,11 +13,13 @@ struct Create: SwamaLoggedCommand {
     @Option(name: .shortAndLong, help: "Output directory for the created model or project")
     var name: String
 
-    func runLogged() async throws {
-        print("Creating model from path: \(path) with name: \(name)")
+    func run() async throws {
+        try await SwamaDiagnostics.withSession(mode: .cli) {
+            print("Creating model from path: \(path) with name: \(name)")
 
-        try await ModelCreator.run(from: path, name: name)
+            try await ModelCreator.run(from: path, name: name)
 
-        print("Model created successfully at \(ModelPaths.activeModelsDirectory.appendingPathComponent(name).path)")
+            print("Model created successfully at \(ModelPaths.activeModelsDirectory.appendingPathComponent(name).path)")
+        }
     }
 }
