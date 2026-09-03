@@ -65,6 +65,92 @@ struct ModelPoolMemoryHooks: Sendable {
     )
 }
 
+// MARK: - ModelPoolLoadOverrides
+
+/// Test-only seams for making each asynchronous load path deterministic without touching MLX.
+/// Production pools leave this nil and use the real model factories below.
+struct ModelPoolLoadOverrides: Sendable {
+    let modelExistsLocally: @Sendable (String) -> Bool
+    let determineIsVLM: @Sendable (String) -> Bool
+    let loadLanguage: @Sendable (String, Bool) async throws -> MLXLMCommon.ModelContainer
+    let loadSpeechToText: @Sendable (String) async throws -> SpeechToTextRunner
+    let loadTTS: @Sendable (String, TTSModelKind, String?) async throws -> TTSRunner
+    let loadEmbedding: @Sendable (String) async throws -> EmbeddingRunner
+}
+
+// MARK: - ModelLoadToken
+
+private struct ModelLoadToken: Equatable, Sendable {
+    let globalGeneration: UInt64
+    let modelGeneration: UInt64
+    let sequence: UInt64
+}
+
+// MARK: - LoadedValueOwner
+
+/// A completed Task normally retains its success value. Keeping that value behind a releasable
+/// owner lets a stale load drop the last Task-owned model reference *before* the follow-up MLX
+/// cleanup runs.
+private final class LoadedValueOwner<Value: AnyObject>: @unchecked Sendable {
+    init(_ value: Value) {
+        self.value = value
+    }
+
+    func retainedValue() -> Value? {
+        lock.withLock { value }
+    }
+
+    @discardableResult
+    func release() -> Bool {
+        lock.withLock {
+            guard value != nil else {
+                return false
+            }
+
+            value = nil
+            return true
+        }
+    }
+
+    private let lock: NSLock = .init()
+    private var value: Value?
+}
+
+// MARK: - PendingModelLoad
+
+private struct PendingModelLoad<Value: AnyObject>: Sendable {
+    let token: ModelLoadToken
+    let task: Task<LoadedValueOwner<Value>, Error>
+    let staleCleanupGate: OneShotGate = .init()
+}
+
+// MARK: - OneShotGate
+
+private final class OneShotGate: @unchecked Sendable {
+    func claim() -> Bool {
+        lock.withLock {
+            guard !claimed else {
+                return false
+            }
+
+            claimed = true
+            return true
+        }
+    }
+
+    private let lock: NSLock = .init()
+    private var claimed = false
+}
+
+// MARK: - ModelPoolModelKind
+
+enum ModelPoolModelKind: CaseIterable, Sendable {
+    case language
+    case speechToText
+    case textToSpeech
+    case embedding
+}
+
 // MARK: - ModelPool
 
 /// A pool to manage and cache `ModelContainer` instances with built-in concurrency control.
@@ -78,6 +164,7 @@ public actor ModelPool {
 
     public init() {
         memoryHooks = .live
+        loadOverrides = nil
         // Cache limit and memory management timer are both deferred: the former until MLX is
         // genuinely about to be used (see `ensureCacheLimitConfigured()`), the latter until
         // first model access (see `ensureMemoryManagementStarted()`). Neither may run here --
@@ -87,8 +174,12 @@ public actor ModelPool {
         // construct under `swift test` (no colocated `mlx.metallib` for the test binary).
     }
 
-    init(memoryHooks: ModelPoolMemoryHooks) {
+    init(
+        memoryHooks: ModelPoolMemoryHooks,
+        loadOverrides: ModelPoolLoadOverrides? = nil
+    ) {
         self.memoryHooks = memoryHooks
+        self.loadOverrides = loadOverrides
     }
 
     /// Ensures memory management timer is running (called on first model access)
@@ -114,7 +205,9 @@ public actor ModelPool {
         }
 
         didConfigureCacheLimit = true
-        Self.configureCacheLimit()
+        if loadOverrides == nil {
+            Self.configureCacheLimit()
+        }
     }
 
     /// Whether `configureCacheLimit()` has already run for this pool.
@@ -149,13 +242,16 @@ public actor ModelPool {
 
         runningInferences += 1
         runningModels.insert(modelName)
+        loadingModels.insert(modelName)
         defer {
             runningInferences = max(0, runningInferences - 1)
             runningModels.remove(modelName)
+            loadingModels.remove(modelName)
         }
 
         // Get or load the speech-to-text runner
         let runner = try await getSpeechToTextRunner(modelName: modelName)
+        loadingModels.remove(modelName)
 
         // Execute the operation
         return try await operation(runner)
@@ -176,9 +272,11 @@ public actor ModelPool {
 
         runningInferences += 1
         runningModels.insert(modelKey)
+        loadingModels.insert(modelKey)
         defer {
             runningInferences = max(0, runningInferences - 1)
             runningModels.remove(modelKey)
+            loadingModels.remove(modelKey)
         }
 
         let runner = try await getTTSRunner(
@@ -186,6 +284,7 @@ public actor ModelPool {
             kind: kind,
             repository: repository
         )
+        loadingModels.remove(modelKey)
         return try await operation(runner)
     }
 
@@ -200,11 +299,8 @@ public actor ModelPool {
             return runner
         }
 
-        if let task = sttTasks[modelName] {
-            let runner = try await task.value
-            // Record usage for newly loaded runner
-            modelUsageInfo[modelName]?.recordUsage()
-            return runner
+        if let pending = sttTasks[modelName] {
+            return try await finishSpeechToTextLoad(pending, modelName: modelName)
         }
 
         // Check if we need to free up memory before loading a new model
@@ -213,16 +309,14 @@ public actor ModelPool {
         // About to genuinely touch MLX -- configure the cache limit now, idempotently.
         ensureCacheLimitConfigured()
 
-        let task = Task {
-            let runner = await MainActor.run { SpeechToTextRunner() }
-            try await runner.loadModel(modelName)
-
-            // Update caches back on the actor
-            self.setSpeechToTextRunner(runner, forKey: modelName)
-            return runner
+        let token = makeLoadToken(for: modelName)
+        let task = Task { [self] in
+            let runner = try await loadSpeechToTextRunner(modelName: modelName)
+            return LoadedValueOwner(runner)
         }
-        sttTasks[modelName] = task
-        return try await task.value
+        let pending = PendingModelLoad(token: token, task: task)
+        sttTasks[modelName] = pending
+        return try await finishSpeechToTextLoad(pending, modelName: modelName)
     }
 
     private func setSpeechToTextRunner(_ runner: SpeechToTextRunner, forKey modelName: String) {
@@ -243,10 +337,8 @@ public actor ModelPool {
             return runner
         }
 
-        if let task = ttsTasks[modelKey] {
-            let runner = try await task.value
-            modelUsageInfo[modelKey]?.recordUsage()
-            return runner
+        if let pending = ttsTasks[modelKey] {
+            return try await finishTTSLoad(pending, modelKey: modelKey)
         }
 
         await performMemoryPressureCheck()
@@ -254,16 +346,19 @@ public actor ModelPool {
         // About to genuinely touch MLX -- configure the cache limit now, idempotently.
         ensureCacheLimitConfigured()
 
-        let task = Task {
-            let runner = repository.map { TTSRunner(kind: kind, repository: $0) }
-                ?? TTSRunner(kind: kind)
-            try await runner.loadModel()
-            self.setTTSRunner(runner, forKey: modelKey)
-            return runner
+        let token = makeLoadToken(for: modelKey)
+        let task = Task { [self] in
+            let runner = try await loadTTSRunner(
+                modelKey: modelKey,
+                kind: kind,
+                repository: repository
+            )
+            return LoadedValueOwner(runner)
         }
 
-        ttsTasks[modelKey] = task
-        return try await task.value
+        let pending = PendingModelLoad(token: token, task: task)
+        ttsTasks[modelKey] = pending
+        return try await finishTTSLoad(pending, modelKey: modelKey)
     }
 
     private func setTTSRunner(_ runner: TTSRunner, forKey modelKey: String) {
@@ -296,6 +391,10 @@ public actor ModelPool {
     /// Per-model concurrency control: track which models are currently running inference
     private var runningModels: Set<String> = []
 
+    /// Subset of `runningModels` that has not yet reached its inference operation. Periodic
+    /// teardown may invalidate these pending loads, but must still skip a live operation.
+    private var loadingModels: Set<String> = []
+
     /// Safely run a model operation with concurrency control to prevent MLX heap corruption
     public func run<T: Sendable>(
         modelName: String,
@@ -310,13 +409,16 @@ public actor ModelPool {
 
         runningInferences += 1
         runningModels.insert(modelName)
+        loadingModels.insert(modelName)
         defer {
             runningInferences = max(0, runningInferences - 1)
             runningModels.remove(modelName)
+            loadingModels.remove(modelName)
         }
 
         // Get or load the model container
         let container = try await getContainer(modelName: modelName)
+        loadingModels.remove(modelName)
         let runner = ModelRunner(container: container)
 
         // Execute the operation
@@ -340,20 +442,7 @@ public actor ModelPool {
             runningInferences = max(0, runningInferences - 1)
         }
 
-        // Get or create embedding runner
-        let runner: EmbeddingRunner
-        if let existingRunner = embeddingRunnerCache[modelName] {
-            runner = existingRunner
-        }
-        else {
-            // About to genuinely touch MLX -- configure the cache limit now, idempotently.
-            ensureCacheLimitConfigured()
-
-            // Load the embedding model
-            let container = try await loadEmbeddingModelContainer(modelName: modelName)
-            runner = EmbeddingRunner(container: container)
-            embeddingRunnerCache[modelName] = runner
-        }
+        let runner = try await getOrLoadEmbeddingRunner(modelName: modelName)
 
         // Execute the operation
         return try await operation(runner)
@@ -370,56 +459,32 @@ public actor ModelPool {
             return container
         }
 
-        if let task = tasks[modelName] {
-            let container = try await task.value
-            modelUsageInfo[modelName]?.recordUsage()
-            return container
+        if let pending = tasks[modelName] {
+            return try await finishLanguageLoad(pending, modelName: modelName)
         }
 
         // Check if we need to free up memory before loading a new model
         await performMemoryPressureCheck()
 
-        let task = Task {
-            defer { tasks[modelName] = nil }
-
-            if let isVLM = modelTypeCache[modelName] {
-                guard ModelPaths.modelExistsLocally(modelName) else {
-                    modelTypeCache.removeValue(forKey: modelName)
-                    throw ModelPoolError.modelNotFoundLocally(modelName)
-                }
-
-                let container = try await loadModelContainer(
-                    modelName: modelName,
-                    isVLM: isVLM
-                )
-
-                cache[modelName] = container
-                modelUsageInfo[modelName] = ModelUsageInfo()
-                return container
-            }
-
-            guard ModelPaths.modelExistsLocally(modelName) else {
-                throw ModelPoolError.modelNotFoundLocally(modelName)
-            }
-
-            // Determine if this is a VLM model using unified detection logic (registry priority)
-            let isVLMModel = determineIfVLMModel(modelName: modelName)
-
-            // Cache the model type for future fast path
-            modelTypeCache[modelName] = isVLMModel
-
-            // Load container using unified logic
-            let container = try await loadModelContainer(
-                modelName: modelName,
-                isVLM: isVLMModel
-            )
-
-            cache[modelName] = container
-            modelUsageInfo[modelName] = ModelUsageInfo()
-            return container
+        guard modelExistsLocally(modelName) else {
+            modelTypeCache.removeValue(forKey: modelName)
+            throw ModelPoolError.modelNotFoundLocally(modelName)
         }
-        tasks[modelName] = task
-        return try await task.value
+
+        let isVLM = modelTypeCache[modelName] ?? determineModelType(modelName)
+        modelTypeCache[modelName] = isVLM
+
+        let token = makeLoadToken(for: modelName)
+        let task = Task { [self] in
+            let container = try await loadLanguageContainer(
+                modelName: modelName,
+                isVLM: isVLM
+            )
+            return LoadedValueOwner(container)
+        }
+        let pending = PendingModelLoad(token: token, task: task)
+        tasks[modelName] = pending
+        return try await finishLanguageLoad(pending, modelName: modelName)
     }
 
     /// Gets or loads an embedding model runner for the given model name.
@@ -437,16 +502,21 @@ public actor ModelPool {
         let memoryBefore = memoryHooks.activeMemory()
         let evictedCount = cache.count
 
+        invalidateAllLoads()
+
         // Cancel loading work before dropping the task dictionaries. Do not snapshot their
         // values into local arrays: completed Task values can retain loaded model containers.
-        for task in tasks.values {
-            task.cancel()
+        for pending in tasks.values {
+            pending.task.cancel()
         }
-        for task in sttTasks.values {
-            task.cancel()
+        for pending in embeddingTasks.values {
+            pending.task.cancel()
         }
-        for task in ttsTasks.values {
-            task.cancel()
+        for pending in sttTasks.values {
+            pending.task.cancel()
+        }
+        for pending in ttsTasks.values {
+            pending.task.cancel()
         }
 
         // Release every owner before asking MLX to return unused allocations. The previous
@@ -455,6 +525,7 @@ public actor ModelPool {
         // were still strongly retained; after the Task released them, no second clear occurred.
         cache.removeAll()
         tasks.removeAll()
+        embeddingTasks.removeAll()
         sttTasks.removeAll()
         ttsTasks.removeAll()
         modelTypeCache.removeAll()
@@ -478,6 +549,8 @@ public actor ModelPool {
 
     /// Removes a specific model from the cache and cancels its loading task if active.
     public func remove(modelName: String) {
+        invalidateLoads(for: modelName)
+
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName) // Clear type cache for this model
         embeddingRunnerCache.removeValue(forKey: modelName) // Clear embedding cache for this model
@@ -486,16 +559,20 @@ public actor ModelPool {
         ttsRunnerCache.removeValue(forKey: modelName) // Clear TTS cache for this model
         modelUsageInfo.removeValue(forKey: modelName) // Clear usage tracking for this model
 
-        if let task = tasks.removeValue(forKey: modelName) {
-            task.cancel()
+        if let pending = tasks.removeValue(forKey: modelName) {
+            pending.task.cancel()
         }
 
-        if let sttTask = sttTasks.removeValue(forKey: modelName) {
-            sttTask.cancel()
+        if let pending = embeddingTasks.removeValue(forKey: modelName) {
+            pending.task.cancel()
         }
 
-        if let ttsTask = ttsTasks.removeValue(forKey: modelName) {
-            ttsTask.cancel()
+        if let pending = sttTasks.removeValue(forKey: modelName) {
+            pending.task.cancel()
+        }
+
+        if let pending = ttsTasks.removeValue(forKey: modelName) {
+            pending.task.cancel()
         }
 
         // All strong owners have been removed before MLX cleanup runs.
@@ -510,17 +587,50 @@ public actor ModelPool {
         func evictModelForTesting(modelName: String) async {
             await evictModel(modelName: modelName, reason: "test")
         }
+
+        func isCachedForTesting(_ kind: ModelPoolModelKind, modelName: String) -> Bool {
+            switch kind {
+            case .language:
+                cache[modelName] != nil
+            case .speechToText:
+                sttRunnerCache[modelName] != nil
+            case .textToSpeech:
+                ttsRunnerCache[modelName] != nil
+            case .embedding:
+                embeddingRunnerCache[modelName] != nil
+            }
+        }
+
+        func hasPendingLoadForTesting(_ kind: ModelPoolModelKind, modelName: String) -> Bool {
+            switch kind {
+            case .language:
+                tasks[modelName] != nil
+            case .speechToText:
+                sttTasks[modelName] != nil
+            case .textToSpeech:
+                ttsTasks[modelName] != nil
+            case .embedding:
+                embeddingTasks[modelName] != nil
+            }
+        }
     #endif
 
     // MARK: Private
 
     private var cache: [String: MLXLMCommon.ModelContainer] = .init()
-    private var tasks: [String: Task<MLXLMCommon.ModelContainer, Error>] = .init()
+    private var tasks: [String: PendingModelLoad<MLXLMCommon.ModelContainer>] = .init()
     private var embeddingRunnerCache: [String: EmbeddingRunner] = .init()
+    private var embeddingTasks: [String: PendingModelLoad<EmbeddingRunner>] = .init()
     private var sttRunnerCache: [String: SpeechToTextRunner] = .init()
-    private var sttTasks: [String: Task<SpeechToTextRunner, Error>] = .init()
+    private var sttTasks: [String: PendingModelLoad<SpeechToTextRunner>] = .init()
     private var ttsRunnerCache: [String: TTSRunner] = .init()
-    private var ttsTasks: [String: Task<TTSRunner, Error>] = .init()
+    private var ttsTasks: [String: PendingModelLoad<TTSRunner>] = .init()
+
+    /// Every teardown changes either the global generation or the named model generation.
+    /// A load may ignore cooperative cancellation, but it cannot commit across this boundary.
+    private var globalLoadGeneration: UInt64 = 0
+    private var modelLoadGenerations: [String: UInt64] = .init()
+    private var nextLoadSequence: UInt64 = 0
 
     /// Memory management tracking
     private var modelUsageInfo: [String: ModelUsageInfo] = .init()
@@ -528,6 +638,263 @@ public actor ModelPool {
     private var modelTypeCache: [String: Bool] = .init()
     private var vlmRegistryCache: [String: MLXLMCommon.ModelConfiguration]?
     private let memoryHooks: ModelPoolMemoryHooks
+    private let loadOverrides: ModelPoolLoadOverrides?
+
+    private func makeLoadToken(for modelName: String) -> ModelLoadToken {
+        nextLoadSequence &+= 1
+        return ModelLoadToken(
+            globalGeneration: globalLoadGeneration,
+            modelGeneration: modelLoadGenerations[modelName, default: 0],
+            sequence: nextLoadSequence
+        )
+    }
+
+    private func invalidateAllLoads() {
+        globalLoadGeneration &+= 1
+        modelLoadGenerations.removeAll()
+    }
+
+    private func invalidateLoads(for modelName: String) {
+        modelLoadGenerations[modelName, default: 0] &+= 1
+    }
+
+    private func isCurrent(_ token: ModelLoadToken, modelName: String) -> Bool {
+        token.globalGeneration == globalLoadGeneration
+            && token.modelGeneration == modelLoadGenerations[modelName, default: 0]
+    }
+
+    private func resolvedLoadedValue<Value: AnyObject>(
+        _ owner: LoadedValueOwner<Value>,
+        token: ModelLoadToken,
+        modelName: String,
+        staleCleanupGate: OneShotGate
+    ) throws -> Value {
+        guard isCurrent(token, modelName: modelName) else {
+            // clear/remove/evict already ran one cleanup while this owner was still live. Drop
+            // the Task-retained value first, then run the bounded follow-up cleanup exactly once.
+            owner.release()
+            if staleCleanupGate.claim() {
+                memoryHooks.clearCache()
+            }
+            throw CancellationError()
+        }
+        guard let value = owner.retainedValue() else {
+            throw CancellationError()
+        }
+
+        return value
+    }
+
+    private func finishLanguageLoad(
+        _ pending: PendingModelLoad<MLXLMCommon.ModelContainer>,
+        modelName: String
+    ) async throws -> MLXLMCommon.ModelContainer {
+        try await finishLoad(
+            pending,
+            modelName: modelName,
+            currentPendingToken: { tasks[modelName]?.token },
+            removePending: { tasks.removeValue(forKey: modelName) },
+            cachedValue: { cache[modelName] },
+            storeLoaded: { loaded in
+                cache[modelName] = loaded
+                modelUsageInfo[modelName] = ModelUsageInfo()
+            },
+            recordCachedUse: {
+                modelUsageInfo[modelName]?.recordUsage()
+            }
+        )
+    }
+
+    private func finishSpeechToTextLoad(
+        _ pending: PendingModelLoad<SpeechToTextRunner>,
+        modelName: String
+    ) async throws -> SpeechToTextRunner {
+        try await finishLoad(
+            pending,
+            modelName: modelName,
+            currentPendingToken: { sttTasks[modelName]?.token },
+            removePending: { sttTasks.removeValue(forKey: modelName) },
+            cachedValue: { sttRunnerCache[modelName] },
+            storeLoaded: { loaded in
+                setSpeechToTextRunner(loaded, forKey: modelName)
+            },
+            recordCachedUse: {
+                modelUsageInfo[modelName]?.recordUsage()
+            }
+        )
+    }
+
+    private func finishTTSLoad(
+        _ pending: PendingModelLoad<TTSRunner>,
+        modelKey: String
+    ) async throws -> TTSRunner {
+        try await finishLoad(
+            pending,
+            modelName: modelKey,
+            currentPendingToken: { ttsTasks[modelKey]?.token },
+            removePending: { ttsTasks.removeValue(forKey: modelKey) },
+            cachedValue: { ttsRunnerCache[modelKey] },
+            storeLoaded: { loaded in
+                setTTSRunner(loaded, forKey: modelKey)
+            },
+            recordCachedUse: {
+                modelUsageInfo[modelKey]?.recordUsage()
+            }
+        )
+    }
+
+    private func getOrLoadEmbeddingRunner(modelName: String) async throws -> EmbeddingRunner {
+        if let runner = embeddingRunnerCache[modelName] {
+            return runner
+        }
+
+        if let pending = embeddingTasks[modelName] {
+            return try await finishEmbeddingLoad(pending, modelName: modelName)
+        }
+
+        ensureCacheLimitConfigured()
+        let token = makeLoadToken(for: modelName)
+        let task = Task { [self] in
+            let runner = try await loadEmbeddingRunner(modelName: modelName)
+            return LoadedValueOwner(runner)
+        }
+        let pending = PendingModelLoad(token: token, task: task)
+        embeddingTasks[modelName] = pending
+        return try await finishEmbeddingLoad(pending, modelName: modelName)
+    }
+
+    private func finishEmbeddingLoad(
+        _ pending: PendingModelLoad<EmbeddingRunner>,
+        modelName: String
+    ) async throws -> EmbeddingRunner {
+        try await finishLoad(
+            pending,
+            modelName: modelName,
+            currentPendingToken: { embeddingTasks[modelName]?.token },
+            removePending: { embeddingTasks.removeValue(forKey: modelName) },
+            cachedValue: { embeddingRunnerCache[modelName] },
+            storeLoaded: { embeddingRunnerCache[modelName] = $0 },
+            recordCachedUse: {}
+        )
+    }
+
+    private func finishLoad<Value: AnyObject>(
+        _ pending: PendingModelLoad<Value>,
+        modelName: String,
+        currentPendingToken: () -> ModelLoadToken?,
+        removePending: () -> Void,
+        cachedValue: () -> Value?,
+        storeLoaded: (Value) -> Void,
+        recordCachedUse: () -> Void
+    ) async throws -> Value {
+        do {
+            let owner = try await pending.task.value
+            let loaded = try resolvedLoadedValue(
+                owner,
+                token: pending.token,
+                modelName: modelName,
+                staleCleanupGate: pending.staleCleanupGate
+            )
+
+            let value: Value
+            if let existing = cachedValue() {
+                recordCachedUse()
+                value = existing
+            }
+            else {
+                storeLoaded(loaded)
+                value = loaded
+            }
+            owner.release()
+
+            if currentPendingToken() == pending.token {
+                removePending()
+            }
+            return value
+        }
+        catch {
+            let wasInvalidated = !isCurrent(pending.token, modelName: modelName)
+            cleanupAfterStaleFailure(pending, modelName: modelName)
+            if currentPendingToken() == pending.token {
+                removePending()
+            }
+            if wasInvalidated {
+                throw CancellationError()
+            }
+            throw error
+        }
+    }
+
+    private func modelExistsLocally(_ modelName: String) -> Bool {
+        loadOverrides?.modelExistsLocally(modelName)
+            ?? ModelPaths.modelExistsLocally(modelName)
+    }
+
+    private func cleanupAfterStaleFailure(
+        _ pending: PendingModelLoad<some AnyObject>,
+        modelName: String
+    ) {
+        guard !isCurrent(pending.token, modelName: modelName),
+              pending.staleCleanupGate.claim()
+        else {
+            return
+        }
+
+        memoryHooks.clearCache()
+    }
+
+    private func determineModelType(_ modelName: String) -> Bool {
+        loadOverrides?.determineIsVLM(modelName)
+            ?? determineIfVLMModel(modelName: modelName)
+    }
+
+    private func loadLanguageContainer(
+        modelName: String,
+        isVLM: Bool
+    ) async throws -> MLXLMCommon.ModelContainer {
+        if let load = loadOverrides?.loadLanguage {
+            return try await load(modelName, isVLM)
+        }
+        return try await loadModelContainer(modelName: modelName, isVLM: isVLM)
+    }
+
+    private func loadSpeechToTextRunner(modelName: String) async throws -> SpeechToTextRunner {
+        if let load = loadOverrides?.loadSpeechToText {
+            return try await load(modelName)
+        }
+        let runner = await MainActor.run { SpeechToTextRunner() }
+        try await runner.loadModel(modelName)
+        return runner
+    }
+
+    private func loadTTSRunner(
+        modelKey: String,
+        kind: TTSModelKind,
+        repository: String?
+    ) async throws -> TTSRunner {
+        if let load = loadOverrides?.loadTTS {
+            return try await load(modelKey, kind, repository)
+        }
+        let runner = repository.map { TTSRunner(kind: kind, repository: $0) }
+            ?? TTSRunner(kind: kind)
+        try await runner.loadModel()
+        return runner
+    }
+
+    private func loadEmbeddingRunner(modelName: String) async throws -> EmbeddingRunner {
+        if let load = loadOverrides?.loadEmbedding {
+            return try await load(modelName)
+        }
+        let container = try await loadEmbeddingModelContainer(modelName: modelName)
+        return EmbeddingRunner(container: container)
+    }
+
+    private func hasPendingLoad(for modelName: String) -> Bool {
+        tasks[modelName] != nil
+            || embeddingTasks[modelName] != nil
+            || sttTasks[modelName] != nil
+            || ttsTasks[modelName] != nil
+    }
 
     /// Unified VLM detection logic with registry priority
     private func determineIfVLMModel(modelName: String) -> Bool {
@@ -963,13 +1330,17 @@ public actor ModelPool {
 
     /// Evicts a specific model from the cache
     private func evictModel(modelName: String, reason: String) async {
-        // Double-check the model is not currently running
-        guard !runningModels.contains(modelName) else {
+        // A pending load has not reached inference yet and is safe to invalidate. Continue to
+        // protect a genuinely running cached model from periodic eviction.
+        let isPendingLoad = loadingModels.contains(modelName) && hasPendingLoad(for: modelName)
+        guard !runningModels.contains(modelName) || isPendingLoad else {
             NSLog("SwamaKit.ModelPool: Skipping eviction of \(modelName) - currently running")
             return
         }
 
         let memoryBefore = memoryHooks.activeMemory()
+
+        invalidateLoads(for: modelName)
 
         // Remove from all caches to release strong references
         cache.removeValue(forKey: modelName)
@@ -981,17 +1352,21 @@ public actor ModelPool {
         modelUsageInfo.removeValue(forKey: modelName)
 
         // Cancel loading task if active
-        if let task = tasks.removeValue(forKey: modelName) {
-            task.cancel()
+        if let pending = tasks.removeValue(forKey: modelName) {
+            pending.task.cancel()
+        }
+
+        if let pending = embeddingTasks.removeValue(forKey: modelName) {
+            pending.task.cancel()
         }
 
         // Cancel speech-to-text loading task if active
-        if let sttTask = sttTasks.removeValue(forKey: modelName) {
-            sttTask.cancel()
+        if let pending = sttTasks.removeValue(forKey: modelName) {
+            pending.task.cancel()
         }
 
-        if let ttsTask = ttsTasks.removeValue(forKey: modelName) {
-            ttsTask.cancel()
+        if let pending = ttsTasks.removeValue(forKey: modelName) {
+            pending.task.cancel()
         }
 
         // All strong owners have been removed before MLX cleanup runs.
