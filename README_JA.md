@@ -331,23 +331,6 @@ swama transcribe audio.wav --model qwen3-asr --language ja
 swama serve [--host HOST] [--port PORT]
 ```
 
-### 診断ログ
-
-Swama は Agent が解析しやすい JSONL 診断イベントを `~/.swama/logs/events.jsonl` に書き込みます。
-直近 200 件の表示とライブ追跡は次のコマンドで行えます。
-
-```bash
-swama logs
-swama logs --follow
-```
-
-診断ストリームに含まれるのはライフサイクル時間、論理モデル ID、トークン数、結果、限定された
-エラーコードだけです。プロンプト、生成文、ツール引数、画像/音声、認証情報、Authorization
-ヘッダー、生のファイルパスは記録しません。`SWAMA_DIAGNOSTICS_PATH` で保存先を変更でき、
-`SWAMA_DIAGNOSTICS_DISABLED=1` で無効化できます。
-
-イベント契約の全体は [Agent-friendly diagnostics](docs/diagnostics.md) を参照してください。
-
 ### オプション
 
 - `--temperature <value>`: サンプリング温度（0.0-2.0）

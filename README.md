@@ -331,23 +331,6 @@ swama transcribe audio.wav --model qwen3-asr --language en
 swama serve [--host HOST] [--port PORT]
 ```
 
-### Diagnostics
-
-Swama writes agent-readable JSONL diagnostics to `~/.swama/logs/events.jsonl`. Read the last 200
-events or follow the live stream with:
-
-```bash
-swama logs
-swama logs --follow
-```
-
-Diagnostics contain lifecycle timings, model ids, token counts, outcomes, and bounded error codes.
-They never contain prompts, generated text, tool arguments, media, credentials, authorization
-headers, or raw filesystem paths. Set `SWAMA_DIAGNOSTICS_PATH` to choose another local file or
-`SWAMA_DIAGNOSTICS_DISABLED=1` to disable the stream.
-
-See [Agent-friendly diagnostics](docs/diagnostics.md) for the complete event contract.
-
 ### Model Aliases
 
 Swama supports convenient aliases for popular models. Use these short names instead of full model URLs:
