@@ -35,6 +35,24 @@ Run the resulting binary directly. Do not use `swift run` for a candidate: the
 binary identity is part of every report and must already be frozen before the
 candidate build starts.
 
+## Cold build policy
+
+`baseline` builds Swama and the external fixture in `.build/swama-acceptance/`,
+separate from package-local `.build` directories. The scratch identity covers
+the Git head and tree, both resolved dependency files, and the selected
+Xcode/Swift toolchain. A changed identity clears the acceptance scratch; the
+same identity reuses a partial build, so a bounded timeout can resume without a
+manual prebuild. The same scratch owns SwiftPM's module cache, and the selected
+Xcode supplies `SDKROOT`, avoiding machine-level module-cache drift and a mixed
+Xcode/CommandLineTools SDK. The separately installed Metal Toolchain is checked
+before any cold Swift build begins; a missing component exits as `UNKNOWN`.
+
+Build budgets live in `contract.json`: product builds have 1,200 seconds and
+the cold external-fixture prebuild has up to two resumable 1,200-second attempts.
+A final build timeout is an acceptance-tool `UNKNOWN`; a compiler or test
+failure remains a product `FAIL`. Successful reports record each build phase,
+its attempts, budget, cache identity, and the produced executable hashes.
+
 ## Commands
 
 ```bash

@@ -4,6 +4,7 @@ import Foundation
 
 struct AcceptanceContract: Codable, Sendable {
     let schemaVersion: Int
+    let build: BuildContract
     let models: [ModelContract]
     let benchmark: BenchmarkContract
     let reliability: ReliabilityContract
@@ -11,6 +12,7 @@ struct AcceptanceContract: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
+        case build
         case models
         case benchmark
         case reliability
@@ -24,6 +26,20 @@ struct AcceptanceContract: Codable, Sendable {
         catch {
             throw AcceptanceFailure.unknown("cannot decode contract \(url.path): \(error)")
         }
+    }
+}
+
+// MARK: - BuildContract
+
+struct BuildContract: Codable, Sendable {
+    let productTimeoutSeconds: Double
+    let externalFixtureTimeoutSeconds: Double
+    let externalFixtureTimeoutRetryLimit: Int
+
+    enum CodingKeys: String, CodingKey {
+        case productTimeoutSeconds = "product_timeout_seconds"
+        case externalFixtureTimeoutSeconds = "external_fixture_timeout_seconds"
+        case externalFixtureTimeoutRetryLimit = "external_fixture_timeout_retry_limit"
     }
 }
 

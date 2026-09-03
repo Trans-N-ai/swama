@@ -21,6 +21,7 @@ func runBaseline(
     }
 
     let build = try buildProducts(
+        contract: contract.build,
         developerDirectory: developerDirectory,
         metalDeveloperDirectory: metalDeveloperDirectory,
         paths: paths

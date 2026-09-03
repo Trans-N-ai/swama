@@ -10,6 +10,12 @@ struct CommandResult: Sendable {
     let stderr: String
     let durationMilliseconds: Double
     let peakResidentBytes: UInt64
+    let attemptCount: Int
+    let timeoutCount: Int
+}
+
+private struct CommandTimeout: Error {
+    let durationMilliseconds: Double
 }
 
 func developerEnvironment(_ developerDirectory: URL) throws -> [String: String] {
@@ -20,8 +26,16 @@ func developerEnvironment(_ developerDirectory: URL) throws -> [String: String] 
         throw AcceptanceFailure.unknown("missing Xcode developer directory: \(developerDirectory.path)")
     }
 
+    let sdk = developerDirectory.appendingPathComponent(
+        "Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+    )
+    guard FileManager.default.fileExists(atPath: sdk.path) else {
+        throw AcceptanceFailure.unknown("missing macOS SDK in developer directory: \(developerDirectory.path)")
+    }
+
     var environment = ProcessInfo.processInfo.environment
     environment["DEVELOPER_DIR"] = developerDirectory.path
+    environment["SDKROOT"] = sdk.path
     return environment
 }
 
@@ -30,11 +44,70 @@ func runCommand(
     currentDirectory: URL,
     environment: [String: String]? = nil,
     timeout: TimeInterval = 300,
-    sampleMemory: Bool = true
+    sampleMemory: Bool = true,
+    timeoutFailureKind: AcceptanceKind = .failed,
+    timeoutContext: String? = nil,
+    timeoutRetryLimit: Int = 0
 ) throws -> CommandResult {
     guard let executable = command.first else {
         throw AcceptanceFailure.unknown("empty command")
     }
+    guard timeout > 0 else {
+        throw AcceptanceFailure.unknown("command timeout must be positive")
+    }
+    guard timeoutRetryLimit >= 0, timeoutRetryLimit < Int.max else {
+        throw AcceptanceFailure.unknown("command timeout retry limit is outside the supported range")
+    }
+
+    let maximumAttempts = timeoutRetryLimit + 1
+    var elapsedMilliseconds = 0.0
+    for attempt in 1 ... maximumAttempts {
+        do {
+            let result = try runCommandAttempt(
+                command,
+                executable: executable,
+                currentDirectory: currentDirectory,
+                environment: environment,
+                timeout: timeout,
+                sampleMemory: sampleMemory
+            )
+            return .init(
+                command: result.command,
+                returnCode: result.returnCode,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                durationMilliseconds: elapsedMilliseconds + result.durationMilliseconds,
+                peakResidentBytes: result.peakResidentBytes,
+                attemptCount: attempt,
+                timeoutCount: attempt - 1
+            )
+        }
+        catch let commandTimeout as CommandTimeout {
+            elapsedMilliseconds += commandTimeout.durationMilliseconds
+            if attempt == maximumAttempts {
+                let context = timeoutContext.map { "\($0) " } ?? ""
+                let budget = maximumAttempts == 1
+                    ? "after \(timeout)s"
+                    : "after \(maximumAttempts) attempt(s) at \(timeout)s each"
+                throw AcceptanceFailure(
+                    kind: timeoutFailureKind,
+                    message: "\(context)timeout \(budget): \(command.joined(separator: " "))"
+                )
+            }
+        }
+    }
+
+    throw AcceptanceFailure.unknown("command retry loop ended unexpectedly")
+}
+
+private func runCommandAttempt(
+    _ command: [String],
+    executable: String,
+    currentDirectory: URL,
+    environment: [String: String]?,
+    timeout: TimeInterval,
+    sampleMemory: Bool
+) throws -> CommandResult {
 
     let temporary = FileManager.default
         .temporaryDirectory
@@ -82,9 +155,12 @@ func runCommand(
             peak = max(peak, residentBytes(pid: process.processIdentifier))
         }
         if Date() >= deadline {
-            kill(process.processIdentifier, SIGKILL)
+            killProcessTree(process.processIdentifier)
             process.waitUntilExit()
-            throw AcceptanceFailure.failed("timeout after \(timeout)s: \(command.joined(separator: " "))")
+            let duration = start.duration(to: .now)
+            let milliseconds = Double(duration.components.seconds) * 1000
+                + Double(duration.components.attoseconds) / 1_000_000_000_000_000
+            throw CommandTimeout(durationMilliseconds: milliseconds)
         }
         Thread.sleep(forTimeInterval: 0.02)
     }
@@ -108,8 +184,54 @@ func runCommand(
         stdout: stdout,
         stderr: stderr,
         durationMilliseconds: milliseconds,
-        peakResidentBytes: peak
+        peakResidentBytes: peak,
+        attemptCount: 1,
+        timeoutCount: 0
     )
+}
+
+private func killProcessTree(_ root: pid_t) {
+    _ = kill(root, SIGSTOP)
+    let descendants = suspendDescendantProcessIdentifiers(of: root)
+    for pid in descendants.reversed() {
+        _ = kill(pid, SIGKILL)
+    }
+    _ = kill(root, SIGKILL)
+}
+
+private func suspendDescendantProcessIdentifiers(of root: pid_t) -> [pid_t] {
+    var result: [pid_t] = []
+    var pending = [root]
+    while let parent = pending.popLast() {
+        let children = childProcessIdentifiers(of: parent)
+        for child in children {
+            _ = kill(child, SIGSTOP)
+        }
+        result.append(contentsOf: children)
+        pending.append(contentsOf: children)
+    }
+    return result
+}
+
+private func childProcessIdentifiers(of parent: pid_t) -> [pid_t] {
+    let initialCapacity = 32
+    var capacity = initialCapacity
+    while true {
+        var buffer = [pid_t](repeating: 0, count: capacity)
+        let count = Int(proc_listchildpids(
+            parent,
+            &buffer,
+            Int32(buffer.count * MemoryLayout<pid_t>.stride)
+        ))
+        guard count > 0 else {
+            return []
+        }
+
+        if count < capacity {
+            return Array(buffer.prefix(count)).filter { $0 > 0 }
+        }
+        capacity *= 2
+    }
 }
 
 func commandOutput(

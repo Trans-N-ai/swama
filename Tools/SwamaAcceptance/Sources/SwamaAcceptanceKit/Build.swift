@@ -8,12 +8,54 @@ struct BuildProducts {
     let report: JSONObject
 }
 
+// MARK: - AcceptanceBuildScratch
+
+struct AcceptanceBuildScratch {
+    let identity: String
+    let root: URL
+    let package: URL
+    let fixture: URL
+    let moduleCache: URL
+}
+
+func prepareAcceptanceBuildScratch(root: URL, identity: String) throws -> AcceptanceBuildScratch {
+    let identityFile = root.appendingPathComponent("identity")
+    let existingIdentity = try? String(contentsOf: identityFile, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    if existingIdentity != identity {
+        if FileManager.default.fileExists(atPath: root.path) {
+            try FileManager.default.removeItem(at: root)
+        }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("\(identity)\n".utf8).write(to: identityFile, options: .atomic)
+    }
+
+    return .init(
+        identity: identity,
+        root: root,
+        package: root.appendingPathComponent("package"),
+        fixture: root.appendingPathComponent("fixture"),
+        moduleCache: root.appendingPathComponent("module-cache")
+    )
+}
+
 func buildProducts(
+    contract: BuildContract,
     developerDirectory: URL,
     metalDeveloperDirectory: URL,
     paths: WorkspacePaths
 ) throws -> BuildProducts {
-    let environment = try developerEnvironment(developerDirectory)
+    let metalToolchain = try resolveMetalToolchain(
+        metalDeveloperDirectory: metalDeveloperDirectory,
+        paths: paths
+    )
+    let scratch = try acceptanceBuildScratch(
+        developerDirectory: developerDirectory,
+        paths: paths
+    )
+    var environment = try developerEnvironment(developerDirectory)
+    environment["SWIFTPM_MODULECACHE_OVERRIDE"] = scratch.moduleCache.path
     let releaseBuild = try runCommand(
         [
             "xcrun",
@@ -21,6 +63,8 @@ func buildProducts(
             "build",
             "--package-path",
             paths.package.path,
+            "--scratch-path",
+            scratch.package.path,
             "--force-resolved-versions",
             "-c",
             "release",
@@ -29,8 +73,10 @@ func buildProducts(
         ],
         currentDirectory: paths.repository,
         environment: environment,
-        timeout: 1200,
-        sampleMemory: false
+        timeout: contract.productTimeoutSeconds,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "Swama release build"
     )
     guard releaseBuild.returnCode == 0 else {
         throw AcceptanceFailure.failed("Swama release build failed:\n\(commandFailureSummary(releaseBuild))")
@@ -43,6 +89,8 @@ func buildProducts(
             "build",
             "--package-path",
             paths.fixture.path,
+            "--scratch-path",
+            scratch.fixture.path,
             "--force-resolved-versions",
             "-c",
             "release",
@@ -51,8 +99,11 @@ func buildProducts(
         ],
         currentDirectory: paths.repository,
         environment: environment,
-        timeout: 1200,
-        sampleMemory: false
+        timeout: contract.externalFixtureTimeoutSeconds,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "external fixture build",
+        timeoutRetryLimit: contract.externalFixtureTimeoutRetryLimit
     )
     guard fixtureBuild.returnCode == 0 else {
         throw AcceptanceFailure
@@ -66,6 +117,8 @@ func buildProducts(
             "build",
             "--package-path",
             paths.package.path,
+            "--scratch-path",
+            scratch.package.path,
             "--force-resolved-versions",
             "--build-tests",
             "-j",
@@ -73,8 +126,10 @@ func buildProducts(
         ],
         currentDirectory: paths.repository,
         environment: environment,
-        timeout: 1200,
-        sampleMemory: false
+        timeout: contract.productTimeoutSeconds,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "Swama test build"
     )
     guard testBuild.returnCode == 0 else {
         throw AcceptanceFailure.failed("Swama test build failed:\n\(commandFailureSummary(testBuild))")
@@ -87,6 +142,8 @@ func buildProducts(
             "build",
             "--package-path",
             paths.package.path,
+            "--scratch-path",
+            scratch.package.path,
             "--force-resolved-versions",
             "-c",
             "release",
@@ -102,6 +159,8 @@ func buildProducts(
             "build",
             "--package-path",
             paths.fixture.path,
+            "--scratch-path",
+            scratch.fixture.path,
             "--force-resolved-versions",
             "-c",
             "release",
@@ -117,6 +176,8 @@ func buildProducts(
             "build",
             "--package-path",
             paths.package.path,
+            "--scratch-path",
+            scratch.package.path,
             "--force-resolved-versions",
             "-c",
             "debug",
@@ -133,7 +194,11 @@ func buildProducts(
         throw AcceptanceFailure.unknown("expected build product is missing: \(required.path)")
     }
 
-    let metal = try buildMetallib(metalDeveloperDirectory: metalDeveloperDirectory, paths: paths)
+    let metal = try buildMetallib(
+        toolchain: metalToolchain,
+        packageScratchDirectory: scratch.package,
+        paths: paths
+    )
     defer { metal.remove() }
     let swamaMetal = try installMetallib(metal.library, nextTo: swama)
     let probeMetal = try installMetallib(metal.library, nextTo: probe)
@@ -146,6 +211,8 @@ func buildProducts(
             "test",
             "--package-path",
             paths.package.path,
+            "--scratch-path",
+            scratch.package.path,
             "--force-resolved-versions",
             "--skip-build",
             "-j",
@@ -167,10 +234,38 @@ func buildProducts(
     return .init(
         swama: swama,
         probe: probe,
-        report: [
-            "duration_ms": releaseBuild.durationMilliseconds + fixtureBuild.durationMilliseconds,
+        report: try [
+            "duration_ms": releaseBuild.durationMilliseconds
+                + fixtureBuild.durationMilliseconds
+                + testBuild.durationMilliseconds,
             "swama": swama.path,
             "probe": probe.path,
+            "artifacts": [
+                "swama_sha256": sha256File(swama),
+                "probe_sha256": sha256File(probe),
+                "test_executable_sha256": sha256File(testExecutable)
+            ],
+            "cache": [
+                "identity": scratch.identity,
+                "policy": "single-identity resumable scratch",
+                "root": scratch.root.path,
+                "module_cache": scratch.moduleCache.path
+            ],
+            "phases": [
+                "swama_release": buildPhaseReport(
+                    releaseBuild,
+                    timeoutSeconds: contract.productTimeoutSeconds
+                ),
+                "external_fixture_prebuild": buildPhaseReport(
+                    fixtureBuild,
+                    timeoutSeconds: contract.externalFixtureTimeoutSeconds,
+                    timeoutRetryLimit: contract.externalFixtureTimeoutRetryLimit
+                ),
+                "swama_tests": buildPhaseReport(
+                    testBuild,
+                    timeoutSeconds: contract.productTimeoutSeconds
+                )
+            ],
             "metal_build": metal.provenance,
             "metallib": swamaMetal,
             "probe_metallib": probeMetal,
@@ -181,6 +276,60 @@ func buildProducts(
             ]
         ]
     )
+}
+
+private func acceptanceBuildScratch(
+    developerDirectory: URL,
+    paths: WorkspacePaths
+) throws -> AcceptanceBuildScratch {
+    let environment = try developerEnvironment(developerDirectory)
+    let head = try commandOutput(
+        ["git", "rev-parse", "HEAD"],
+        currentDirectory: paths.repository
+    )
+    let tree = try commandOutput(
+        ["git", "rev-parse", "HEAD^{tree}"],
+        currentDirectory: paths.repository
+    )
+    let swiftVersion = try commandOutput(
+        ["xcrun", "swift", "--version"],
+        currentDirectory: paths.repository,
+        environment: environment
+    )
+    let xcodeVersion = try commandOutput(
+        ["xcodebuild", "-version"],
+        currentDirectory: paths.repository,
+        environment: environment
+    )
+    let packageResolved = try sha256File(paths.package.appendingPathComponent("Package.resolved"))
+    let fixtureResolved = try sha256File(paths.fixture.appendingPathComponent("Package.resolved"))
+    let components = [
+        "head=\(head)",
+        "tree=\(tree)",
+        "developer_dir=\(developerDirectory.standardizedFileURL.path)",
+        "swift=\(swiftVersion)",
+        "xcode=\(xcodeVersion)",
+        "package_resolved=\(packageResolved)",
+        "fixture_resolved=\(fixtureResolved)"
+    ]
+    let identity = sha256(Data(components.joined(separator: "\u{0}").utf8))
+    let root = paths.repository.appendingPathComponent(".build/swama-acceptance")
+    return try prepareAcceptanceBuildScratch(root: root, identity: identity)
+}
+
+private func buildPhaseReport(
+    _ result: CommandResult,
+    timeoutSeconds: Double,
+    timeoutRetryLimit: Int = 0
+) -> JSONObject {
+    [
+        "command": result.command,
+        "duration_ms": result.durationMilliseconds,
+        "timeout_seconds_per_attempt": timeoutSeconds,
+        "timeout_retry_limit": timeoutRetryLimit,
+        "attempt_count": result.attemptCount,
+        "timeout_count": result.timeoutCount
+    ]
 }
 
 func commandFailureSummary(_ result: CommandResult, maximumCharacters: Int = 4000) -> String {

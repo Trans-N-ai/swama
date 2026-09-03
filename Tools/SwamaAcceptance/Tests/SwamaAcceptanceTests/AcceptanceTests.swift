@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 @testable import SwamaAcceptanceKit
 import Testing
@@ -312,6 +313,138 @@ struct AcceptanceTests {
         }
     }
 
+    @Test func developerEnvironmentBindsSDKToSelectedXcode() throws {
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-developer-environment-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let xcodebuild = temporary.appendingPathComponent("usr/bin/xcodebuild")
+        let sdk = temporary.appendingPathComponent(
+            "Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+        )
+        try FileManager.default.createDirectory(
+            at: xcodebuild.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data().write(to: xcodebuild)
+        try FileManager.default.createDirectory(at: sdk, withIntermediateDirectories: true)
+
+        let environment = try developerEnvironment(temporary)
+        #expect(environment["DEVELOPER_DIR"] == temporary.path)
+        #expect(environment["SDKROOT"] == sdk.path)
+    }
+
+    @Test func buildScratchDropsStaleIdentityAndResumesMatchingIdentity() throws {
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-build-scratch-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+
+        let stale = try prepareAcceptanceBuildScratch(root: temporary, identity: "old")
+        let staleArtifact = stale.package.appendingPathComponent("stale-object")
+        try FileManager.default.createDirectory(at: stale.package, withIntermediateDirectories: true)
+        try Data("stale".utf8).write(to: staleArtifact)
+
+        let current = try prepareAcceptanceBuildScratch(root: temporary, identity: "current")
+        #expect(!FileManager.default.fileExists(atPath: staleArtifact.path))
+        let partialArtifact = current.fixture.appendingPathComponent("partial-object")
+        try FileManager.default.createDirectory(at: current.fixture, withIntermediateDirectories: true)
+        try Data("partial".utf8).write(to: partialArtifact)
+
+        let resumed = try prepareAcceptanceBuildScratch(root: temporary, identity: "current")
+        #expect(resumed.identity == "current")
+        #expect(FileManager.default.fileExists(atPath: partialArtifact.path))
+    }
+
+    @Test func buildTimeoutIsUnknownInsteadOfProductFailure() throws {
+        do {
+            _ = try runCommand(
+                ["/bin/sleep", "1"],
+                currentDirectory: FileManager.default.temporaryDirectory,
+                timeout: 0.01,
+                sampleMemory: false,
+                timeoutFailureKind: .unknown,
+                timeoutContext: "external fixture build"
+            )
+            Issue.record("the command must time out")
+        }
+        catch let error as AcceptanceFailure {
+            if case .failed = error.kind {
+                Issue.record("a build timeout is tool UNKNOWN, not product FAIL")
+            }
+            #expect(error.message.contains("external fixture build timeout after 0.01s"))
+        }
+    }
+
+    @Test func externalBuildTimeoutResumesWithoutManualIntervention() throws {
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-build-retry-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let marker = temporary.appendingPathComponent("first-attempt")
+
+        let result = try runCommand(
+            [
+                "/bin/sh",
+                "-c",
+                "if [ ! -f \"$1\" ]; then : > \"$1\"; sleep 2; fi",
+                "resumable-build",
+                marker.path
+            ],
+            currentDirectory: temporary,
+            timeout: 0.2,
+            sampleMemory: false,
+            timeoutFailureKind: .unknown,
+            timeoutContext: "external fixture build",
+            timeoutRetryLimit: 1
+        )
+        #expect(result.returnCode == 0)
+        #expect(result.attemptCount == 2)
+        #expect(result.timeoutCount == 1)
+        #expect(result.durationMilliseconds >= 200)
+    }
+
+    @Test func commandTimeoutTerminatesDescendantProcesses() throws {
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-process-tree-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let childPIDFile = temporary.appendingPathComponent("child-pid")
+
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try runCommand(
+                [
+                    "/bin/sh",
+                    "-c",
+                    "sleep 5 & echo $! > \"$1\"; wait",
+                    "spawn-child",
+                    childPIDFile.path
+                ],
+                currentDirectory: temporary,
+                timeout: 0.2,
+                sampleMemory: false,
+                timeoutFailureKind: .unknown
+            )
+        }
+        let childPID = try #require(
+            pid_t(String(contentsOf: childPIDFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines))
+        )
+        #expect(kill(childPID, 0) == -1)
+    }
+
+    @Test func contractCarriesSeparateProductAndFixtureBuildBudgets() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract)
+        #expect(contract.schemaVersion == 3)
+        #expect(contract.build.productTimeoutSeconds == 1200)
+        #expect(contract.build.externalFixtureTimeoutSeconds == 1200)
+        #expect(contract.build.externalFixtureTimeoutRetryLimit == 1)
+    }
+
     @Test func cleanWorktreeCanBeBoundToHead() throws {
         let repository = try temporaryRepository()
         defer { try? FileManager.default.removeItem(at: repository) }
@@ -346,7 +479,9 @@ struct AcceptanceTests {
             stdout: String(repeating: "warning: setup\n", count: 500) + "error: root cause\n",
             stderr: "warning: final warning\n",
             durationMilliseconds: 1,
-            peakResidentBytes: 0
+            peakResidentBytes: 0,
+            attemptCount: 1,
+            timeoutCount: 0
         )
         let summary = commandFailureSummary(result, maximumCharacters: 80)
         #expect(summary.contains("error: root cause"))

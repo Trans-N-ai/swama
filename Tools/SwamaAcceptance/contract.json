@@ -1,5 +1,10 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
+  "build": {
+    "product_timeout_seconds": 1200,
+    "external_fixture_timeout_seconds": 1200,
+    "external_fixture_timeout_retry_limit": 1
+  },
   "models": [
     {
       "id": "mlx-community/SmolLM-135M-Instruct-4bit",

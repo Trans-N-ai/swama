@@ -12,10 +12,21 @@ struct MetalBuildArtifact {
     }
 }
 
-func buildMetallib(
+// MARK: - MetalToolchain
+
+struct MetalToolchain {
+    let developerDirectory: URL
+    let environment: [String: String]
+    let metalVersion: String
+    let metallibVersion: String
+    let metalExecutable: URL
+    let metallibExecutable: URL
+}
+
+func resolveMetalToolchain(
     metalDeveloperDirectory: URL,
     paths: WorkspacePaths
-) throws -> MetalBuildArtifact {
+) throws -> MetalToolchain {
     let environment = try developerEnvironment(metalDeveloperDirectory)
     let metalVersion = try commandOutput(
         ["xcrun", "-sdk", "macosx", "metal", "--version"],
@@ -43,7 +54,24 @@ func buildMetallib(
         throw AcceptanceFailure.unknown("resolved Metal compiler executable is missing")
     }
 
-    let checkout = paths.package.appendingPathComponent(".build/checkouts/mlx-swift")
+    return .init(
+        developerDirectory: metalDeveloperDirectory,
+        environment: environment,
+        metalVersion: metalVersion,
+        metallibVersion: metallibVersion,
+        metalExecutable: metalExecutable,
+        metallibExecutable: metallibExecutable
+    )
+}
+
+func buildMetallib(
+    toolchain: MetalToolchain,
+    packageScratchDirectory: URL,
+    paths: WorkspacePaths
+) throws -> MetalBuildArtifact {
+    let environment = toolchain.environment
+
+    let checkout = packageScratchDirectory.appendingPathComponent("checkouts/mlx-swift")
     let sourceRoot = checkout.appendingPathComponent("Source/Cmlx/mlx-generated/metal")
     let sources = try regularFiles(in: sourceRoot, extensions: ["metal"]).sorted { $0.path < $1.path }
     guard !sources.isEmpty else {
@@ -80,7 +108,9 @@ func buildMetallib(
                 currentDirectory: paths.repository,
                 environment: environment,
                 timeout: 300,
-                sampleMemory: false
+                sampleMemory: false,
+                timeoutFailureKind: .unknown,
+                timeoutContext: "Metal source compilation"
             )
             guard result.returnCode == 0, FileManager.default.fileExists(atPath: air.path) else {
                 throw AcceptanceFailure
@@ -105,25 +135,27 @@ func buildMetallib(
             currentDirectory: paths.repository,
             environment: environment,
             timeout: 300,
-            sampleMemory: false
+            sampleMemory: false,
+            timeoutFailureKind: .unknown,
+            timeoutContext: "metallib link"
         )
         guard linkResult.returnCode == 0, FileManager.default.fileExists(atPath: output.path) else {
             throw AcceptanceFailure.unknown("metallib link failed: \(linkResult.stderr)")
         }
 
-        let normalizedMetalVersion = metalVersion.split(separator: "\n")
+        let normalizedMetalVersion = toolchain.metalVersion.split(separator: "\n")
             .filter { !$0.hasPrefix("InstalledDir:") }
             .joined(separator: "\n")
         return try .init(
             library: output,
             provenance: [
-                "developer_dir": metalDeveloperDirectory.path,
+                "developer_dir": toolchain.developerDirectory.path,
                 "metal_version": normalizedMetalVersion,
-                "metallib_version": metallibVersion,
-                "metal_executable": metalExecutable.path,
-                "metal_executable_sha256": sha256File(metalExecutable),
-                "metallib_executable": metallibExecutable.path,
-                "metallib_executable_sha256": sha256File(metallibExecutable),
+                "metallib_version": toolchain.metallibVersion,
+                "metal_executable": toolchain.metalExecutable.path,
+                "metal_executable_sha256": sha256File(toolchain.metalExecutable),
+                "metallib_executable": toolchain.metallibExecutable.path,
+                "metallib_executable_sha256": sha256File(toolchain.metallibExecutable),
                 "mlx_swift_revision": checkoutRevision,
                 "sources": sourceManifest,
                 "compile_commands": commands,
