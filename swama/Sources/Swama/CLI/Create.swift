@@ -14,10 +14,12 @@ struct Create: AsyncParsableCommand {
     var name: String
 
     func run() async throws {
-        print("Creating model from path: \(path) with name: \(name)")
+        try await SwamaDiagnostics.withSession(mode: .cli) {
+            print("Creating model from path: \(path) with name: \(name)")
 
-        try await ModelCreator.run(from: path, name: name)
+            try await ModelCreator.run(from: path, name: name)
 
-        print("Model created successfully at \(ModelPaths.activeModelsDirectory.appendingPathComponent(name).path)")
+            print("Model created successfully at \(ModelPaths.activeModelsDirectory.appendingPathComponent(name).path)")
+        }
     }
 }

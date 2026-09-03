@@ -11,6 +11,8 @@ struct Pull: AsyncParsableCommand {
     var model: String
 
     func run() async throws {
-        _ = try await ModelDownloader.fetchModel(modelName: model)
+        try await SwamaDiagnostics.withSession(mode: .cli) {
+            _ = try await ModelDownloader.fetchModel(modelName: model)
+        }
     }
 }

@@ -82,10 +82,45 @@ public actor ModelRunner {
         onToolCall: (@Sendable (MLXLMCommon.ToolCall) async throws -> Void)? = nil
     ) async throws -> ChatRunResult {
         try await withError {
+            let modelName = await container.configuration.name
+            let diagnosticOperation = SwamaDiagnostics.startGeneration(model: modelName)
+            var diagnosticOutcome: GenerationDiagnosticOutcome?
+            defer {
+                switch diagnosticOutcome {
+                case let .completed(inputTokens, outputTokens):
+                    SwamaDiagnostics.completeGeneration(
+                        diagnosticOperation,
+                        model: modelName,
+                        inputTokens: inputTokens,
+                        outputTokens: outputTokens
+                    )
+
+                case let .cancelled(outputTokens):
+                    SwamaDiagnostics.cancelGeneration(
+                        diagnosticOperation,
+                        model: modelName,
+                        outputTokens: outputTokens
+                    )
+
+                case .none:
+                    if Task.isCancelled {
+                        SwamaDiagnostics.cancelGeneration(
+                            diagnosticOperation,
+                            model: modelName,
+                            outputTokens: 0
+                        )
+                    }
+                    else {
+                        SwamaDiagnostics.failGeneration(diagnosticOperation, model: modelName)
+                    }
+                }
+            }
+
             var output = ""
             var promptTokens = 0
             var capturedCompletionInfo: GenerateCompletionInfo?
             var toolCalls: [MLXLMCommon.ToolCall] = []
+            var didRecordFirstToken = false
 
             let rawOutputStorage = RawOutputBuffer()
             let hasMediaInput = userInput.hasMediaContent
@@ -136,7 +171,6 @@ public actor ModelRunner {
 
             let maxKVSize = generationParameters.maxKVSize ?? effectiveContextLimit
             let kvConfig = PromptCacheKVConfig(parameters: generationParameters, maxKVSize: maxKVSize)
-            let modelName = await container.configuration.name
             let fullTokens = promptCacheTokenArray(lmInput.text.tokens)
 
             let cacheDecision = resolvePromptCacheReuse(
@@ -243,6 +277,10 @@ public actor ModelRunner {
                 do {
                     switch generationEvent {
                     case let .chunk(chunkString):
+                        if !didRecordFirstToken, !chunkString.isEmpty {
+                            SwamaDiagnostics.firstToken(diagnosticOperation, model: modelName)
+                            didRecordFirstToken = true
+                        }
                         rawOutputStorage.append(chunkString)
 
                         if let onToken {
@@ -261,6 +299,10 @@ public actor ModelRunner {
                         capturedCompletionInfo = info
 
                     case let .toolCall(toolCall):
+                        if !didRecordFirstToken {
+                            SwamaDiagnostics.firstToken(diagnosticOperation, model: modelName)
+                            didRecordFirstToken = true
+                        }
                         // Always accumulate tool calls for the return value
                         toolCalls.append(toolCall)
                         // Also send to callback if provided (for streaming)
@@ -311,7 +353,7 @@ public actor ModelRunner {
             let rawOutput = rawOutputStorage.consume()
             let resolvedOutput = output.isEmpty ? rawOutput : output
 
-            return ChatRunResult(
+            let result = ChatRunResult(
                 output: resolvedOutput,
                 analysis: nil,
                 promptTokens: promptTokens,
@@ -319,6 +361,11 @@ public actor ModelRunner {
                 toolCalls: toolCalls,
                 rawText: rawOutput
             )
+            let outputTokens = result.completionInfo?.generationTokenCount ?? 0
+            diagnosticOutcome = Task.isCancelled
+                ? .cancelled(outputTokens: outputTokens)
+                : .completed(inputTokens: result.promptTokens, outputTokens: outputTokens)
+            return result
         }
     }
 
@@ -328,6 +375,13 @@ public actor ModelRunner {
 
     private let container: ModelContainer
     private let promptCacheStore: PromptCacheStore
+}
+
+// MARK: - GenerationDiagnosticOutcome
+
+private enum GenerationDiagnosticOutcome {
+    case completed(inputTokens: Int, outputTokens: Int)
+    case cancelled(outputTokens: Int)
 }
 
 // MARK: - RawOutputBuffer

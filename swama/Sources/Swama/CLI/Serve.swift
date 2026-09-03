@@ -17,24 +17,26 @@ struct Serve: AsyncParsableCommand {
     var commonOptions: CommonRunOptions
 
     func run() async throws {
-        // Use the ServerManager from SwamaKit to run the server in CLI mode.
-        // Create a new instance of ServerManager for the CLI.
-        // The ServerManager's properties (group, channel) are not used by runForCLI directly,
-        // as runForCLI manages its own NIO resources.
-        let serverManager = SwamaServer.ServerManager()
-        print("CLI Serve: Initialized SwamaKit.ServerManager for CLI operation.")
+        try await SwamaDiagnostics.withSession(mode: .serve) {
+            // Use the ServerManager from SwamaKit to run the server in CLI mode.
+            // Create a new instance of ServerManager for the CLI.
+            // The ServerManager's properties (group, channel) are not used by runForCLI directly,
+            // as runForCLI manages its own NIO resources.
+            let serverManager = SwamaServer.ServerManager()
+            print("CLI Serve: Initialized SwamaKit.ServerManager for CLI operation.")
 
-        // Use provided port or fallback to environment variable/default
-        let actualPort = port ?? SwamaServer.ServerManager.defaultPort()
+            // Use provided port or fallback to environment variable/default
+            let actualPort = port ?? SwamaServer.ServerManager.defaultPort()
 
-        if let limit = commonOptions.resolvedContextLimit {
-            await ContextLimitConfig.shared.updateLimit(limit)
-            print("CLI Serve: Context limit set to \(limit) tokens.")
+            if let limit = commonOptions.resolvedContextLimit {
+                await ContextLimitConfig.shared.updateLimit(limit)
+                print("CLI Serve: Context limit set to \(limit) tokens.")
+            }
+
+            // The runForCLI method now encapsulates the NIO server setup and lifecycle for the CLI.
+            try await serverManager.runForCLI(host: host, port: actualPort)
+
+            print("CLI Serve: Server (via SwamaKit.ServerManager.runForCLI) has shut down.")
         }
-
-        // The runForCLI method now encapsulates the NIO server setup and lifecycle for the CLI.
-        try await serverManager.runForCLI(host: host, port: actualPort)
-
-        print("CLI Serve: Server (via SwamaKit.ServerManager.runForCLI) has shut down.")
     }
 }

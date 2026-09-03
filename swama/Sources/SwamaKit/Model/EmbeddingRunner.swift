@@ -7,13 +7,23 @@ import Tokenizers
 
 /// Loads an embedding model container for the given model name.
 public func loadEmbeddingModelContainer(modelName: String) async throws -> EmbedderModelContainer {
+    try await loadEmbeddingModelContainer(
+        modelName: modelName,
+        tokenizerLoader: #huggingFaceTokenizerLoader()
+    )
+}
+
+func loadEmbeddingModelContainer(
+    modelName: String,
+    tokenizerLoader: any TokenizerLoader
+) async throws -> EmbedderModelContainer {
     let config = MLXLMCommon.ModelConfiguration(directory: ModelPaths.getModelDirectory(for: modelName))
 
     let container: EmbedderModelContainer
     do {
         container = try await EmbedderModelFactory.shared.loadContainer(
             from: LocalOnlyModelDownloader(),
-            using: #huggingFaceTokenizerLoader(),
+            using: tokenizerLoader,
             configuration: config
         )
     }

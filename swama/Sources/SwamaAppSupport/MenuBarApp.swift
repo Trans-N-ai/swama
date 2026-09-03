@@ -37,6 +37,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
     override public init() {
         super.init()
+        SwamaDiagnostics.startSession(mode: .app)
         NSLog("SwamaKit.AppDelegate: init() called.")
 
         self.serverManager = ServerManager(host: "0.0.0.0", port: 28100)
@@ -62,6 +63,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillTerminate(_: Notification) {
+        SwamaDiagnostics.stopSession(outcome: .ok)
         Task { await serverManager?.stop() }
     }
 

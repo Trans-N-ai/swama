@@ -21,18 +21,20 @@ struct List: AsyncParsableCommand {
     var format: OutputFormat = .text
 
     func run() async throws {
-        let models = ModelManager.models()
+        try await SwamaDiagnostics.withSession(mode: .cli) {
+            let models = ModelManager.models()
 
-        if models.isEmpty {
-            print("No models found.")
-            return
-        }
+            if models.isEmpty {
+                print("No models found.")
+                return
+            }
 
-        switch format {
-        case .text:
-            printModelsText(models)
-        case .json:
-            try printModelsJSON(models)
+            switch format {
+            case .text:
+                printModelsText(models)
+            case .json:
+                try printModelsJSON(models)
+            }
         }
     }
 
