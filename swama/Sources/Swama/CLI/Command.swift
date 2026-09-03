@@ -20,7 +20,8 @@ struct Swama: AsyncParsableCommand {
             List.self,
             Remove.self,
             Transcribe.self,
-            Create.self
+            Create.self,
+            Logs.self
         ],
         defaultSubcommand: Serve.self
     )
@@ -40,6 +41,8 @@ struct MenuBar: AsyncParsableCommand {
 
     @MainActor // NSApplication operations must be on the main actor
     func run() async throws { // Changed to async throws
+        SwamaDiagnostics.startSession(mode: .app)
+        defer { SwamaDiagnostics.stopSession(outcome: .ok) }
         print("Swama CLI: Starting in menu bar application mode...")
 
         // Re-implementing the core logic of the old bootstrapMenuBarApp here

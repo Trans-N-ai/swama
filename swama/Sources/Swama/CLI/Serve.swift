@@ -2,7 +2,7 @@ import ArgumentParser
 import SwamaKit
 import SwamaServer
 
-struct Serve: AsyncParsableCommand {
+struct Serve: SwamaLoggedCommand {
     static let configuration: CommandConfiguration = .init(
         abstract: "Start the Swama API service (NIO)"
     )
@@ -16,7 +16,9 @@ struct Serve: AsyncParsableCommand {
     @OptionGroup()
     var commonOptions: CommonRunOptions
 
-    func run() async throws {
+    static let diagnosticMode: SwamaDiagnosticMode = .serve
+
+    func runLogged() async throws {
         // Use the ServerManager from SwamaKit to run the server in CLI mode.
         // Create a new instance of ServerManager for the CLI.
         // The ServerManager's properties (group, channel) are not used by runForCLI directly,

@@ -331,6 +331,22 @@ swama transcribe audio.wav --model qwen3-asr --language zh
 swama serve [--host HOST] [--port PORT]
 ```
 
+### 诊断日志
+
+Swama 将便于 Agent 解析的 JSONL 诊断事件写入 `~/.swama/logs/events.jsonl`。查看最近 200 条或
+持续跟随新事件：
+
+```bash
+swama logs
+swama logs --follow
+```
+
+诊断流只包含生命周期耗时、逻辑模型 ID、token 数、结果与有限错误码；绝不记录提示词、生成文本、
+工具参数、图像/音频、密钥、鉴权头或原始文件路径。可用 `SWAMA_DIAGNOSTICS_PATH` 指定另一份本地
+文件，或用 `SWAMA_DIAGNOSTICS_DISABLED=1` 关闭诊断流。
+
+完整事件合同见 [Agent-friendly diagnostics](docs/diagnostics.md)。
+
 ### 模型别名
 
 Swama 支持流行模型的便捷别名。使用这些简短名称而不是完整的模型 URL：

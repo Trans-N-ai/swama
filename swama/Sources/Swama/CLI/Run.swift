@@ -118,7 +118,7 @@ private enum RunError: Error, LocalizedError {
 
 // MARK: - Run
 
-struct Run: AsyncParsableCommand {
+struct Run: SwamaLoggedCommand {
     static let configuration: CommandConfiguration = .init(
         abstract: "Run a local model with a prompt using Swama",
         discussion: """
@@ -175,7 +175,7 @@ struct Run: AsyncParsableCommand {
     @OptionGroup()
     var commonOptions: CommonRunOptions
 
-    func run() async throws {
+    func runLogged() async throws {
         let resolvedModelName = try await ModelDownloader.fetchModel(modelName: modelName)
 
         if let limit = commonOptions.resolvedContextLimit {

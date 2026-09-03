@@ -22,7 +22,7 @@ enum ResponseFormat: String, CaseIterable, ExpressibleByArgument {
 
 // MARK: - Transcribe
 
-struct Transcribe: AsyncParsableCommand {
+struct Transcribe: SwamaLoggedCommand {
     static let configuration: CommandConfiguration = .init(
         abstract: "Transcribe audio file to text using MLXAudio STT"
     )
@@ -51,7 +51,7 @@ struct Transcribe: AsyncParsableCommand {
     @Flag(name: .long, help: "Show detailed output with timestamps (equivalent to --format verbose)")
     var verbose: Bool = false
 
-    func run() async throws {
+    func runLogged() async throws {
         let audioURL = URL(fileURLWithPath: audioFile)
 
         // Check if file exists

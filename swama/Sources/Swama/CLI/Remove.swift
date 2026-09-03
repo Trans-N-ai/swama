@@ -2,7 +2,7 @@ import ArgumentParser
 import Foundation
 import SwamaKit
 
-struct Remove: AsyncParsableCommand {
+struct Remove: SwamaLoggedCommand {
     static let configuration: CommandConfiguration = .init(
         commandName: "rm",
         abstract: "Remove a model from local storage"
@@ -16,7 +16,7 @@ struct Remove: AsyncParsableCommand {
     @Flag(name: .shortAndLong, help: "Force removal without confirmation prompt")
     var force: Bool = false
 
-    func run() async throws {
+    func runLogged() async throws {
         let resolvedModelName: String =
             if let ttsModel = TTSModelResolver.resolve(model) {
                 ttsModel.repository

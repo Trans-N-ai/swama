@@ -119,9 +119,24 @@ private final class LoadedValueOwner<Value: AnyObject>: @unchecked Sendable {
 // MARK: - PendingModelLoad
 
 private struct PendingModelLoad<Value: AnyObject>: Sendable {
+    init(
+        token: ModelLoadToken,
+        task: Task<LoadedValueOwner<Value>, Error>,
+        diagnosticOperation: SwamaDiagnosticOperation,
+        diagnosticPhases: ModelLoadPhaseRecorder
+    ) {
+        self.token = token
+        self.task = task
+        self.diagnosticOperation = diagnosticOperation
+        self.diagnosticPhases = diagnosticPhases
+    }
+
     let token: ModelLoadToken
     let task: Task<LoadedValueOwner<Value>, Error>
+    let diagnosticOperation: SwamaDiagnosticOperation
+    let diagnosticPhases: ModelLoadPhaseRecorder
     let postLoadCleanupGate: OneShotGate = .init()
+    let diagnosticTerminalGate: OneShotGate = .init()
 }
 
 // MARK: - OneShotGate
@@ -306,11 +321,18 @@ public actor ModelPool {
         ensureCacheLimitConfigured()
 
         let token = makeLoadToken(for: modelName)
+        let diagnosticPhases = ModelLoadPhaseRecorder()
+        let diagnosticOperation = SwamaDiagnostics.startModelLoad(model: modelName)
         let task = Task { [self] in
             let runner = try await loadSpeechToTextRunner(modelName: modelName)
             return LoadedValueOwner(runner)
         }
-        let pending = PendingModelLoad(token: token, task: task)
+        let pending = PendingModelLoad(
+            token: token,
+            task: task,
+            diagnosticOperation: diagnosticOperation,
+            diagnosticPhases: diagnosticPhases
+        )
         sttTasks[modelName] = pending
         return try await finishSpeechToTextLoad(pending, modelName: modelName)
     }
@@ -343,6 +365,8 @@ public actor ModelPool {
         ensureCacheLimitConfigured()
 
         let token = makeLoadToken(for: modelKey)
+        let diagnosticPhases = ModelLoadPhaseRecorder()
+        let diagnosticOperation = SwamaDiagnostics.startModelLoad(model: modelKey)
         let task = Task { [self] in
             let runner = try await loadTTSRunner(
                 modelKey: modelKey,
@@ -352,7 +376,12 @@ public actor ModelPool {
             return LoadedValueOwner(runner)
         }
 
-        let pending = PendingModelLoad(token: token, task: task)
+        let pending = PendingModelLoad(
+            token: token,
+            task: task,
+            diagnosticOperation: diagnosticOperation,
+            diagnosticPhases: diagnosticPhases
+        )
         ttsTasks[modelKey] = pending
         return try await finishTTSLoad(pending, modelKey: modelKey)
     }
@@ -493,14 +522,22 @@ public actor ModelPool {
         modelTypeCache[modelName] = isVLM
 
         let token = makeLoadToken(for: modelName)
+        let diagnosticPhases = ModelLoadPhaseRecorder()
+        let diagnosticOperation = SwamaDiagnostics.startModelLoad(model: modelName)
         let task = Task { [self] in
             let container = try await loadLanguageContainer(
                 modelName: modelName,
-                isVLM: isVLM
+                isVLM: isVLM,
+                diagnosticPhases: diagnosticPhases
             )
             return LoadedValueOwner(container)
         }
-        let pending = PendingModelLoad(token: token, task: task)
+        let pending = PendingModelLoad(
+            token: token,
+            task: task,
+            diagnosticOperation: diagnosticOperation,
+            diagnosticPhases: diagnosticPhases
+        )
         tasks[modelName] = pending
         return try await finishLanguageLoad(pending, modelName: modelName)
     }
@@ -519,6 +556,17 @@ public actor ModelPool {
     public func clearCache() {
         let memoryBefore = memoryHooks.activeMemory()
         let evictedCount = cache.count
+        let modelNames = Set(cache.keys)
+            .union(tasks.keys)
+            .union(embeddingRunnerCache.keys)
+            .union(embeddingTasks.keys)
+            .union(sttRunnerCache.keys)
+            .union(sttTasks.keys)
+            .union(ttsRunnerCache.keys)
+            .union(ttsTasks.keys)
+        let diagnosticOperations = Dictionary(uniqueKeysWithValues: modelNames.map {
+            ($0, SwamaDiagnostics.startEviction(model: $0))
+        })
 
         invalidateAllLoads()
 
@@ -560,6 +608,15 @@ public actor ModelPool {
 
         let memoryAfter = memoryHooks.activeMemory()
         let memoryReleased = max(0, memoryBefore - memoryAfter)
+        let residentBytesAfter = SwamaDiagnostics.residentBytes()
+        for (modelName, operation) in diagnosticOperations {
+            SwamaDiagnostics.completeEviction(
+                operation,
+                model: modelName,
+                generation: globalLoadGeneration,
+                residentBytesAfter: residentBytesAfter
+            )
+        }
         NSLog(
             "SwamaKit.ModelPool: Cache cleared (\(evictedCount) models). Released \(memoryReleased / (1024 * 1024))MB active memory. Active: \(memoryAfter / (1024 * 1024))MB"
         )
@@ -567,6 +624,15 @@ public actor ModelPool {
 
     /// Removes a specific model from the cache and cancels its loading task if active.
     public func remove(modelName: String) {
+        let hadEntry = cache[modelName] != nil
+            || tasks[modelName] != nil
+            || embeddingRunnerCache[modelName] != nil
+            || embeddingTasks[modelName] != nil
+            || sttRunnerCache[modelName] != nil
+            || sttTasks[modelName] != nil
+            || ttsRunnerCache[modelName] != nil
+            || ttsTasks[modelName] != nil
+        let diagnosticOperation = hadEntry ? SwamaDiagnostics.startEviction(model: modelName) : nil
         invalidateLoads(for: modelName)
 
         cache.removeValue(forKey: modelName)
@@ -595,6 +661,14 @@ public actor ModelPool {
 
         // All strong owners have been removed before MLX cleanup runs.
         memoryHooks.clearCache()
+        if let diagnosticOperation {
+            SwamaDiagnostics.completeEviction(
+                diagnosticOperation,
+                model: modelName,
+                generation: modelLoadGenerations[modelName, default: 0],
+                residentBytesAfter: SwamaDiagnostics.residentBytes()
+            )
+        }
     }
 
     #if DEBUG
@@ -784,11 +858,21 @@ public actor ModelPool {
 
         ensureCacheLimitConfigured()
         let token = makeLoadToken(for: modelName)
+        let diagnosticPhases = ModelLoadPhaseRecorder()
+        let diagnosticOperation = SwamaDiagnostics.startModelLoad(model: modelName)
         let task = Task { [self] in
-            let runner = try await loadEmbeddingRunner(modelName: modelName)
+            let runner = try await loadEmbeddingRunner(
+                modelName: modelName,
+                diagnosticPhases: diagnosticPhases
+            )
             return LoadedValueOwner(runner)
         }
-        let pending = PendingModelLoad(token: token, task: task)
+        let pending = PendingModelLoad(
+            token: token,
+            task: task,
+            diagnosticOperation: diagnosticOperation,
+            diagnosticPhases: diagnosticPhases
+        )
         embeddingTasks[modelName] = pending
         return try await finishEmbeddingLoad(pending, modelName: modelName)
     }
@@ -840,6 +924,7 @@ public actor ModelPool {
                 if currentPendingToken() == pending.token {
                     removePending()
                 }
+                completeLoadDiagnostics(pending, modelName: modelName)
                 return existing
             }
 
@@ -855,6 +940,7 @@ public actor ModelPool {
             if currentPendingToken() == pending.token {
                 removePending()
             }
+            completeLoadDiagnostics(pending, modelName: modelName)
             return loaded
         }
         catch {
@@ -863,6 +949,12 @@ public actor ModelPool {
             if currentPendingToken() == pending.token {
                 removePending()
             }
+            finishLoadDiagnostics(
+                pending,
+                modelName: modelName,
+                error: error,
+                wasInvalidated: wasInvalidated
+            )
             if wasInvalidated {
                 throw CancellationError()
             }
@@ -888,6 +980,60 @@ public actor ModelPool {
         memoryHooks.clearCache()
     }
 
+    private func completeLoadDiagnostics(
+        _ pending: PendingModelLoad<some AnyObject>,
+        modelName: String
+    ) {
+        guard pending.diagnosticTerminalGate.claim() else {
+            return
+        }
+
+        SwamaDiagnostics.completeModelLoad(
+            pending.diagnosticOperation,
+            model: modelName,
+            phases: pending.diagnosticPhases.phases
+        )
+    }
+
+    private func finishLoadDiagnostics(
+        _ pending: PendingModelLoad<some AnyObject>,
+        modelName: String,
+        error: Error,
+        wasInvalidated: Bool
+    ) {
+        guard pending.diagnosticTerminalGate.claim() else {
+            return
+        }
+
+        if wasInvalidated || error is CancellationError {
+            SwamaDiagnostics.cancelModelLoad(
+                pending.diagnosticOperation,
+                model: modelName,
+                phases: pending.diagnosticPhases.phases
+            )
+            return
+        }
+
+        let code: SwamaDiagnosticErrorCode =
+            if let poolError = error as? ModelPoolError {
+                switch poolError {
+                case .modelNotFoundLocally:
+                    .modelNotFound
+                case .failedToLoadModel:
+                    .modelLoadFailed
+                }
+            }
+            else {
+                .modelLoadFailed
+            }
+        SwamaDiagnostics.failModelLoad(
+            pending.diagnosticOperation,
+            model: modelName,
+            code: code,
+            phases: pending.diagnosticPhases.phases
+        )
+    }
+
     private func determineModelType(_ modelName: String) -> Bool {
         loadOverrides?.determineIsVLM(modelName)
             ?? determineIfVLMModel(modelName: modelName)
@@ -895,12 +1041,17 @@ public actor ModelPool {
 
     private func loadLanguageContainer(
         modelName: String,
-        isVLM: Bool
+        isVLM: Bool,
+        diagnosticPhases: ModelLoadPhaseRecorder
     ) async throws -> MLXLMCommon.ModelContainer {
         if let load = loadOverrides?.loadLanguage {
             return try await load(modelName, isVLM)
         }
-        return try await loadModelContainer(modelName: modelName, isVLM: isVLM)
+        return try await loadModelContainer(
+            modelName: modelName,
+            isVLM: isVLM,
+            diagnosticPhases: diagnosticPhases
+        )
     }
 
     private func loadSpeechToTextRunner(modelName: String) async throws -> SpeechToTextRunner {
@@ -926,11 +1077,20 @@ public actor ModelPool {
         return runner
     }
 
-    private func loadEmbeddingRunner(modelName: String) async throws -> EmbeddingRunner {
+    private func loadEmbeddingRunner(
+        modelName: String,
+        diagnosticPhases: ModelLoadPhaseRecorder
+    ) async throws -> EmbeddingRunner {
         if let load = loadOverrides?.loadEmbedding {
             return try await load(modelName)
         }
-        let container = try await loadEmbeddingModelContainer(modelName: modelName)
+        let container = try await loadEmbeddingModelContainer(
+            modelName: modelName,
+            tokenizerLoader: DiagnosticTokenizerLoader(
+                upstream: #huggingFaceTokenizerLoader(),
+                phases: diagnosticPhases
+            )
+        )
         return EmbeddingRunner(container: container)
     }
 
@@ -961,7 +1121,8 @@ public actor ModelPool {
 
     private func loadModelContainer(
         modelName: String,
-        isVLM: Bool
+        isVLM: Bool,
+        diagnosticPhases: ModelLoadPhaseRecorder
     ) async throws -> MLXLMCommon.ModelContainer {
         // About to genuinely touch MLX (loading a container triggers Metal init) -- configure
         // the cache limit now, idempotently, rather than eagerly in `init()`.
@@ -977,17 +1138,21 @@ public actor ModelPool {
         )
 
         do {
+            let tokenizerLoader = DiagnosticTokenizerLoader(
+                upstream: #huggingFaceTokenizerLoader(),
+                phases: diagnosticPhases
+            )
             if isVLM {
                 return try await VLMModelFactory.shared.loadContainer(
                     from: LocalOnlyModelDownloader(),
-                    using: #huggingFaceTokenizerLoader(),
+                    using: tokenizerLoader,
                     configuration: localConfig
                 )
             }
             else {
                 return try await LLMModelFactory.shared.loadContainer(
                     from: LocalOnlyModelDownloader(),
-                    using: #huggingFaceTokenizerLoader(),
+                    using: tokenizerLoader,
                     configuration: localConfig
                 )
             }
@@ -1386,6 +1551,7 @@ public actor ModelPool {
             return
         }
 
+        let diagnosticOperation = SwamaDiagnostics.startEviction(model: modelName)
         let memoryBefore = memoryHooks.activeMemory()
 
         invalidateLoads(for: modelName)
@@ -1423,6 +1589,12 @@ public actor ModelPool {
         // Get memory snapshot after cleanup to measure actual release
         let memoryAfter = memoryHooks.activeMemory()
         let memoryReleased = max(0, memoryBefore - memoryAfter)
+        SwamaDiagnostics.completeEviction(
+            diagnosticOperation,
+            model: modelName,
+            generation: modelLoadGenerations[modelName, default: 0],
+            residentBytesAfter: SwamaDiagnostics.residentBytes()
+        )
 
         NSLog(
             "SwamaKit.ModelPool: Evicted model \(modelName) - \(reason). Released \(memoryReleased / (1024 * 1024))MB active memory. Active: \(memoryAfter / (1024 * 1024))MB"
