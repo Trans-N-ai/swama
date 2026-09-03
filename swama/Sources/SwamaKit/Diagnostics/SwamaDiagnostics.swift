@@ -3,19 +3,46 @@ import Darwin
 import Foundation
 
 private let maximumDiagnosticModelIdentityBytes = 256
+private let maximumDiagnosticModelIdentityComponentBytes = 96
 
 private func requiresOpaqueDiagnosticModelIdentity(_ value: String) -> Bool {
-    let components = value.split(separator: "/", omittingEmptySubsequences: false)
-    let hasRelativeTraversal = components.contains(".") || components.contains("..")
-    let hasUnsafeScalar = value.unicodeScalars.contains { scalar in
-        scalar.value < 0x21 || scalar.value > 0x7E || scalar.value == 0x5C
+    guard value.utf8.count <= maximumDiagnosticModelIdentityBytes else {
+        return true
     }
-    return value.utf8.count > maximumDiagnosticModelIdentityBytes
-        || value.hasPrefix("/")
-        || value.hasPrefix("~")
-        || value.hasPrefix("file:")
-        || hasRelativeTraversal
-        || hasUnsafeScalar
+
+    if value.hasPrefix("local:") {
+        let digest = value.dropFirst("local:".count)
+        return digest.count != 64 || !digest.unicodeScalars.allSatisfy { scalar in
+            (0x30 ... 0x39).contains(scalar.value) || (0x61 ... 0x66).contains(scalar.value)
+        }
+    }
+
+    let components = value.split(separator: "/", omittingEmptySubsequences: false)
+    guard (1 ... 2).contains(components.count) else {
+        return true
+    }
+
+    return !components.allSatisfy { component in
+        guard !component.isEmpty,
+              component.utf8.count <= maximumDiagnosticModelIdentityComponentBytes,
+              let first = component.unicodeScalars.first,
+              let last = component.unicodeScalars.last,
+              isASCIIAlphanumeric(first),
+              isASCIIAlphanumeric(last)
+        else {
+            return false
+        }
+
+        return component.unicodeScalars.allSatisfy { scalar in
+            isASCIIAlphanumeric(scalar) || scalar.value == 0x2D || scalar.value == 0x2E || scalar.value == 0x5F
+        }
+    }
+}
+
+private func isASCIIAlphanumeric(_ scalar: Unicode.Scalar) -> Bool {
+    (0x30 ... 0x39).contains(scalar.value)
+        || (0x41 ... 0x5A).contains(scalar.value)
+        || (0x61 ... 0x7A).contains(scalar.value)
 }
 
 // MARK: - SwamaDiagnosticMode
@@ -237,7 +264,7 @@ enum SwamaDiagnosticTimeline: Equatable {
             let lineData = Data(line)
             guard let object = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
                   let event = try? decoder.decode(SwamaDiagnosticEvent.self, from: lineData),
-                  hasValidEnvelopeKeys(object),
+                  hasValidEnvelopeKeys(object, event: event),
                   hasValidEventShape(event, object: object)
             else {
                 return .unknown
@@ -336,10 +363,49 @@ enum SwamaDiagnosticTimeline: Equatable {
         return degraded ? .degraded(events) : .valid(events)
     }
 
-    private static func hasValidEnvelopeKeys(_ object: [String: Any]) -> Bool {
-        let required: Set<String> = ["schema", "ts", "seq", "level", "subsystem", "event", "session"]
-        let allowed = required.union(["op", "model", "duration_ms", "outcome", "error", "data"])
-        return required.isSubset(of: object.keys) && Set(object.keys).isSubset(of: allowed)
+    private static func hasValidEnvelopeKeys(_ object: [String: Any], event: SwamaDiagnosticEvent) -> Bool {
+        let base: Set<String> = ["schema", "ts", "seq", "level", "subsystem", "event", "session"]
+        let operation = Set(["op", "model"])
+        let terminal = Set(["duration_ms", "outcome"])
+        let data = Set(["data"])
+        let error = Set(["error"])
+        let expected: Set<String> =
+            switch event.event {
+            case .sessionStarted:
+                base.union(data)
+            case .sessionStopped:
+                base.union(terminal).union(event.outcome == .error ? error : [])
+            case .modelLoadStarted:
+                base.union(operation).union(data)
+            case .modelLoadCancelled,
+                 .modelLoadCompleted:
+                base.union(operation).union(terminal).union(data)
+            case .modelLoadFailed:
+                base.union(operation).union(terminal).union(error).union(data)
+            case .tokenizerCacheEvicted,
+                 .tokenizerCacheHit,
+                 .tokenizerCacheMiss:
+                base.union(data)
+            case .tokenizerCacheRejected:
+                base.union(terminal).union(error).union(data)
+            case .generationStarted,
+                 .modelEvictionStarted:
+                base.union(operation)
+            case .modelEvictionCompleted:
+                base.union(operation).union(terminal).union(data)
+            case .generationFailed,
+                 .modelEvictionFailed:
+                base.union(operation).union(terminal).union(error)
+            case .generationFirstToken:
+                base.union(operation).union(data)
+            case .generationCancelled,
+                 .generationCompleted:
+                base.union(operation).union(terminal).union(data)
+            case .logDropped:
+                base.union(data)
+            }
+
+        return Set(object.keys) == expected && !object.values.contains { $0 is NSNull }
     }
 
     private static func hasValidEventShape(_ event: SwamaDiagnosticEvent, object: [String: Any]) -> Bool {

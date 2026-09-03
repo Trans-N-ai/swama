@@ -143,6 +143,14 @@ struct DiagnosticsTests {
         object["model"] = "model"
         #expect(try SwamaDiagnosticTimeline.parse(jsonLine(object)) == .unknown)
 
+        object.removeValue(forKey: "op")
+        object.removeValue(forKey: "model")
+        for key in ["op", "model", "duration_ms", "outcome", "error"] {
+            var explicitNull = object
+            explicitNull[key] = NSNull()
+            #expect(try SwamaDiagnosticTimeline.parse(jsonLine(explicitNull)) == .unknown)
+        }
+
         let wrongErrorPrimary = LockedData()
         let wrongErrorRecorder = makeRecorder(primary: wrongErrorPrimary)
         wrongErrorRecorder.start(mode: .cli)
@@ -248,7 +256,8 @@ struct DiagnosticsTests {
             subsystem: "model",
             event: .modelLoadStarted,
             operation: recorder.makeOperation(),
-            model: "/Users/alice/private/prompt-secret"
+            model: "/Users/alice/private/prompt-secret",
+            data: [:]
         )
         recorder.flush()
 
@@ -265,6 +274,12 @@ struct DiagnosticsTests {
             "./private/prompt-secret",
             "models/../private/prompt-secret",
             "file:///Users/alice/private/prompt-secret",
+            "https://alice:poison-secret@example.invalid/model",
+            "custom-scheme:prompt-secret",
+            "model?token=prompt-secret",
+            "model#prompt-secret",
+            #"C:\private\prompt-secret"#,
+            "namespace//prompt-secret",
             String(repeating: "oversized-secret", count: 64)
         ]
         let primary = LockedData()
@@ -290,6 +305,33 @@ struct DiagnosticsTests {
         #expect(events.allSatisfy { $0.model?.hasPrefix("local:") == true })
     }
 
+    @Test func logicalModelIdentitiesRemainJoinable() throws {
+        let digestIdentity = "local:" + String(repeating: "a", count: 64)
+        let identities = [
+            "model",
+            "qwen3.5-4b",
+            "Qwen/Qwen3-4B-MLX-4bit",
+            digestIdentity
+        ]
+        let primary = LockedData()
+        let recorder = makeRecorder(primary: primary)
+        recorder.start(mode: .cli)
+        for identity in identities {
+            recorder.record(
+                level: .info,
+                subsystem: "model",
+                event: .modelLoadStarted,
+                operation: recorder.makeOperation(),
+                model: identity,
+                data: [:]
+            )
+        }
+        recorder.flush()
+
+        let events = try validEvents(primary.data).filter { $0.event == .modelLoadStarted }
+        #expect(events.map(\.model) == identities.map(Optional.some))
+    }
+
     @Test func embeddingsRequestRelativeModelCannotLeakIntoDiagnostics() async throws {
         let primary = LockedData()
         let recorder = makeRecorder(primary: primary)
@@ -310,6 +352,35 @@ struct DiagnosticsTests {
         let text = String(decoding: primary.data, as: UTF8.self)
         #expect(!text.contains("../private"))
         #expect(!text.contains("prompt-secret"))
+        #expect(!text.contains("poison-input"))
+        let modelEvents = try validEvents(primary.data).filter { $0.subsystem == "model" }
+        #expect(modelEvents.map(\.event) == [.modelLoadStarted, .modelLoadFailed])
+        #expect(modelEvents.allSatisfy { $0.model?.hasPrefix("local:") == true })
+    }
+
+    @Test func embeddingsRequestCredentialURLCannotLeakIntoDiagnostics() async throws {
+        let primary = LockedData()
+        let recorder = makeRecorder(primary: primary)
+        recorder.start(mode: .serve)
+        let previous = SwamaDiagnostics.installRecorderForTesting(recorder)
+        defer { SwamaDiagnostics.restoreRecorderForTesting(previous) }
+
+        let channel = NIOAsyncTestingChannel()
+        var body = ByteBufferAllocator().buffer(capacity: 192)
+        body.writeString(
+            #"{"input":"poison-input","model":"https://alice:poison-secret@example.invalid/model"}"#
+        )
+        await EmbeddingsHandler.handle(
+            requestHead: .init(version: .http1_1, method: .POST, uri: "/v1/embeddings"),
+            body: body,
+            channel: channel
+        )
+        recorder.flush()
+
+        let text = String(decoding: primary.data, as: UTF8.self)
+        #expect(!text.contains("alice"))
+        #expect(!text.contains("poison-secret"))
+        #expect(!text.contains("example.invalid"))
         #expect(!text.contains("poison-input"))
         let modelEvents = try validEvents(primary.data).filter { $0.subsystem == "model" }
         #expect(modelEvents.map(\.event) == [.modelLoadStarted, .modelLoadFailed])
