@@ -121,7 +121,7 @@ private final class LoadedValueOwner<Value: AnyObject>: @unchecked Sendable {
 private struct PendingModelLoad<Value: AnyObject>: Sendable {
     let token: ModelLoadToken
     let task: Task<LoadedValueOwner<Value>, Error>
-    let staleCleanupGate: OneShotGate = .init()
+    let postLoadCleanupGate: OneShotGate = .init()
 }
 
 // MARK: - OneShotGate
@@ -234,24 +234,22 @@ public actor ModelPool {
         operation: @Sendable @escaping (SpeechToTextRunner) async throws -> T
     ) async throws -> T {
         // Wait for available slot AND ensure the specific model is not already running
-        while runningInferences >= maxConcurrentInferences || runningModels.contains(modelName) {
+        while runningInferences >= maxConcurrentInferences || runningModels[modelName] != nil {
             try await Task.sleep(nanoseconds: 50_000_000) // 50ms
         }
 
         try Task.checkCancellation()
 
         runningInferences += 1
-        runningModels.insert(modelName)
-        loadingModels.insert(modelName)
+        let operationToken = beginModelOperation(modelName)
         defer {
             runningInferences = max(0, runningInferences - 1)
-            runningModels.remove(modelName)
-            loadingModels.remove(modelName)
+            endModelOperation(modelName, token: operationToken)
         }
 
         // Get or load the speech-to-text runner
         let runner = try await getSpeechToTextRunner(modelName: modelName)
-        loadingModels.remove(modelName)
+        finishLoadingPhase(modelName, token: operationToken)
 
         // Execute the operation
         return try await operation(runner)
@@ -264,19 +262,17 @@ public actor ModelPool {
         repository: String? = nil,
         operation: @Sendable @escaping (TTSRunner) async throws -> T
     ) async throws -> T {
-        while runningInferences >= maxConcurrentInferences || runningModels.contains(modelKey) {
+        while runningInferences >= maxConcurrentInferences || runningModels[modelKey] != nil {
             try await Task.sleep(nanoseconds: 50_000_000) // 50ms
         }
 
         try Task.checkCancellation()
 
         runningInferences += 1
-        runningModels.insert(modelKey)
-        loadingModels.insert(modelKey)
+        let operationToken = beginModelOperation(modelKey)
         defer {
             runningInferences = max(0, runningInferences - 1)
-            runningModels.remove(modelKey)
-            loadingModels.remove(modelKey)
+            endModelOperation(modelKey, token: operationToken)
         }
 
         let runner = try await getTTSRunner(
@@ -284,7 +280,7 @@ public actor ModelPool {
             kind: kind,
             repository: repository
         )
-        loadingModels.remove(modelKey)
+        finishLoadingPhase(modelKey, token: operationToken)
         return try await operation(runner)
     }
 
@@ -388,12 +384,34 @@ public actor ModelPool {
     private var runningInferences = 0
     private let maxConcurrentInferences = 3 // Optimal for high-performance machines
 
-    /// Per-model concurrency control: track which models are currently running inference
-    private var runningModels: Set<String> = []
+    /// Per-model concurrency control: map each reserved model to its owning operation token.
+    private var runningModels: [String: UInt64] = [:]
 
-    /// Subset of `runningModels` that has not yet reached its inference operation. Periodic
-    /// teardown may invalidate these pending loads, but must still skip a live operation.
-    private var loadingModels: Set<String> = []
+    /// The same operation token remains here only until its model load finishes. Matching tokens
+    /// are an explicit credential for eviction to cancel a load without touching a live operation.
+    private var loadingModels: [String: UInt64] = [:]
+    private var nextOperationSequence: UInt64 = 0
+
+    private func beginModelOperation(_ modelName: String) -> UInt64 {
+        nextOperationSequence &+= 1
+        let token = nextOperationSequence
+        runningModels[modelName] = token
+        loadingModels[modelName] = token
+        return token
+    }
+
+    private func finishLoadingPhase(_ modelName: String, token: UInt64) {
+        if loadingModels[modelName] == token {
+            loadingModels.removeValue(forKey: modelName)
+        }
+    }
+
+    private func endModelOperation(_ modelName: String, token: UInt64) {
+        finishLoadingPhase(modelName, token: token)
+        if runningModels[modelName] == token {
+            runningModels.removeValue(forKey: modelName)
+        }
+    }
 
     /// Safely run a model operation with concurrency control to prevent MLX heap corruption
     public func run<T: Sendable>(
@@ -401,24 +419,22 @@ public actor ModelPool {
         operation: @Sendable @escaping (ModelRunner) async throws -> T
     ) async throws -> T {
         // Wait for available slot AND ensure the specific model is not already running
-        while runningInferences >= maxConcurrentInferences || runningModels.contains(modelName) {
+        while runningInferences >= maxConcurrentInferences || runningModels[modelName] != nil {
             try await Task.sleep(nanoseconds: 50_000_000) // 50ms
         }
 
         try Task.checkCancellation()
 
         runningInferences += 1
-        runningModels.insert(modelName)
-        loadingModels.insert(modelName)
+        let operationToken = beginModelOperation(modelName)
         defer {
             runningInferences = max(0, runningInferences - 1)
-            runningModels.remove(modelName)
-            loadingModels.remove(modelName)
+            endModelOperation(modelName, token: operationToken)
         }
 
         // Get or load the model container
         let container = try await getContainer(modelName: modelName)
-        loadingModels.remove(modelName)
+        finishLoadingPhase(modelName, token: operationToken)
         let runner = ModelRunner(container: container)
 
         // Execute the operation
@@ -430,7 +446,9 @@ public actor ModelPool {
         modelName: String,
         operation: @Sendable @escaping (EmbeddingRunner) async throws -> T
     ) async throws -> T {
-        // Wait for available slot
+        // Embedding requests share the global pool limit but deliberately do not reserve
+        // `runningModels`: EmbeddingRunner is an actor and EmbedderModelContainer serializes
+        // access internally, so same-model callers may coalesce one load and then queue there.
         while runningInferences >= maxConcurrentInferences {
             try await Task.sleep(nanoseconds: 50_000_000) // 50ms
         }
@@ -613,6 +631,18 @@ public actor ModelPool {
                 embeddingTasks[modelName] != nil
             }
         }
+
+        func hasMatchingLoadingOperationForTesting(modelName: String) -> Bool {
+            guard let runningOwner = runningModels[modelName] else {
+                return false
+            }
+
+            return loadingModels[modelName] == runningOwner
+        }
+
+        func runningInferenceCountForTesting() -> Int {
+            runningInferences
+        }
     #endif
 
     // MARK: Private
@@ -667,13 +697,13 @@ public actor ModelPool {
         _ owner: LoadedValueOwner<Value>,
         token: ModelLoadToken,
         modelName: String,
-        staleCleanupGate: OneShotGate
+        postLoadCleanupGate: OneShotGate
     ) throws -> Value {
         guard isCurrent(token, modelName: modelName) else {
             // clear/remove/evict already ran one cleanup while this owner was still live. Drop
             // the Task-retained value first, then run the bounded follow-up cleanup exactly once.
             owner.release()
-            if staleCleanupGate.claim() {
+            if postLoadCleanupGate.claim() {
                 memoryHooks.clearCache()
             }
             throw CancellationError()
@@ -789,28 +819,43 @@ public actor ModelPool {
     ) async throws -> Value {
         do {
             let owner = try await pending.task.value
+
+            guard isCurrent(pending.token, modelName: modelName) else {
+                return try resolvedLoadedValue(
+                    owner,
+                    token: pending.token,
+                    modelName: modelName,
+                    postLoadCleanupGate: pending.postLoadCleanupGate
+                )
+            }
+
+            if let existing = cachedValue() {
+                recordCachedUse()
+                // Another waiter or an explicit cache setter won the commit. A completed Task
+                // must not retain its unused load; if it owned a distinct value, clean up after
+                // releasing it. Multiple waiters share this one-shot cleanup gate.
+                if owner.release(), pending.postLoadCleanupGate.claim() {
+                    memoryHooks.clearCache()
+                }
+                if currentPendingToken() == pending.token {
+                    removePending()
+                }
+                return existing
+            }
+
             let loaded = try resolvedLoadedValue(
                 owner,
                 token: pending.token,
                 modelName: modelName,
-                staleCleanupGate: pending.staleCleanupGate
+                postLoadCleanupGate: pending.postLoadCleanupGate
             )
-
-            let value: Value
-            if let existing = cachedValue() {
-                recordCachedUse()
-                value = existing
-            }
-            else {
-                storeLoaded(loaded)
-                value = loaded
-            }
+            storeLoaded(loaded)
             owner.release()
 
             if currentPendingToken() == pending.token {
                 removePending()
             }
-            return value
+            return loaded
         }
         catch {
             let wasInvalidated = !isCurrent(pending.token, modelName: modelName)
@@ -835,7 +880,7 @@ public actor ModelPool {
         modelName: String
     ) {
         guard !isCurrent(pending.token, modelName: modelName),
-              pending.staleCleanupGate.claim()
+              pending.postLoadCleanupGate.claim()
         else {
             return
         }
@@ -1294,7 +1339,7 @@ public actor ModelPool {
     private func getIdleModels() -> [(name: String, idleTime: TimeInterval)] {
         modelUsageInfo.compactMap { modelName, usage in
             // Skip models that are currently running
-            guard !runningModels.contains(modelName) else {
+            guard runningModels[modelName] == nil else {
                 return nil
             }
 
@@ -1311,7 +1356,7 @@ public actor ModelPool {
     private func getEvictionCandidates() -> [(name: String, score: Double)] {
         modelUsageInfo.compactMap { modelName, usage in
             // Skip models that are currently running
-            guard !runningModels.contains(modelName) else {
+            guard runningModels[modelName] == nil else {
                 return nil
             }
 
@@ -1332,8 +1377,11 @@ public actor ModelPool {
     private func evictModel(modelName: String, reason: String) async {
         // A pending load has not reached inference yet and is safe to invalidate. Continue to
         // protect a genuinely running cached model from periodic eviction.
-        let isPendingLoad = loadingModels.contains(modelName) && hasPendingLoad(for: modelName)
-        guard !runningModels.contains(modelName) || isPendingLoad else {
+        let runningOwner = runningModels[modelName]
+        let isPendingLoad = runningOwner != nil
+            && loadingModels[modelName] == runningOwner
+            && hasPendingLoad(for: modelName)
+        guard runningOwner == nil || isPendingLoad else {
             NSLog("SwamaKit.ModelPool: Skipping eviction of \(modelName) - currently running")
             return
         }

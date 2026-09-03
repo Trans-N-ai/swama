@@ -11,6 +11,92 @@ import Testing
 @Suite("ModelPool in-flight load teardown", .serialized)
 struct ModelPoolInFlightTeardownTests {
     @Test
+    func concurrentEmbeddingWaitersShareOneLoadAndBothSucceed() async throws {
+        let modelName = "coalesced-embedding-waiters"
+        let loader = ControlledLoader(
+            first: makeLifetimeEmbeddingRunner(),
+            next: makeLifetimeEmbeddingRunner()
+        )
+        let witness = CleanupWitness(nil)
+        let pool = makePool(witness: witness, embeddingLoader: loader)
+
+        let firstRequest = Task<Result<String, Error>, Never> {
+            do {
+                return try await .success(pool.runEmbeddingWithConcurrencyControl(modelName: modelName) { _ in
+                    "first"
+                })
+            }
+            catch {
+                return .failure(error)
+            }
+        }
+        await loader.waitUntilFirstLoadEntered()
+
+        let secondRequest = Task<Result<String, Error>, Never> {
+            do {
+                return try await .success(pool.runEmbeddingWithConcurrencyControl(modelName: modelName) { _ in
+                    "second"
+                })
+            }
+            catch {
+                return .failure(error)
+            }
+        }
+        await waitUntilRunningInferenceCount(2, pool: pool)
+        #expect(await loader.numberOfLoads == 1)
+
+        await loader.releaseFirstLoad()
+        for (result, expected) in await [(firstRequest.value, "first"), (secondRequest.value, "second")] {
+            switch result {
+            case let .success(value):
+                #expect(value == expected)
+            case let .failure(error):
+                Issue.record("coalesced embedding waiter unexpectedly failed: \(error)")
+            }
+        }
+        #expect(await pool.isCachedForTesting(.embedding, modelName: modelName))
+        #expect(witness.cleanupReleaseStates.isEmpty)
+    }
+
+    @Test
+    func currentLoadedEmbeddingDiscardedBehindExistingCacheCleansUpAfterRelease() async throws {
+        let modelName = "embedding-cache-won-before-load"
+        var loaded: EmbeddingRunner? = makeLifetimeEmbeddingRunner()
+        let loader = try ControlledLoader(
+            first: #require(loaded),
+            next: makeLifetimeEmbeddingRunner()
+        )
+        let witness = CleanupWitness(loaded)
+        loaded = nil
+        let pool = makePool(witness: witness, embeddingLoader: loader)
+        let cached = makeLifetimeEmbeddingRunner()
+
+        let request = Task<Result<Bool, Error>, Never> {
+            do {
+                return try await .success(pool.runEmbeddingWithConcurrencyControl(modelName: modelName) { runner in
+                    runner === cached
+                })
+            }
+            catch {
+                return .failure(error)
+            }
+        }
+
+        await loader.waitUntilFirstLoadEntered()
+        await pool.setEmbeddingRunner(cached, for: modelName)
+        await loader.releaseFirstLoad()
+
+        switch await request.value {
+        case let .success(receivedExistingRunner):
+            #expect(receivedExistingRunner)
+        case let .failure(error):
+            Issue.record("current load should use the existing cache value: \(error)")
+        }
+        #expect(witness.cleanupReleaseStates == [true])
+        #expect(await pool.isCachedForTesting(.embedding, modelName: modelName))
+    }
+
+    @Test
     func newerEmbeddingLoadSurvivesOlderGenerationFinishingLate() async throws {
         let modelName = "overlapping-embedding-generations"
         var first: EmbeddingRunner? = makeLifetimeEmbeddingRunner()
@@ -247,6 +333,7 @@ struct ModelPoolInFlightTeardownTests {
 
         await loader.waitUntilFirstLoadEntered()
         #expect(await pool.hasPendingLoadForTesting(.language, modelName: modelName))
+        #expect(await pool.hasMatchingLoadingOperationForTesting(modelName: modelName))
         await apply(path, to: pool, modelName: modelName)
         #expect(await loader.isFirstLoadBlocked)
         await loader.releaseFirstLoad()
@@ -290,6 +377,7 @@ struct ModelPoolInFlightTeardownTests {
 
         await loader.waitUntilFirstLoadEntered()
         #expect(await pool.hasPendingLoadForTesting(.speechToText, modelName: modelName))
+        #expect(await pool.hasMatchingLoadingOperationForTesting(modelName: modelName))
         await apply(path, to: pool, modelName: modelName)
         #expect(await loader.isFirstLoadBlocked)
         await loader.releaseFirstLoad()
@@ -335,6 +423,7 @@ struct ModelPoolInFlightTeardownTests {
 
         await loader.waitUntilFirstLoadEntered()
         #expect(await pool.hasPendingLoadForTesting(.textToSpeech, modelName: modelName))
+        #expect(await pool.hasMatchingLoadingOperationForTesting(modelName: modelName))
         await apply(path, to: pool, modelName: modelName)
         #expect(await loader.isFirstLoadBlocked)
         await loader.releaseFirstLoad()
@@ -380,6 +469,7 @@ struct ModelPoolInFlightTeardownTests {
 
         await loader.waitUntilFirstLoadEntered()
         #expect(await pool.hasPendingLoadForTesting(.embedding, modelName: modelName))
+        #expect(await !(pool.hasMatchingLoadingOperationForTesting(modelName: modelName)))
         await apply(path, to: pool, modelName: modelName)
         #expect(await loader.isFirstLoadBlocked)
         await loader.releaseFirstLoad()
@@ -476,6 +566,16 @@ struct ModelPoolInFlightTeardownTests {
         #expect(await !(pool.hasPendingLoadForTesting(kind, modelName: modelName)))
         #expect(witness.cleanupReleaseStates == [false, true])
     }
+
+    private func waitUntilRunningInferenceCount(_ expected: Int, pool: ModelPool) async {
+        for _ in 0 ..< 1000 {
+            if await pool.runningInferenceCountForTesting() == expected {
+                return
+            }
+            await Task.yield()
+        }
+        Issue.record("timed out waiting for \(expected) running inference slots")
+    }
 }
 
 // MARK: - TeardownPath
@@ -561,6 +661,8 @@ private actor ControlledLoader<Value: AnyObject & Sendable> {
     var isFirstLoadBlocked: Bool {
         firstLoadEntered && !firstLoadReleased
     }
+
+    var numberOfLoads: Int { loadCount }
 
     private var values: [Value]
     private let blockSecond: Bool
