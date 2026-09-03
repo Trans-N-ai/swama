@@ -230,7 +230,7 @@ struct AcceptanceTests {
         #expect(gates["http_disconnect_then_recover"] == false)
     }
 
-    @Test func architectureGateRejectsInternalShellReverseImport() throws {
+    @Test func architectureGateRejectsAttributedShellReverseImports() throws {
         let temporary = FileManager.default
             .temporaryDirectory
             .appendingPathComponent("swama-architecture-test-\(UUID().uuidString)")
@@ -252,7 +252,15 @@ struct AcceptanceTests {
         ] {
             try Data().write(to: temporary.appendingPathComponent(file))
         }
-        try Data("import SwamaServer\n".utf8).write(
+        try Data(
+            """
+            @_exported import SwamaServer
+            internal import AppKit
+            @testable import ArgumentParser
+            @preconcurrency import MLXLMCommon
+
+            """.utf8
+        ).write(
             to: temporary.appendingPathComponent("swama/Sources/SwamaKit/Bad.swift")
         )
 
@@ -261,11 +269,36 @@ struct AcceptanceTests {
             legacyForbiddenImportAllowlist: [],
             legacyPublicMLXLeakAllowlist: [],
             goalCoreTarget: "SwamaCore",
-            goalForbiddenImports: ["SwamaServer", "SwamaAppSupport"]
+            goalForbiddenImports: ["AppKit", "ArgumentParser", "SwamaServer", "SwamaAppSupport"]
         )
         let report = try architectureReport(contract: contract, stage: .legacyRatchet, paths: paths)
         #expect(report["passed"] as? Bool == false)
-        #expect((report["new_forbidden_imports"] as? [String]) == ["swama/Sources/SwamaKit/Bad.swift:SwamaServer"])
+        #expect((report["new_forbidden_imports"] as? [String]) == [
+            "swama/Sources/SwamaKit/Bad.swift:AppKit",
+            "swama/Sources/SwamaKit/Bad.swift:ArgumentParser",
+            "swama/Sources/SwamaKit/Bad.swift:SwamaServer"
+        ])
+    }
+
+    @Test func architectureImportParserHandlesAttributesAccessAndScopedImports() throws {
+        let expression = try NSRegularExpression(pattern: swiftImportDeclarationPattern)
+        let imports = [
+            "import SwamaServer": "SwamaServer",
+            "@_exported import NIO": "NIO",
+            "@preconcurrency import AppKit": "AppKit",
+            "@testable import SwamaServer": "SwamaServer",
+            "@_implementationOnly import ArgumentParser": "ArgumentParser",
+            "@_spi(Testing) import NIOHTTP1": "NIOHTTP1",
+            "internal import SwamaAppSupport": "SwamaAppSupport",
+            "package import struct NIOCore.ByteBuffer": "NIOCore",
+            "@preconcurrency import MLXLMCommon": "MLXLMCommon"
+        ]
+
+        for (line, module) in imports {
+            #expect(swiftImportedModule(in: line, matching: expression) == module)
+        }
+        #expect(swiftImportedModule(in: "// @_exported import NIO", matching: expression) == nil)
+        #expect(swiftImportedModule(in: "let example = \"import NIO\"", matching: expression) == nil)
     }
 
     @Test func medianUsesAllMeasuredSamples() {
