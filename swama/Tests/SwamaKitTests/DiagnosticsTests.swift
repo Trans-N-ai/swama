@@ -3,7 +3,11 @@ import MLX
 import MLXEmbedders
 @preconcurrency import MLXLMCommon
 import MLXNN
+import NIOCore
+import NIOEmbedded
+import NIOHTTP1
 @testable import SwamaKit
+@testable import SwamaServer
 import Testing
 
 // MARK: - DiagnosticsTests
@@ -123,6 +127,39 @@ struct DiagnosticsTests {
         #expect(SwamaDiagnosticTimeline.parse(Data(badTimestamp.utf8)) == .unknown)
     }
 
+    @Test func eventSubsystemAndOptionalEnvelopeFieldsAreExact() throws {
+        let primary = LockedData()
+        let recorder = makeRecorder(primary: primary)
+        recorder.start(mode: .cli)
+        recorder.flush()
+        let line = try #require(primary.data.split(separator: 0x0A).first)
+        var object = try #require(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+
+        object["subsystem"] = "model"
+        #expect(try SwamaDiagnosticTimeline.parse(jsonLine(object)) == .unknown)
+
+        object["subsystem"] = "session"
+        object["op"] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        object["model"] = "model"
+        #expect(try SwamaDiagnosticTimeline.parse(jsonLine(object)) == .unknown)
+
+        let wrongErrorPrimary = LockedData()
+        let wrongErrorRecorder = makeRecorder(primary: wrongErrorPrimary)
+        wrongErrorRecorder.start(mode: .cli)
+        wrongErrorRecorder.record(
+            level: .error,
+            subsystem: "generation",
+            event: .generationFailed,
+            operation: wrongErrorRecorder.makeOperation(),
+            model: "model",
+            durationMs: 1,
+            outcome: .error,
+            error: .init(code: .modelLoadFailed, transient: false)
+        )
+        wrongErrorRecorder.flush()
+        #expect(SwamaDiagnosticTimeline.parse(wrongErrorPrimary.data) == .unknown)
+    }
+
     @Test func sequenceGapIsDegradedRatherThanNeverHappened() throws {
         let primary = LockedData()
         let recorder = makeRecorder(primary: primary)
@@ -222,6 +259,63 @@ struct DiagnosticsTests {
         #expect(events.last?.model?.hasPrefix("local:") == true)
     }
 
+    @Test func relativeFileURLsAndOversizedModelIdentitiesAreHashed() throws {
+        let identities = [
+            "../private/prompt-secret",
+            "./private/prompt-secret",
+            "models/../private/prompt-secret",
+            "file:///Users/alice/private/prompt-secret",
+            String(repeating: "oversized-secret", count: 64)
+        ]
+        let primary = LockedData()
+        let recorder = makeRecorder(primary: primary)
+        recorder.start(mode: .cli)
+        for identity in identities {
+            recorder.record(
+                level: .info,
+                subsystem: "model",
+                event: .modelLoadStarted,
+                operation: recorder.makeOperation(),
+                model: identity,
+                data: [:]
+            )
+        }
+        recorder.flush()
+
+        let text = String(decoding: primary.data, as: UTF8.self)
+        #expect(!text.contains("prompt-secret"))
+        #expect(!text.contains("oversized-secret"))
+        let events = try validEvents(primary.data).filter { $0.event == .modelLoadStarted }
+        #expect(events.count == identities.count)
+        #expect(events.allSatisfy { $0.model?.hasPrefix("local:") == true })
+    }
+
+    @Test func embeddingsRequestRelativeModelCannotLeakIntoDiagnostics() async throws {
+        let primary = LockedData()
+        let recorder = makeRecorder(primary: primary)
+        recorder.start(mode: .serve)
+        let previous = SwamaDiagnostics.installRecorderForTesting(recorder)
+        defer { SwamaDiagnostics.restoreRecorderForTesting(previous) }
+
+        let channel = NIOAsyncTestingChannel()
+        var body = ByteBufferAllocator().buffer(capacity: 128)
+        body.writeString(#"{"input":"poison-input","model":"../private/prompt-secret"}"#)
+        await EmbeddingsHandler.handle(
+            requestHead: .init(version: .http1_1, method: .POST, uri: "/v1/embeddings"),
+            body: body,
+            channel: channel
+        )
+        recorder.flush()
+
+        let text = String(decoding: primary.data, as: UTF8.self)
+        #expect(!text.contains("../private"))
+        #expect(!text.contains("prompt-secret"))
+        #expect(!text.contains("poison-input"))
+        let modelEvents = try validEvents(primary.data).filter { $0.subsystem == "model" }
+        #expect(modelEvents.map(\.event) == [.modelLoadStarted, .modelLoadFailed])
+        #expect(modelEvents.allSatisfy { $0.model?.hasPrefix("local:") == true })
+    }
+
     @Test func disabledRecorderHasNoSideEffects() {
         let primary = LockedData()
         let recorder = SwamaDiagnosticRecorder(
@@ -284,6 +378,48 @@ struct DiagnosticsTests {
         #expect(try Data(contentsOf: url) == Data("abcdef".utf8))
         #expect(try Data(contentsOf: url.appendingPathExtension("1")) == Data("123456".utf8))
         #expect(try writer.readSnapshot() == Data("123456abcdef".utf8))
+    }
+
+    @Test func oversizedEventIsDroppedWithoutBreakingTheFileBound() throws {
+        let directory = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-diagnostics-oversized-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("events.jsonl")
+        let writer = SwamaDiagnosticFileWriter(url: url, maximumBytes: 512)
+
+        do {
+            try writer.write(Data(repeating: 0x78, count: 513))
+            Issue.record("a complete line larger than the file bound must be rejected")
+        }
+        catch {}
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+
+        let fallback = LockedData()
+        let recorder = SwamaDiagnosticRecorder(
+            enabled: true,
+            sessionID: fixedSessionID,
+            primaryWrite: { try writer.write($0) },
+            fallbackWrite: { fallback.append($0) },
+            now: { Date(timeIntervalSince1970: 0) }
+        )
+        recorder.start(mode: .cli)
+        recorder.record(
+            level: .info,
+            subsystem: "model",
+            event: .modelLoadStarted,
+            operation: recorder.makeOperation(),
+            model: "model",
+            data: ["oversized": .string(String(repeating: "x", count: 2048))]
+        )
+        recorder.flush()
+
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        #expect(size <= 512)
+        let dropLine = try #require(fallback.data.split(separator: 0x0A).first)
+        let drop = try JSONDecoder().decode(SwamaDiagnosticEvent.self, from: Data(dropLine))
+        #expect(drop.event == .logDropped)
+        #expect(drop.data?["dropped_count"] == .integer(1))
     }
 
     @Test func customPathNeverChangesExistingParentPermissions() throws {
@@ -429,6 +565,81 @@ struct DiagnosticsTests {
         #expect(!SwamaDiagnosticTimeline.hasCompleteOperations(mutatedEvents))
     }
 
+    @Test func evictionInAnotherSessionCannotInvalidateThisSessionsLoad() throws {
+        let primary = LockedData()
+        let recorderA = SwamaDiagnosticRecorder(
+            enabled: true,
+            sessionID: UUID(uuidString: "aaaaaaaa-1111-2222-3333-444444444444")!,
+            primaryWrite: { primary.append($0) },
+            fallbackWrite: { _ in },
+            now: { Date(timeIntervalSince1970: 0) }
+        )
+        let recorderB = SwamaDiagnosticRecorder(
+            enabled: true,
+            sessionID: UUID(uuidString: "bbbbbbbb-1111-2222-3333-444444444444")!,
+            primaryWrite: { primary.append($0) },
+            fallbackWrite: { _ in },
+            now: { Date(timeIntervalSince1970: 0) }
+        )
+
+        recorderA.start(mode: .app)
+        let load = recorderA.makeOperation()
+        recorderA.record(
+            level: .info,
+            subsystem: "model",
+            event: .modelLoadStarted,
+            operation: load,
+            model: "shared-model",
+            data: [:]
+        )
+        recorderA.flush()
+
+        recorderB.start(mode: .serve)
+        let eviction = recorderB.makeOperation()
+        recorderB.record(
+            level: .info,
+            subsystem: "model",
+            event: .modelEvictionStarted,
+            operation: eviction,
+            model: "shared-model"
+        )
+        recorderB.record(
+            level: .info,
+            subsystem: "model",
+            event: .modelEvictionCompleted,
+            operation: eviction,
+            model: "shared-model",
+            durationMs: 1,
+            outcome: .ok,
+            data: [
+                "generation": .integer(1),
+                "resident_bytes_after": .integer(0)
+            ]
+        )
+        recorderB.flush()
+
+        recorderA.record(
+            level: .info,
+            subsystem: "model",
+            event: .modelLoadCompleted,
+            operation: load,
+            model: "shared-model",
+            durationMs: 2,
+            outcome: .ok,
+            data: ["phases": .object([
+                "config_read": .null,
+                "config_decode": .null,
+                "model_graph": .null,
+                "tokenizer": .null,
+                "weights": .null
+            ])]
+        )
+        recorderA.flush()
+
+        let events = try validEvents(primary.data)
+        #expect(SwamaDiagnosticTimeline.hasCompleteOperations(events))
+    }
+
     @Test func modelRunnerEmitsFirstTokenAndSuccessfulTerminal() async throws {
         let primary = LockedData()
         let recorder = makeRecorder(primary: primary)
@@ -509,6 +720,12 @@ struct DiagnosticsTests {
         case .unknown:
             throw DiagnosticsTestError.unknown
         }
+    }
+
+    private func jsonLine(_ object: [String: Any]) throws -> Data {
+        var data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        data.append(0x0A)
+        return data
     }
 }
 

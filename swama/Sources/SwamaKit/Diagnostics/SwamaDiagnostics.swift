@@ -2,6 +2,22 @@ import CryptoKit
 import Darwin
 import Foundation
 
+private let maximumDiagnosticModelIdentityBytes = 256
+
+private func requiresOpaqueDiagnosticModelIdentity(_ value: String) -> Bool {
+    let components = value.split(separator: "/", omittingEmptySubsequences: false)
+    let hasRelativeTraversal = components.contains(".") || components.contains("..")
+    let hasUnsafeScalar = value.unicodeScalars.contains { scalar in
+        scalar.value < 0x21 || scalar.value > 0x7E || scalar.value == 0x5C
+    }
+    return value.utf8.count > maximumDiagnosticModelIdentityBytes
+        || value.hasPrefix("/")
+        || value.hasPrefix("~")
+        || value.hasPrefix("file:")
+        || hasRelativeTraversal
+        || hasUnsafeScalar
+}
+
 // MARK: - SwamaDiagnosticMode
 
 package enum SwamaDiagnosticMode: String, Codable, Sendable {
@@ -329,7 +345,10 @@ enum SwamaDiagnosticTimeline: Equatable {
     private static func hasValidEventShape(_ event: SwamaDiagnosticEvent, object: [String: Any]) -> Bool {
         guard UUID(uuidString: event.session) != nil,
               hasTimestamp(event.ts),
-              event.durationMs.map({ $0 >= 0 }) ?? true
+              event.durationMs.map({ $0 >= 0 }) ?? true,
+              event.subsystem == expectedSubsystem(for: event.event),
+              hasExpectedOperationAndModel(event),
+              hasCompatibleErrorCode(event)
         else {
             return false
         }
@@ -337,7 +356,7 @@ enum SwamaDiagnosticTimeline: Equatable {
         if let operation = event.op, UUID(uuidString: operation) == nil {
             return false
         }
-        if let model = event.model, model.hasPrefix("/") || model.hasPrefix("~") {
+        if let model = event.model, requiresOpaqueDiagnosticModelIdentity(model) {
             return false
         }
         if let rawError = object["error"] as? [String: Any], Set(rawError.keys) != ["code", "transient"] {
@@ -429,6 +448,78 @@ enum SwamaDiagnosticTimeline: Equatable {
         }
     }
 
+    private static func expectedSubsystem(for event: SwamaDiagnosticEventName) -> String {
+        switch event {
+        case .sessionStarted,
+             .sessionStopped:
+            "session"
+        case .modelEvictionCompleted,
+             .modelEvictionFailed,
+             .modelEvictionStarted,
+             .modelLoadCancelled,
+             .modelLoadCompleted,
+             .modelLoadFailed,
+             .modelLoadStarted:
+            "model"
+        case .tokenizerCacheEvicted,
+             .tokenizerCacheHit,
+             .tokenizerCacheMiss,
+             .tokenizerCacheRejected:
+            "tokenizer"
+        case .generationCancelled,
+             .generationCompleted,
+             .generationFailed,
+             .generationFirstToken,
+             .generationStarted:
+            "generation"
+        case .logDropped:
+            "diagnostics"
+        }
+    }
+
+    private static func hasExpectedOperationAndModel(_ event: SwamaDiagnosticEvent) -> Bool {
+        switch event.event {
+        case .generationCancelled,
+             .generationCompleted,
+             .generationFailed,
+             .generationFirstToken,
+             .generationStarted,
+             .modelEvictionCompleted,
+             .modelEvictionFailed,
+             .modelEvictionStarted,
+             .modelLoadCancelled,
+             .modelLoadCompleted,
+             .modelLoadFailed,
+             .modelLoadStarted:
+            event.op != nil && event.model != nil
+        case .logDropped,
+             .sessionStarted,
+             .sessionStopped,
+             .tokenizerCacheEvicted,
+             .tokenizerCacheHit,
+             .tokenizerCacheMiss,
+             .tokenizerCacheRejected:
+            event.op == nil && event.model == nil
+        }
+    }
+
+    private static func hasCompatibleErrorCode(_ event: SwamaDiagnosticEvent) -> Bool {
+        switch event.event {
+        case .sessionStopped where event.outcome == .error:
+            event.error?.code == .sessionFailed
+        case .modelLoadFailed:
+            event.error?.code == .modelLoadFailed || event.error?.code == .modelNotFound
+        case .tokenizerCacheRejected:
+            event.error?.code == .tokenizerRejected
+        case .modelEvictionFailed:
+            event.error?.code == .evictionFailed
+        case .generationFailed:
+            event.error?.code == .generationFailed
+        default:
+            event.error == nil
+        }
+    }
+
     private static func hasFingerprint(_ value: SwamaDiagnosticValue?) -> Bool {
         guard case let .string(fingerprint)? = value, fingerprint.count == 64 else {
             return false
@@ -464,7 +555,12 @@ enum SwamaDiagnosticTimeline: Equatable {
     }
 
     static func hasCompleteOperations(_ events: [SwamaDiagnosticEvent]) -> Bool {
-        var openOperations: [String: (start: SwamaDiagnosticEventName, model: String?, invalidated: Bool)] = [:]
+        var openOperations: [String: (
+            session: String,
+            start: SwamaDiagnosticEventName,
+            model: String?,
+            invalidated: Bool
+        )] = [:]
         for event in events {
             guard let operation = event.op else {
                 continue
@@ -478,7 +574,7 @@ enum SwamaDiagnosticTimeline: Equatable {
                     return false
                 }
 
-                openOperations[key] = (event.event, event.model, false)
+                openOperations[key] = (event.session, event.event, event.model, false)
 
             case .modelEvictionStarted:
                 guard openOperations[key] == nil else {
@@ -487,6 +583,7 @@ enum SwamaDiagnosticTimeline: Equatable {
 
                 for openKey in Array(openOperations.keys) {
                     guard var open = openOperations[openKey],
+                          open.session == event.session,
                           open.start == .modelLoadStarted,
                           open.model == event.model
                     else {
@@ -496,7 +593,7 @@ enum SwamaDiagnosticTimeline: Equatable {
                     open.invalidated = true
                     openOperations[openKey] = open
                 }
-                openOperations[key] = (event.event, event.model, false)
+                openOperations[key] = (event.session, event.event, event.model, false)
 
             case .generationFirstToken:
                 guard let open = openOperations[key],
@@ -812,7 +909,7 @@ final class SwamaDiagnosticRecorder: @unchecked Sendable {
     }
 
     private func safeModelIdentity(_ value: String) -> String {
-        guard value.hasPrefix("/") || value.hasPrefix("~") else {
+        guard requiresOpaqueDiagnosticModelIdentity(value) else {
             return value
         }
 
@@ -838,6 +935,10 @@ final class SwamaDiagnosticFileWriter: @unchecked Sendable {
     }
 
     func write(_ data: Data) throws {
+        guard data.count <= maximumBytes else {
+            throw SwamaDiagnosticFileWriterError.eventTooLarge
+        }
+
         try prepareDirectory()
         try withFileLock {
             try rotateIfNeeded(incomingBytes: data.count)
@@ -918,6 +1019,12 @@ final class SwamaDiagnosticFileWriter: @unchecked Sendable {
             try FileManager.default.moveItem(at: url, to: rotatedURL)
         }
     }
+}
+
+// MARK: - SwamaDiagnosticFileWriterError
+
+private enum SwamaDiagnosticFileWriterError: Error {
+    case eventTooLarge
 }
 
 // MARK: - SwamaDiagnostics
