@@ -459,7 +459,12 @@ struct TokenizerCacheTests {
             configuration: .init(maximumEntries: 1, maximumInputBytes: 1_000_000),
             diagnostics: .disabled
         )
-        var tokenizer: (any MLXLMCommon.Tokenizer)? = try await cache.load(from: directory, using: loader)
+        let owner = TokenizerCacheOwner()
+        var tokenizer: (any MLXLMCommon.Tokenizer)? = try await cache.load(
+            from: directory,
+            using: loader,
+            owner: owner
+        )
         lifetime = nil
         tokenizer = nil
         _ = tokenizer
@@ -470,12 +475,64 @@ struct TokenizerCacheTests {
                 activeMemory: { 0 },
                 clearCache: { observation.recordCleanup() }
             ),
-            tokenizerCache: cache
+            tokenizerCache: cache,
+            tokenizerCacheOwner: owner
         )
         await pool.clearCache()
 
         #expect(observation.wasReleasedBeforeCleanup)
         #expect(!observation.isAlive)
+    }
+
+    @Test func clearingOneModelPoolDoesNotCancelAStandaloneTokenizerLoad() async throws {
+        let fixture = try TokenizerFixture()
+        defer { fixture.remove() }
+        let directory = try fixture.directory(named: "standalone-load")
+        let loader = SuspendedTokenizerLoader()
+        let sharedCache = TokenizerCache(
+            configuration: .init(maximumEntries: 2, maximumInputBytes: 1_000_000),
+            diagnostics: .disabled
+        )
+        let standalone = Task {
+            try await sharedCache.load(from: directory, using: loader)
+        }
+        await loader.waitUntilStarted()
+
+        let unrelatedPool = ModelPool(
+            memoryHooks: .init(activeMemory: { 0 }, clearCache: {}),
+            tokenizerCache: sharedCache
+        )
+        await unrelatedPool.clearCache()
+
+        #expect(sharedCache.pendingCountForTesting() == 1)
+        #expect(sharedCache.waiterCountForTesting() == 1)
+        await loader.release()
+        let tokenizer = try await standalone.value
+        #expect((tokenizer as? StubTokenizer)?.identifier == "load-1")
+        #expect(await loader.wasCancelled == false)
+    }
+
+    @Test func ownerScopedPurgePreservesCrossOwnerHits() async throws {
+        let fixture = try TokenizerFixture()
+        defer { fixture.remove() }
+        let directory = try fixture.directory(named: "cross-owner")
+        let loader = CountingTokenizerLoader()
+        let cache = TokenizerCache(
+            configuration: .init(maximumEntries: 1, maximumInputBytes: 1_000_000),
+            diagnostics: .disabled
+        )
+        let firstOwner = TokenizerCacheOwner()
+        let secondOwner = TokenizerCacheOwner()
+
+        _ = try await cache.load(from: directory, using: loader, owner: firstOwner)
+        _ = try await cache.load(from: directory, using: loader, owner: secondOwner)
+        cache.purge(owner: firstOwner)
+        _ = try await cache.load(from: directory, using: loader, owner: secondOwner)
+
+        #expect(await loader.calls == 1)
+        #expect(cache.entryCountForTesting() == 1)
+        cache.purge(owner: secondOwner)
+        #expect(cache.entryCountForTesting() == 0)
     }
 
     @Test func diagnosticsEmitHitMissEvictionAndRejectionWithoutPaths() async throws {

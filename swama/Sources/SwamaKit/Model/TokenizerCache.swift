@@ -138,6 +138,18 @@ struct TokenizerCacheDiagnostics: Sendable {
     let reject: @Sendable (String, Double) -> Void
 }
 
+// MARK: - TokenizerCacheOwner
+
+struct TokenizerCacheOwner: Hashable, Sendable {
+    static let standalone: Self = .init()
+
+    init() {
+        id = .init()
+    }
+
+    private let id: UUID
+}
+
 // MARK: - TokenizerCache
 
 final class TokenizerCache: @unchecked Sendable {
@@ -156,7 +168,8 @@ final class TokenizerCache: @unchecked Sendable {
     /// or the coalescing table.
     func load(
         from directory: URL,
-        using upstream: any TokenizerLoader
+        using upstream: any TokenizerLoader,
+        owner: TokenizerCacheOwner = .standalone
     ) async throws -> any Tokenizer {
         try Task.checkCancellation()
         let startedAt = DispatchTime.now().uptimeNanoseconds
@@ -186,7 +199,8 @@ final class TokenizerCache: @unchecked Sendable {
         let (acquisition, newTask) = acquire(
             fingerprint: fingerprint,
             directory: directory,
-            upstream: upstream
+            upstream: upstream,
+            owner: owner
         )
         switch acquisition {
         case let .ready(tokenizer):
@@ -229,22 +243,56 @@ final class TokenizerCache: @unchecked Sendable {
         }
     }
 
-    func purge() {
-        let (fingerprints, pendingLoads) = lock.withLock { () -> ([String], [PendingLoad]) in
-            let fingerprints = ready.keys.sorted()
-            let pendingLoads = Array(pending.values)
-            ready.removeAll()
-            pending.removeAll()
-            return (fingerprints, pendingLoads)
+    func purge(owner: TokenizerCacheOwner = .standalone) {
+        let (fingerprints, tasks, waiters) = lock.withLock {
+            () -> ([String], [Task<CompletedLoad, Error>], [Waiter]) in
+            var fingerprints: [String] = []
+            for fingerprint in Array(ready.keys) {
+                guard var entry = ready[fingerprint] else {
+                    continue
+                }
+
+                entry.owners.remove(owner)
+                if entry.owners.isEmpty {
+                    ready.removeValue(forKey: fingerprint)
+                    fingerprints.append(fingerprint)
+                }
+                else {
+                    ready[fingerprint] = entry
+                }
+            }
+
+            var tasks: [Task<CompletedLoad, Error>] = []
+            var removedWaiters: [Waiter] = []
+            for fingerprint in Array(pending.keys) {
+                guard var pendingLoad = pending[fingerprint] else {
+                    continue
+                }
+
+                let ownerWaiters = pendingLoad.waiters.values.filter { $0.owner == owner }
+                removedWaiters.append(contentsOf: ownerWaiters)
+                for waiter in ownerWaiters {
+                    pendingLoad.waiters.removeValue(forKey: waiter.id)
+                }
+                if pendingLoad.waiters.isEmpty {
+                    pending.removeValue(forKey: fingerprint)
+                    tasks.append(pendingLoad.task)
+                }
+                else {
+                    pending[fingerprint] = pendingLoad
+                }
+            }
+
+            return (fingerprints.sorted(), tasks, removedWaiters)
         }
         for fingerprint in fingerprints {
             diagnostics.evict(fingerprint, "explicit")
         }
-        for pendingLoad in pendingLoads {
-            pendingLoad.task.cancel()
-            for waiter in pendingLoad.waiters.values {
-                waiter.resolve(.failure(CancellationError()))
-            }
+        for task in tasks {
+            task.cancel()
+        }
+        for waiter in waiters {
+            waiter.resolve(.failure(CancellationError()))
         }
     }
 
@@ -270,6 +318,7 @@ final class TokenizerCache: @unchecked Sendable {
     private struct ReadyEntry: Sendable {
         let tokenizer: any Tokenizer
         var lastAccess: UInt64
+        var owners: Set<TokenizerCacheOwner>
     }
 
     private struct CompletedLoad: Sendable {
@@ -294,17 +343,19 @@ final class TokenizerCache: @unchecked Sendable {
     private func acquire(
         fingerprint: TokenizerInputFingerprint,
         directory: URL,
-        upstream: any TokenizerLoader
+        upstream: any TokenizerLoader,
+        owner: TokenizerCacheOwner
     ) -> (Acquisition, Task<CompletedLoad, Error>?) {
         lock.withLock {
             if var entry = ready[fingerprint.digest] {
                 accessSequence &+= 1
                 entry.lastAccess = accessSequence
+                entry.owners.insert(owner)
                 ready[fingerprint.digest] = entry
                 return (.ready(entry.tokenizer), nil)
             }
 
-            let waiter = Waiter()
+            let waiter = Waiter(owner: owner)
             if var pendingLoad = pending[fingerprint.digest] {
                 pendingLoad.waiters[waiter.id] = waiter
                 pending[fingerprint.digest] = pendingLoad
@@ -369,7 +420,8 @@ final class TokenizerCache: @unchecked Sendable {
                 accessSequence &+= 1
                 ready[fingerprint.digest] = .init(
                     tokenizer: completed.tokenizer,
-                    lastAccess: accessSequence
+                    lastAccess: accessSequence,
+                    owners: Set(waiters.map(\.owner))
                 )
                 evictedFingerprints = evictToBudgetLocked()
             }
@@ -440,7 +492,12 @@ final class TokenizerCache: @unchecked Sendable {
     }
 
     private final class Waiter: @unchecked Sendable {
+        init(owner: TokenizerCacheOwner) {
+            self.owner = owner
+        }
+
         let id: UUID = .init()
+        let owner: TokenizerCacheOwner
 
         func value(onCancel: @escaping @Sendable () -> Void) async throws -> CompletedLoad {
             do {
@@ -523,16 +580,19 @@ enum TokenizerCacheError: Error {
 struct CachedTokenizerLoader: TokenizerLoader {
     init(
         upstream: any TokenizerLoader,
-        cache: TokenizerCache = .shared
+        cache: TokenizerCache = .shared,
+        owner: TokenizerCacheOwner = .standalone
     ) {
         self.upstream = upstream
         self.cache = cache
+        self.owner = owner
     }
 
     func load(from directory: URL) async throws -> any Tokenizer {
-        try await cache.load(from: directory, using: upstream)
+        try await cache.load(from: directory, using: upstream, owner: owner)
     }
 
     private let upstream: any TokenizerLoader
     private let cache: TokenizerCache
+    private let owner: TokenizerCacheOwner
 }

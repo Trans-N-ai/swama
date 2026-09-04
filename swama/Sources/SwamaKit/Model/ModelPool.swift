@@ -181,6 +181,7 @@ public actor ModelPool {
         memoryHooks = .live
         loadOverrides = nil
         tokenizerCache = .shared
+        tokenizerCacheOwner = .init()
         // Cache limit and memory management timer are both deferred: the former until MLX is
         // genuinely about to be used (see `ensureCacheLimitConfigured()`), the latter until
         // first model access (see `ensureMemoryManagementStarted()`). Neither may run here --
@@ -193,11 +194,13 @@ public actor ModelPool {
     init(
         memoryHooks: ModelPoolMemoryHooks,
         loadOverrides: ModelPoolLoadOverrides? = nil,
-        tokenizerCache: TokenizerCache = .shared
+        tokenizerCache: TokenizerCache = .shared,
+        tokenizerCacheOwner: TokenizerCacheOwner = .init()
     ) {
         self.memoryHooks = memoryHooks
         self.loadOverrides = loadOverrides
         self.tokenizerCache = tokenizerCache
+        self.tokenizerCacheOwner = tokenizerCacheOwner
     }
 
     /// Ensures memory management timer is running (called on first model access)
@@ -604,7 +607,7 @@ public actor ModelPool {
         sttRunnerCache.removeAll()
         ttsRunnerCache.removeAll()
         modelUsageInfo.removeAll()
-        tokenizerCache.purge()
+        tokenizerCache.purge(owner: tokenizerCacheOwner)
 
         // Synchronous completion is part of the contract: when clearCache returns, model owners
         // are gone and MLX cleanup has run. Callers no longer race a detached cleanup Task.
@@ -748,6 +751,7 @@ public actor ModelPool {
     private let memoryHooks: ModelPoolMemoryHooks
     private let loadOverrides: ModelPoolLoadOverrides?
     private let tokenizerCache: TokenizerCache
+    private let tokenizerCacheOwner: TokenizerCacheOwner
 
     private func makeLoadToken(for modelName: String) -> ModelLoadToken {
         nextLoadSequence &+= 1
@@ -1093,7 +1097,9 @@ public actor ModelPool {
             modelName: modelName,
             tokenizerLoader: DiagnosticTokenizerLoader(
                 upstream: #huggingFaceTokenizerLoader(),
-                phases: diagnosticPhases
+                phases: diagnosticPhases,
+                cache: tokenizerCache,
+                owner: tokenizerCacheOwner
             )
         )
         return EmbeddingRunner(container: container)
@@ -1145,7 +1151,9 @@ public actor ModelPool {
         do {
             let tokenizerLoader = DiagnosticTokenizerLoader(
                 upstream: #huggingFaceTokenizerLoader(),
-                phases: diagnosticPhases
+                phases: diagnosticPhases,
+                cache: tokenizerCache,
+                owner: tokenizerCacheOwner
             )
             if isVLM {
                 return try await VLMModelFactory.shared.loadContainer(
