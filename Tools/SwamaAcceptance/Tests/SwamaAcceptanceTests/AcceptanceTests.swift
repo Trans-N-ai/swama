@@ -406,34 +406,117 @@ struct AcceptanceTests {
         #expect(result.durationMilliseconds >= 200)
     }
 
+    @Test func fixtureBuildConsumesContractRetryAndKeepsTimeoutUnknown() throws {
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-fixture-stage-retry-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let attemptFile = temporary.appendingPathComponent("attempt-count")
+        let scratch = try prepareAcceptanceBuildScratch(
+            root: temporary.appendingPathComponent("scratch"),
+            identity: "fixture-stage-test"
+        )
+        let contract = BuildContract(
+            productTimeoutSeconds: 1,
+            externalFixtureTimeoutSeconds: 0.05,
+            externalFixtureTimeoutRetryLimit: 1
+        )
+
+        do {
+            _ = try buildExternalFixture(
+                contract: contract,
+                paths: .init(repository: temporary),
+                scratch: scratch,
+                environment: ProcessInfo.processInfo.environment,
+                command: [
+                    "/bin/sh",
+                    "-c",
+                    "count=$(cat \"$1\" 2>/dev/null || echo 0); echo $((count + 1)) > \"$1\"; sleep 1",
+                    "fixture-build",
+                    attemptFile.path
+                ]
+            )
+            Issue.record("the fixture build must exhaust its timeout retry")
+        }
+        catch let error as AcceptanceFailure {
+            if case .failed = error.kind {
+                Issue.record("a fixture build timeout is tool UNKNOWN, not product FAIL")
+            }
+            #expect(error.message.contains("external fixture build timeout after 2 attempt(s) at 0.05s each"))
+        }
+
+        let attempts = try Int(
+            String(contentsOf: attemptFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        #expect(attempts == 2)
+    }
+
     @Test func commandTimeoutTerminatesDescendantProcesses() throws {
         let temporary = FileManager.default
             .temporaryDirectory
             .appendingPathComponent("swama-process-tree-test-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: temporary) }
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         let childPIDFile = temporary.appendingPathComponent("child-pid")
+        let grandchildPIDFile = temporary.appendingPathComponent("grandchild-pid")
+        let childScript = temporary.appendingPathComponent("spawn-grandchild.sh")
+        let rootScript = temporary.appendingPathComponent("spawn-child.sh")
+        try Data("""
+        #!/bin/sh
+        sleep 5 &
+        echo $! > "$1"
+        wait
+        """.utf8).write(to: childScript)
+        try Data("""
+        #!/bin/sh
+        /bin/sh "$2" "$3" &
+        echo $! > "$1"
+        wait
+        """.utf8).write(to: rootScript)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: rootScript.path
+        )
+        var childPID: pid_t?
+        var grandchildPID: pid_t?
+        defer {
+            if let childPID {
+                _ = kill(childPID, SIGKILL)
+            }
+            if let grandchildPID {
+                _ = kill(grandchildPID, SIGKILL)
+            }
+            try? FileManager.default.removeItem(at: temporary)
+        }
 
         #expect(throws: AcceptanceFailure.self) {
             _ = try runCommand(
                 [
                     "/bin/sh",
-                    "-c",
-                    "sleep 5 & echo $! > \"$1\"; wait",
-                    "spawn-child",
-                    childPIDFile.path
+                    rootScript.path,
+                    childPIDFile.path,
+                    childScript.path,
+                    grandchildPIDFile.path
                 ],
                 currentDirectory: temporary,
-                timeout: 0.2,
+                timeout: 0.5,
                 sampleMemory: false,
                 timeoutFailureKind: .unknown
             )
         }
-        let childPID = try #require(
-            pid_t(String(contentsOf: childPIDFile, encoding: .utf8)
+        let childPIDValue = try #require(
+            Int(String(contentsOf: childPIDFile, encoding: .utf8)
                 .trimmingCharacters(in: .whitespacesAndNewlines))
         )
-        #expect(kill(childPID, 0) == -1)
+        let grandchildPIDValue = try #require(
+            Int(String(contentsOf: grandchildPIDFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines))
+        )
+        childPID = pid_t(childPIDValue)
+        grandchildPID = pid_t(grandchildPIDValue)
+        #expect(kill(pid_t(childPIDValue), 0) == -1)
+        #expect(kill(pid_t(grandchildPIDValue), 0) == -1)
     }
 
     @Test func contractCarriesSeparateProductAndFixtureBuildBudgets() throws {

@@ -82,28 +82,11 @@ func buildProducts(
         throw AcceptanceFailure.failed("Swama release build failed:\n\(commandFailureSummary(releaseBuild))")
     }
 
-    let fixtureBuild = try runCommand(
-        [
-            "xcrun",
-            "swift",
-            "build",
-            "--package-path",
-            paths.fixture.path,
-            "--scratch-path",
-            scratch.fixture.path,
-            "--force-resolved-versions",
-            "-c",
-            "release",
-            "-j",
-            "4"
-        ],
-        currentDirectory: paths.repository,
-        environment: environment,
-        timeout: contract.externalFixtureTimeoutSeconds,
-        sampleMemory: false,
-        timeoutFailureKind: .unknown,
-        timeoutContext: "external fixture build",
-        timeoutRetryLimit: contract.externalFixtureTimeoutRetryLimit
+    let fixtureBuild = try buildExternalFixture(
+        contract: contract,
+        paths: paths,
+        scratch: scratch,
+        environment: environment
     )
     guard fixtureBuild.returnCode == 0 else {
         throw AcceptanceFailure
@@ -275,6 +258,39 @@ func buildProducts(
                 "metallib": testMetal
             ]
         ]
+    )
+}
+
+func buildExternalFixture(
+    contract: BuildContract,
+    paths: WorkspacePaths,
+    scratch: AcceptanceBuildScratch,
+    environment: [String: String],
+    command overrideCommand: [String]? = nil
+) throws -> CommandResult {
+    let command = overrideCommand ?? [
+        "xcrun",
+        "swift",
+        "build",
+        "--package-path",
+        paths.fixture.path,
+        "--scratch-path",
+        scratch.fixture.path,
+        "--force-resolved-versions",
+        "-c",
+        "release",
+        "-j",
+        "4"
+    ]
+    return try runCommand(
+        command,
+        currentDirectory: paths.repository,
+        environment: environment,
+        timeout: contract.externalFixtureTimeoutSeconds,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "external fixture build",
+        timeoutRetryLimit: contract.externalFixtureTimeoutRetryLimit
     )
 }
 
