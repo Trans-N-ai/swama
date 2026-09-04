@@ -16,6 +16,47 @@ struct AcceptanceTests {
         }
     }
 
+    @Test func jsonAccessorsDistinguishMissingKeysFromWrongTypes() throws {
+        let key = "value"
+        let accessors: [(expectedType: String, wrongValue: Any, read: (JSONObject) throws -> Void)] = [
+            ("object", [Any](), { _ = try $0.object(key) }),
+            ("array", JSONObject(), { _ = try $0.array(key) }),
+            ("string", NSNumber(value: true), { _ = try $0.string(key) }),
+            ("integer", NSNumber(value: 1.5), { _ = try $0.integer(key) }),
+            ("number", NSNumber(value: true), { _ = try $0.double(key) }),
+            ("boolean", NSNumber(value: 1), { _ = try $0.boolean(key) })
+        ]
+
+        for accessor in accessors {
+            let missing = try #require(
+                acceptanceFailure(from: [:], read: accessor.read)
+            )
+            if case .failed = missing.kind {
+                Issue.record("a missing JSON key must be UNKNOWN")
+            }
+            #expect(missing.message.contains("missing JSON key"))
+            #expect(missing.message.contains(key))
+            #expect(missing.message.contains(accessor.expectedType))
+
+            guard let wrongType = acceptanceFailure(
+                from: [key: accessor.wrongValue],
+                read: accessor.read
+            )
+            else {
+                Issue.record("\(accessor.expectedType) accessor accepted a wrong JSON type")
+                continue
+            }
+
+            if case .failed = wrongType.kind {
+                Issue.record("a wrong JSON type must be UNKNOWN")
+            }
+            #expect(wrongType.message.contains("wrong JSON type"))
+            #expect(wrongType.message.contains(key))
+            #expect(wrongType.message.contains(accessor.expectedType))
+            #expect(wrongType.message != missing.message)
+        }
+    }
+
     @Test func compareDetectsARealPerformanceRegression() throws {
         let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
         let contract = try AcceptanceContract.load(from: paths.contract)
@@ -109,7 +150,9 @@ struct AcceptanceTests {
             if case .failed = error.kind {
                 Issue.record("metal identity schema drift is invalid evidence, not a product failure")
             }
-            #expect(error.message == "missing JSON string: metal_version")
+            #expect(error.message.contains("wrong JSON type"))
+            #expect(error.message.contains("metal_version"))
+            #expect(error.message.contains("string"))
         }
     }
 
@@ -578,6 +621,23 @@ struct AcceptanceTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+    }
+
+    private func acceptanceFailure(
+        from object: JSONObject,
+        read: (JSONObject) throws -> Void
+    ) -> AcceptanceFailure? {
+        do {
+            try read(object)
+            return nil
+        }
+        catch let error as AcceptanceFailure {
+            return error
+        }
+        catch {
+            Issue.record("unexpected error: \(error)")
+            return nil
+        }
     }
 
     private func syntheticReport(paths: WorkspacePaths) throws -> JSONObject {
