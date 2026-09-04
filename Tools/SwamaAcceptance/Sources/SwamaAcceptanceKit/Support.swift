@@ -1,3 +1,4 @@
+import CoreFoundation
 import CryptoKit
 import Foundation
 
@@ -228,50 +229,61 @@ func lastJSONValue(_ output: String) throws -> Any {
 
 extension [String: Any] {
     func object(_ key: String) throws -> JSONObject {
-        guard let value = self[key] as? JSONObject else {
-            throw AcceptanceFailure.unknown("missing JSON object: \(key)")
-        }
-
-        return value
+        try value(key, expectedType: "object")
     }
 
     func array(_ key: String) throws -> [Any] {
-        guard let value = self[key] as? [Any] else {
-            throw AcceptanceFailure.unknown("missing JSON array: \(key)")
-        }
-
-        return value
+        try value(key, expectedType: "array")
     }
 
     func string(_ key: String) throws -> String {
-        guard let value = self[key] as? String else {
-            throw AcceptanceFailure.unknown("missing JSON string: \(key)")
-        }
-
-        return value
+        try value(key, expectedType: "string")
     }
 
     func integer(_ key: String) throws -> Int {
-        guard let value = self[key] as? NSNumber else {
-            throw AcceptanceFailure.unknown("missing JSON integer: \(key)")
+        let number = try number(key, expectedType: "integer")
+        guard let integer = number as? Int else {
+            throw wrongType(key, expectedType: "integer")
         }
 
-        return value.intValue
+        return integer
     }
 
     func double(_ key: String) throws -> Double {
-        guard let value = self[key] as? NSNumber else {
-            throw AcceptanceFailure.unknown("missing JSON number: \(key)")
-        }
-
-        return value.doubleValue
+        let number = try number(key, expectedType: "number")
+        return number.doubleValue
     }
 
     func boolean(_ key: String) throws -> Bool {
-        guard let value = self[key] as? Bool else {
-            throw AcceptanceFailure.unknown("missing JSON boolean: \(key)")
+        let number: NSNumber = try value(key, expectedType: "boolean")
+        guard CFGetTypeID(number) == CFBooleanGetTypeID() else {
+            throw wrongType(key, expectedType: "boolean")
+        }
+
+        return number.boolValue
+    }
+
+    private func value<Expected>(_ key: String, expectedType: String) throws -> Expected {
+        guard let rawValue = self[key] else {
+            throw AcceptanceFailure.unknown("missing JSON key: \(key); expected \(expectedType)")
+        }
+        guard let value = rawValue as? Expected else {
+            throw wrongType(key, expectedType: expectedType)
         }
 
         return value
+    }
+
+    private func number(_ key: String, expectedType: String) throws -> NSNumber {
+        let number: NSNumber = try value(key, expectedType: expectedType)
+        guard CFGetTypeID(number) != CFBooleanGetTypeID() else {
+            throw wrongType(key, expectedType: expectedType)
+        }
+
+        return number
+    }
+
+    private func wrongType(_ key: String, expectedType: String) -> AcceptanceFailure {
+        .unknown("wrong JSON type for key: \(key); expected \(expectedType)")
     }
 }
