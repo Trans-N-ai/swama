@@ -203,6 +203,10 @@ public actor ModelPool {
         self.tokenizerCacheOwner = tokenizerCacheOwner
     }
 
+    deinit {
+        tokenizerCache.purge(owner: tokenizerCacheOwner)
+    }
+
     /// Ensures memory management timer is running (called on first model access)
     private func ensureMemoryManagementStarted() {
         guard memoryManagementTask == nil else {

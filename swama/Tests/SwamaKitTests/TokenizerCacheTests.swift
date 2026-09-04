@@ -535,6 +535,39 @@ struct TokenizerCacheTests {
         #expect(cache.entryCountForTesting() == 0)
     }
 
+    @Test func releasingAModelPoolReleasesItsTokenizerOwnership() async throws {
+        let fixture = try TokenizerFixture()
+        defer { fixture.remove() }
+        let directory = try fixture.directory(named: "released-pool")
+        var lifetime: TokenizerLifetime? = TokenizerLifetime()
+        let loader = try LifetimeTokenizerLoader(lifetime: #require(lifetime))
+        let cache = TokenizerCache(
+            configuration: .init(maximumEntries: 1, maximumInputBytes: 1_000_000),
+            diagnostics: .disabled
+        )
+        let owner = TokenizerCacheOwner()
+        var tokenizer: (any MLXLMCommon.Tokenizer)? = try await cache.load(
+            from: directory,
+            using: loader,
+            owner: owner
+        )
+        weak let weakLifetime = lifetime
+        lifetime = nil
+        tokenizer = nil
+        _ = tokenizer
+
+        var pool: ModelPool? = ModelPool(
+            memoryHooks: .init(activeMemory: { 0 }, clearCache: {}),
+            tokenizerCache: cache,
+            tokenizerCacheOwner: owner
+        )
+        #expect(pool != nil)
+        pool = nil
+
+        #expect(weakLifetime == nil)
+        #expect(cache.entryCountForTesting() == 0)
+    }
+
     @Test func diagnosticsEmitHitMissEvictionAndRejectionWithoutPaths() async throws {
         let fixture = try TokenizerFixture()
         defer { fixture.remove() }
