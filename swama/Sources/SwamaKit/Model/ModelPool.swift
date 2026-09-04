@@ -180,6 +180,7 @@ public actor ModelPool {
     public init() {
         memoryHooks = .live
         loadOverrides = nil
+        tokenizerCache = .shared
         // Cache limit and memory management timer are both deferred: the former until MLX is
         // genuinely about to be used (see `ensureCacheLimitConfigured()`), the latter until
         // first model access (see `ensureMemoryManagementStarted()`). Neither may run here --
@@ -191,10 +192,12 @@ public actor ModelPool {
 
     init(
         memoryHooks: ModelPoolMemoryHooks,
-        loadOverrides: ModelPoolLoadOverrides? = nil
+        loadOverrides: ModelPoolLoadOverrides? = nil,
+        tokenizerCache: TokenizerCache = .shared
     ) {
         self.memoryHooks = memoryHooks
         self.loadOverrides = loadOverrides
+        self.tokenizerCache = tokenizerCache
     }
 
     /// Ensures memory management timer is running (called on first model access)
@@ -601,6 +604,7 @@ public actor ModelPool {
         sttRunnerCache.removeAll()
         ttsRunnerCache.removeAll()
         modelUsageInfo.removeAll()
+        tokenizerCache.purge()
 
         // Synchronous completion is part of the contract: when clearCache returns, model owners
         // are gone and MLX cleanup has run. Callers no longer race a detached cleanup Task.
@@ -743,6 +747,7 @@ public actor ModelPool {
     private var vlmRegistryCache: [String: MLXLMCommon.ModelConfiguration]?
     private let memoryHooks: ModelPoolMemoryHooks
     private let loadOverrides: ModelPoolLoadOverrides?
+    private let tokenizerCache: TokenizerCache
 
     private func makeLoadToken(for modelName: String) -> ModelLoadToken {
         nextLoadSequence &+= 1

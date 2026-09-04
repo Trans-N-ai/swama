@@ -74,7 +74,10 @@ struct TokenizerCacheTests {
         #expect(TokenizerInputFingerprint.fileNames == expectedTokenizerInputFileNames)
         for fileName in expectedTokenizerInputFileNames {
             let changed = try fixture.directory(named: "changed-\(fileName.replacingOccurrences(of: ".", with: "-"))")
-            try Data("changed \(fileName)".utf8).write(to: changed.appendingPathComponent(fileName))
+            let data = fileName == "config.json"
+                ? Data(#"{"model_type":"changed-model"}"#.utf8)
+                : Data("changed \(fileName)".utf8)
+            try data.write(to: changed.appendingPathComponent(fileName))
             _ = try await cache.load(from: changed, using: loader)
         }
 
@@ -119,6 +122,29 @@ struct TokenizerCacheTests {
         #expect(await loader.calls == 2)
     }
 
+    @Test func invalidModelConfigurationNeverFallsBackToAnOldEntry() async throws {
+        let fixture = try TokenizerFixture()
+        defer { fixture.remove() }
+        let directory = try fixture.directory(named: "invalid-config")
+        let loader = ConfigurationValidatingTokenizerLoader()
+        let cache = TokenizerCache(
+            configuration: .init(maximumEntries: 4, maximumInputBytes: 1_000_000),
+            diagnostics: .disabled
+        )
+
+        _ = try await cache.load(from: directory, using: loader)
+        try Data("not valid json".utf8).write(to: directory.appendingPathComponent("config.json"))
+        await #expect(throws: StubLoaderError.self) {
+            _ = try await cache.load(from: directory, using: loader)
+        }
+        await #expect(throws: StubLoaderError.self) {
+            _ = try await cache.load(from: directory, using: loader)
+        }
+
+        #expect(await loader.calls == 3)
+        #expect(cache.entryCountForTesting() == 1)
+    }
+
     @Test func modelWeightsAndGenerationPolicyDoNotSplitIdenticalTokenizers() async throws {
         let fixture = try TokenizerFixture()
         defer { fixture.remove() }
@@ -133,6 +159,28 @@ struct TokenizerCacheTests {
             try Data(firstValue.utf8).write(to: first.appendingPathComponent(fileName))
             try Data(secondValue.utf8).write(to: second.appendingPathComponent(fileName))
         }
+        let loader = CountingTokenizerLoader(delay: .milliseconds(100))
+        let cache = TokenizerCache(
+            configuration: .init(maximumEntries: 4, maximumInputBytes: 1_000_000),
+            diagnostics: .disabled
+        )
+
+        async let firstValue = cache.load(from: first, using: loader)
+        async let secondValue = cache.load(from: second, using: loader)
+        _ = try await [firstValue, secondValue]
+
+        #expect(await loader.calls == 1)
+    }
+
+    @Test func unrelatedModelConfigurationFieldsDoNotSplitTheSameModelType() async throws {
+        let fixture = try TokenizerFixture()
+        defer { fixture.remove() }
+        let first = try fixture.directory(named: "first")
+        let second = try fixture.directory(named: "second")
+        try Data(#"{"model_type":"shared-model","hidden_size":128}"#.utf8)
+            .write(to: first.appendingPathComponent("config.json"))
+        try Data(#"{"model_type":"shared-model","hidden_size":4096}"#.utf8)
+            .write(to: second.appendingPathComponent("config.json"))
         let loader = CountingTokenizerLoader(delay: .milliseconds(100))
         let cache = TokenizerCache(
             configuration: .init(maximumEntries: 4, maximumInputBytes: 1_000_000),
@@ -183,10 +231,10 @@ struct TokenizerCacheTests {
         _ = try await cache.load(from: third, using: loader) // second is evicted
         _ = try await cache.load(from: second, using: loader)
         #expect(await loader.calls == 4)
-        #expect(await cache.entryCountForTesting() == 2)
+        #expect(cache.entryCountForTesting() == 2)
 
-        await cache.purge()
-        #expect(await cache.entryCountForTesting() == 0)
+        cache.purge()
+        #expect(cache.entryCountForTesting() == 0)
         _ = try await cache.load(from: second, using: loader)
         #expect(await loader.calls == 5)
     }
@@ -205,15 +253,142 @@ struct TokenizerCacheTests {
         while await loader.calls == 0 {
             await Task.yield()
         }
-        await cache.purge()
-        _ = try await first.value
-        #expect(await cache.entryCountForTesting() == 0)
+        cache.purge()
+        await #expect(throws: CancellationError.self) { _ = try await first.value }
+        #expect(cache.entryCountForTesting() == 0)
 
         _ = try await cache.load(from: directory, using: loader)
         #expect(await loader.calls == 2)
     }
 
-    @Test func inputsChangedDuringLoadAreReturnedButNeverCachedUnderTheOldFingerprint() async throws {
+    @Test func producerInputDriftRejectsEveryCrossDirectoryWaiter() async throws {
+        let fixture = try TokenizerFixture()
+        defer { fixture.remove() }
+        let firstDirectory = try fixture.directory(named: "first")
+        let secondDirectory = try fixture.directory(named: "second")
+        let loader = SuspendedTokenizerLoader(mutateFileName: "tokenizer_config.json")
+        let cache = TokenizerCache(
+            configuration: .init(maximumEntries: 4, maximumInputBytes: 1_000_000),
+            diagnostics: .disabled
+        )
+
+        let first = Task { try await cache.load(from: firstDirectory, using: loader) }
+        await loader.waitUntilStarted()
+        let second = Task { try await cache.load(from: secondDirectory, using: loader) }
+        while cache.waiterCountForTesting() < 2 {
+            await Task.yield()
+        }
+        await loader.release()
+
+        await #expect(throws: TokenizerCacheError.self) { _ = try await first.value }
+        await #expect(throws: TokenizerCacheError.self) { _ = try await second.value }
+        #expect(cache.entryCountForTesting() == 0)
+    }
+
+    @Test func waiterInputDriftRejectsOnlyThatWaiter() async throws {
+        let fixture = try TokenizerFixture()
+        defer { fixture.remove() }
+        let producerDirectory = try fixture.directory(named: "producer")
+        let changedWaiterDirectory = try fixture.directory(named: "changed-waiter")
+        let loader = SuspendedTokenizerLoader()
+        let cache = TokenizerCache(
+            configuration: .init(maximumEntries: 4, maximumInputBytes: 1_000_000),
+            diagnostics: .disabled
+        )
+
+        let producer = Task { try await cache.load(from: producerDirectory, using: loader) }
+        await loader.waitUntilStarted()
+        let changedWaiter = Task { try await cache.load(from: changedWaiterDirectory, using: loader) }
+        while cache.waiterCountForTesting() < 2 {
+            await Task.yield()
+        }
+        try Data("changed-waiter-input".utf8)
+            .write(to: changedWaiterDirectory.appendingPathComponent("tokenizer_config.json"))
+        await loader.release()
+
+        _ = try await producer.value
+        await #expect(throws: TokenizerCacheError.self) { _ = try await changedWaiter.value }
+        #expect(cache.entryCountForTesting() == 1)
+    }
+
+    @Test func cancellingTheOnlyWaiterReturnsPromptlyAndDropsThePendingLoad() async throws {
+        let fixture = try TokenizerFixture()
+        defer { fixture.remove() }
+        let directory = try fixture.directory(named: "cancel-only")
+        let loader = SuspendedTokenizerLoader()
+        let cache = TokenizerCache(
+            configuration: .init(maximumEntries: 4, maximumInputBytes: 1_000_000),
+            diagnostics: .disabled
+        )
+        let outcome = TokenizerLoadOutcome()
+        let task = Task {
+            do {
+                _ = try await cache.load(from: directory, using: loader)
+                await outcome.record(.value)
+            }
+            catch is CancellationError {
+                await outcome.record(.cancelled)
+            }
+            catch {
+                await outcome.record(.otherError)
+            }
+        }
+        await loader.waitUntilStarted()
+
+        task.cancel()
+        try await waitForOutcome(outcome, timeout: .milliseconds(100))
+        #expect(await outcome.value == .cancelled)
+        #expect(cache.pendingCountForTesting() == 0)
+        await loader.release()
+        await loader.waitUntilFinished()
+        #expect(await loader.wasCancelled)
+        await task.value
+    }
+
+    @Test func cancellingOneWaiterDoesNotKillTheSharedLoadForAnotherWaiter() async throws {
+        let fixture = try TokenizerFixture()
+        defer { fixture.remove() }
+        let firstDirectory = try fixture.directory(named: "first")
+        let secondDirectory = try fixture.directory(named: "second")
+        let loader = SuspendedTokenizerLoader()
+        let cache = TokenizerCache(
+            configuration: .init(maximumEntries: 4, maximumInputBytes: 1_000_000),
+            diagnostics: .disabled
+        )
+        let cancelledOutcome = TokenizerLoadOutcome()
+        let first = Task {
+            do {
+                _ = try await cache.load(from: firstDirectory, using: loader)
+                await cancelledOutcome.record(.value)
+            }
+            catch is CancellationError {
+                await cancelledOutcome.record(.cancelled)
+            }
+            catch {
+                await cancelledOutcome.record(.otherError)
+            }
+        }
+        await loader.waitUntilStarted()
+        let second = Task { try await cache.load(from: secondDirectory, using: loader) }
+        while cache.waiterCountForTesting() < 2 {
+            await Task.yield()
+        }
+
+        first.cancel()
+        try await waitForOutcome(cancelledOutcome, timeout: .milliseconds(100))
+        #expect(await cancelledOutcome.value == .cancelled)
+        #expect(cache.pendingCountForTesting() == 1)
+        #expect(cache.waiterCountForTesting() == 1)
+        await loader.release()
+        _ = try await second.value
+        await first.value
+
+        #expect(await loader.calls == 1)
+        #expect(await !(loader.wasCancelled))
+        #expect(cache.entryCountForTesting() == 1)
+    }
+
+    @Test func inputsChangedDuringLoadAreRejectedAndNeverCachedUnderTheOldFingerprint() async throws {
         let fixture = try TokenizerFixture()
         defer { fixture.remove() }
         let directory = try fixture.directory(named: "changing")
@@ -223,13 +398,15 @@ struct TokenizerCacheTests {
             diagnostics: .disabled
         )
 
-        _ = try await cache.load(from: directory, using: loader)
-        #expect(await cache.entryCountForTesting() == 0)
+        await #expect(throws: TokenizerCacheError.self) {
+            _ = try await cache.load(from: directory, using: loader)
+        }
+        #expect(cache.entryCountForTesting() == 0)
         _ = try await cache.load(from: directory, using: loader)
         _ = try await cache.load(from: directory, using: loader)
 
         #expect(await loader.calls == 2)
-        #expect(await cache.entryCountForTesting() == 1)
+        #expect(cache.entryCountForTesting() == 1)
     }
 
     @Test func oversizedInputsLoadWithoutEnteringTheCache() async throws {
@@ -246,7 +423,7 @@ struct TokenizerCacheTests {
         _ = try await cache.load(from: directory, using: loader)
 
         #expect(await loader.calls == 2)
-        #expect(await cache.entryCountForTesting() == 0)
+        #expect(cache.entryCountForTesting() == 0)
     }
 
     @Test func purgeReleasesTheTokenizerOwner() async throws {
@@ -266,9 +443,39 @@ struct TokenizerCacheTests {
         #expect(weakLifetime != nil)
         tokenizer = nil
         _ = tokenizer
-        await cache.purge()
+        cache.purge()
 
         #expect(weakLifetime == nil)
+    }
+
+    @Test func modelPoolGlobalClearReleasesTokenizerBeforeMLXCleanup() async throws {
+        let fixture = try TokenizerFixture()
+        defer { fixture.remove() }
+        let directory = try fixture.directory(named: "pool-clear")
+        var lifetime: TokenizerLifetime? = TokenizerLifetime()
+        let observation = try TokenizerCleanupObservation(lifetime: #require(lifetime))
+        let loader = try LifetimeTokenizerLoader(lifetime: #require(lifetime))
+        let cache = TokenizerCache(
+            configuration: .init(maximumEntries: 1, maximumInputBytes: 1_000_000),
+            diagnostics: .disabled
+        )
+        var tokenizer: (any MLXLMCommon.Tokenizer)? = try await cache.load(from: directory, using: loader)
+        lifetime = nil
+        tokenizer = nil
+        _ = tokenizer
+        #expect(observation.isAlive)
+
+        let pool = ModelPool(
+            memoryHooks: .init(
+                activeMemory: { 0 },
+                clearCache: { observation.recordCleanup() }
+            ),
+            tokenizerCache: cache
+        )
+        await pool.clearCache()
+
+        #expect(observation.wasReleasedBeforeCleanup)
+        #expect(!observation.isAlive)
     }
 
     @Test func diagnosticsEmitHitMissEvictionAndRejectionWithoutPaths() async throws {
@@ -294,7 +501,7 @@ struct TokenizerCacheTests {
         _ = try await cache.load(from: first, using: loader) // miss
         _ = try await cache.load(from: first, using: loader) // hit
         _ = try await cache.load(from: second, using: loader) // miss + budget eviction
-        await cache.purge() // explicit eviction
+        cache.purge() // explicit eviction
 
         let rejectingCache = TokenizerCache(
             configuration: .init(maximumEntries: 1, maximumInputBytes: 1),
@@ -323,12 +530,43 @@ struct TokenizerCacheTests {
         })
         #expect(SwamaDiagnostics.isValidSnapshot(sink.data))
     }
+
+    @Test func diagnosticSinkFailureNeverChangesTheTokenizerResult() async throws {
+        let fixture = try TokenizerFixture()
+        defer { fixture.remove() }
+        let directory = try fixture.directory(named: "diagnostic-failure")
+        let fallback = TokenizerDiagnosticSink()
+        let recorder = SwamaDiagnosticRecorder(
+            enabled: true,
+            primaryWrite: { _ in throw StubLoaderError.injected },
+            fallbackWrite: { fallback.append($0) }
+        )
+        recorder.start(mode: .cli)
+        let previous = SwamaDiagnostics.installRecorderForTesting(recorder)
+        defer { SwamaDiagnostics.restoreRecorderForTesting(previous) }
+        let loader = CountingTokenizerLoader()
+        let cache = TokenizerCache(
+            configuration: .init(maximumEntries: 1, maximumInputBytes: 1_000_000),
+            diagnostics: .live
+        )
+
+        let miss = try await cache.load(from: directory, using: loader)
+        let hit = try await cache.load(from: directory, using: loader)
+        recorder.stop(outcome: .ok)
+        recorder.flush()
+
+        #expect((miss as? StubTokenizer)?.identifier == "load-1")
+        #expect((hit as? StubTokenizer)?.identifier == "load-1")
+        #expect(await loader.calls == 1)
+        #expect(!fallback.data.isEmpty)
+    }
 }
 
 // MARK: - StubLoaderError
 
 private enum StubLoaderError: Error {
     case injected
+    case invalidConfiguration
 }
 
 // MARK: - StubTokenizer
@@ -378,6 +616,24 @@ private actor CountingTokenizerLoader: TokenizerLoader {
     private let delay: Duration?
 }
 
+// MARK: - ConfigurationValidatingTokenizerLoader
+
+private actor ConfigurationValidatingTokenizerLoader: TokenizerLoader {
+    var calls: Int { callCount }
+
+    func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
+        callCount += 1
+        let data = try Data(contentsOf: directory.appendingPathComponent("config.json"))
+        guard (try? JSONSerialization.jsonObject(with: data)) != nil else {
+            throw StubLoaderError.invalidConfiguration
+        }
+
+        return StubTokenizer(identifier: "load-\(callCount)")
+    }
+
+    private var callCount = 0
+}
+
 // MARK: - MutatingTokenizerLoader
 
 private actor MutatingTokenizerLoader: TokenizerLoader {
@@ -399,9 +655,104 @@ private actor MutatingTokenizerLoader: TokenizerLoader {
     private var callCount = 0
 }
 
+// MARK: - SuspendedTokenizerLoader
+
+private actor SuspendedTokenizerLoader: TokenizerLoader {
+    init(mutateFileName: String? = nil) {
+        self.mutateFileName = mutateFileName
+    }
+
+    var calls: Int { callCount }
+    var wasCancelled: Bool { observedCancellation }
+
+    func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
+        callCount += 1
+        let current = callCount
+        await withCheckedContinuation { continuation in
+            if released {
+                continuation.resume()
+            }
+            else {
+                releaseContinuation = continuation
+            }
+        }
+        observedCancellation = Task.isCancelled
+        if let mutateFileName {
+            try Data("mutated-by-producer".utf8).write(to: directory.appendingPathComponent(mutateFileName))
+        }
+        finished = true
+        return StubTokenizer(identifier: "load-\(current)")
+    }
+
+    func waitUntilStarted() async {
+        while callCount == 0 {
+            await Task.yield()
+        }
+    }
+
+    func release() {
+        released = true
+        let continuation = releaseContinuation
+        releaseContinuation = nil
+        continuation?.resume()
+    }
+
+    func waitUntilFinished() async {
+        while !finished {
+            await Task.yield()
+        }
+    }
+
+    private let mutateFileName: String?
+    private var callCount = 0
+    private var released = false
+    private var observedCancellation = false
+    private var finished = false
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+}
+
+// MARK: - TokenizerLoadOutcome
+
+private actor TokenizerLoadOutcome {
+    enum Value: Equatable {
+        case cancelled
+        case otherError
+        case value
+    }
+
+    var value: Value? { storedValue }
+
+    func record(_ value: Value) {
+        storedValue = value
+    }
+
+    private var storedValue: Value?
+}
+
 // MARK: - TokenizerLifetime
 
 private final class TokenizerLifetime: @unchecked Sendable {}
+
+// MARK: - TokenizerCleanupObservation
+
+private final class TokenizerCleanupObservation: @unchecked Sendable {
+    init(lifetime: TokenizerLifetime) {
+        self.lifetime = lifetime
+    }
+
+    var isAlive: Bool { lock.withLock { lifetime != nil } }
+    var wasReleasedBeforeCleanup: Bool { lock.withLock { releasedBeforeCleanup } }
+
+    func recordCleanup() {
+        lock.withLock {
+            releasedBeforeCleanup = lifetime == nil
+        }
+    }
+
+    private let lock: NSLock = .init()
+    private weak var lifetime: TokenizerLifetime?
+    private var releasedBeforeCleanup = false
+}
 
 // MARK: - LifetimeTokenizer
 
@@ -468,7 +819,10 @@ private struct TokenizerFixture {
         let directory = root.appendingPathComponent(name)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for fileName in expectedTokenizerInputFileNames {
-            try Data("\(seed):\(fileName)".utf8).write(to: directory.appendingPathComponent(fileName))
+            let data = fileName == "config.json"
+                ? Data(#"{"model_type":"\#(seed)-model"}"#.utf8)
+                : Data("\(seed):\(fileName)".utf8)
+            try data.write(to: directory.appendingPathComponent(fileName))
         }
         return directory
     }
@@ -489,6 +843,27 @@ private let expectedTokenizerInputFileNames = [
     "tokenizer_config.json",
     "vocab.json"
 ]
+
+private func waitForOutcome(
+    _ outcome: TokenizerLoadOutcome,
+    timeout: Duration
+) async throws {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: timeout)
+    while await outcome.value == nil {
+        guard clock.now < deadline else {
+            throw TokenizerCacheTestError.timeout
+        }
+
+        try await Task.sleep(for: .milliseconds(2))
+    }
+}
+
+// MARK: - TokenizerCacheTestError
+
+private enum TokenizerCacheTestError: Error {
+    case timeout
+}
 
 private func diagnosticEvents(from data: Data) throws -> [SwamaDiagnosticEvent] {
     switch SwamaDiagnosticTimeline.parse(data) {

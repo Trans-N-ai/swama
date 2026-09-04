@@ -6,8 +6,10 @@ import MLXLMCommon
 
 /// Content identity for every local file the pinned tokenizer loader currently reads, plus the
 /// common split-vocabulary files that a future compatible loader may consult. File names,
-/// presence/absence, sizes, and bytes all participate; the model name and directory path do not,
-/// so byte-identical tokenizers can be shared safely across model directories.
+/// presence/absence, sizes, and bytes all participate except for `config.json`: the pinned loader
+/// uses only its parsed `model_type` to select a tokenizer fallback, so unrelated model-shape fields
+/// are deliberately excluded. The model name and directory path do not participate, allowing equal
+/// tokenizer inputs to be shared safely across model directories.
 struct TokenizerInputFingerprint: Equatable, Hashable, Sendable {
     static let fileNames = [
         "added_tokens.json",
@@ -45,9 +47,25 @@ struct TokenizerInputFingerprint: Equatable, Hashable, Sendable {
             }
 
             hasher.update(data: Data([1]))
+            byteCount = try adding(byteCount, Int64(bitPattern: size.uint64Value))
+            if fileName == "config.json" {
+                let data = try Data(contentsOf: file)
+                guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    throw TokenizerFingerprintError.invalidModelConfiguration
+                }
+
+                if let modelType = object["model_type"] as? String {
+                    hasher.update(data: Data([1]))
+                    hasher.update(data: Data(modelType.utf8))
+                }
+                else {
+                    hasher.update(data: Data([0]))
+                }
+                continue
+            }
+
             var bigEndianSize = size.uint64Value.bigEndian
             withUnsafeBytes(of: &bigEndianSize) { hasher.update(bufferPointer: $0) }
-            byteCount = try adding(byteCount, Int64(bitPattern: size.uint64Value))
 
             let handle = try FileHandle(forReadingFrom: file)
             defer { try? handle.close() }
@@ -80,6 +98,7 @@ struct TokenizerInputFingerprint: Equatable, Hashable, Sendable {
 // MARK: - TokenizerFingerprintError
 
 private enum TokenizerFingerprintError: Error {
+    case invalidModelConfiguration
     case inputIsNotARegularFile(String)
     case inputSizeOverflow
 }
@@ -121,7 +140,7 @@ struct TokenizerCacheDiagnostics: Sendable {
 
 // MARK: - TokenizerCache
 
-actor TokenizerCache {
+final class TokenizerCache: @unchecked Sendable {
     static let shared: TokenizerCache = .init(configuration: .live, diagnostics: .live)
 
     init(
@@ -132,14 +151,14 @@ actor TokenizerCache {
         self.diagnostics = diagnostics
     }
 
-    /// Loads through a content-addressed, process-local cache. Fingerprinting intentionally occurs
-    /// before entering the actor so callers hashing distinct directories do not serialize behind
-    /// one another. A failed fingerprint or an over-budget input fails open to the upstream loader
-    /// without entering either the ready cache or the coalescing table.
-    nonisolated func load(
+    /// Loads through a content-addressed, process-local cache. A failed fingerprint or an
+    /// over-budget input fails open to the upstream loader without entering either the ready cache
+    /// or the coalescing table.
+    func load(
         from directory: URL,
         using upstream: any TokenizerLoader
     ) async throws -> any Tokenizer {
+        try Task.checkCancellation()
         let startedAt = DispatchTime.now().uptimeNanoseconds
         let fingerprint: TokenizerInputFingerprint
         do {
@@ -148,35 +167,105 @@ actor TokenizerCache {
         catch {
             diagnostics.reject(
                 TokenizerInputFingerprint.rejectionDigest(for: directory),
-                elapsedMilliseconds(since: startedAt)
+                Self.elapsedMilliseconds(since: startedAt)
             )
+            try Task.checkCancellation()
+            return try await upstream.load(from: directory)
+        }
+        try Task.checkCancellation()
+
+        guard configuration.maximumEntries > 0,
+              configuration.maximumInputBytes > 0,
+              fingerprint.byteCount <= configuration.maximumInputBytes
+        else {
+            diagnostics.reject(fingerprint.digest, Self.elapsedMilliseconds(since: startedAt))
+            try Task.checkCancellation()
             return try await upstream.load(from: directory)
         }
 
-        return try await load(
+        let (acquisition, newTask) = acquire(
             fingerprint: fingerprint,
             directory: directory,
-            upstream: upstream,
-            startedAt: startedAt
+            upstream: upstream
         )
+        switch acquisition {
+        case let .ready(tokenizer):
+            diagnostics.hit(fingerprint.digest)
+            return tokenizer
+
+        case let .waiting(sequence, waiter):
+            if let newTask {
+                diagnostics.miss(fingerprint.digest)
+                observe(
+                    newTask,
+                    fingerprint: fingerprint,
+                    sequence: sequence,
+                    startedAt: startedAt
+                )
+            }
+            else {
+                diagnostics.hit(fingerprint.digest)
+            }
+
+            let completed = try await waiter.value {
+                self.cancelWaiter(
+                    fingerprint: fingerprint.digest,
+                    sequence: sequence,
+                    waiterID: waiter.id
+                )
+            }
+            try Task.checkCancellation()
+            let fingerprintAfterWaiting = try? TokenizerInputFingerprint.calculate(in: directory)
+            try Task.checkCancellation()
+            guard fingerprintAfterWaiting == fingerprint else {
+                diagnostics.reject(
+                    fingerprint.digest,
+                    Self.elapsedMilliseconds(since: startedAt)
+                )
+                throw TokenizerCacheError.inputsChangedDuringLoad
+            }
+
+            return completed.tokenizer
+        }
     }
 
     func purge() {
-        for fingerprint in ready.keys.sorted() {
+        let (fingerprints, pendingLoads) = lock.withLock { () -> ([String], [PendingLoad]) in
+            let fingerprints = ready.keys.sorted()
+            let pendingLoads = Array(pending.values)
+            ready.removeAll()
+            pending.removeAll()
+            return (fingerprints, pendingLoads)
+        }
+        for fingerprint in fingerprints {
             diagnostics.evict(fingerprint, "explicit")
         }
-        ready.removeAll()
-        for pendingLoad in pending.values {
+        for pendingLoad in pendingLoads {
             pendingLoad.task.cancel()
+            for waiter in pendingLoad.waiters.values {
+                waiter.resolve(.failure(CancellationError()))
+            }
         }
-        pending.removeAll()
     }
 
     #if DEBUG
         func entryCountForTesting() -> Int {
-            ready.count
+            lock.withLock { ready.count }
+        }
+
+        func pendingCountForTesting() -> Int {
+            lock.withLock { pending.count }
+        }
+
+        func waiterCountForTesting() -> Int {
+            lock.withLock { pending.values.reduce(0) { $0 + $1.waiters.count } }
         }
     #endif
+
+    private enum Acquisition {
+        case ready(any Tokenizer)
+        case waiting(sequence: UInt64, waiter: Waiter)
+    }
 
     private struct ReadyEntry: Sendable {
         let tokenizer: any Tokenizer
@@ -191,91 +280,145 @@ actor TokenizerCache {
     private struct PendingLoad: Sendable {
         let sequence: UInt64
         let task: Task<CompletedLoad, Error>
-        let startedAt: UInt64
+        var waiters: [UUID: Waiter]
     }
 
     private let configuration: TokenizerCacheConfiguration
     private let diagnostics: TokenizerCacheDiagnostics
+    private let lock: NSLock = .init()
     private var ready: [String: ReadyEntry] = [:]
     private var pending: [String: PendingLoad] = [:]
     private var accessSequence: UInt64 = 0
     private var loadSequence: UInt64 = 0
 
-    private func load(
+    private func acquire(
         fingerprint: TokenizerInputFingerprint,
         directory: URL,
-        upstream: any TokenizerLoader,
-        startedAt: UInt64
-    ) async throws -> any Tokenizer {
-        guard configuration.maximumEntries > 0,
-              configuration.maximumInputBytes > 0,
-              fingerprint.byteCount <= configuration.maximumInputBytes
-        else {
-            diagnostics.reject(fingerprint.digest, elapsedMilliseconds(since: startedAt))
-            return try await upstream.load(from: directory)
-        }
-
-        if var entry = ready[fingerprint.digest] {
-            accessSequence &+= 1
-            entry.lastAccess = accessSequence
-            ready[fingerprint.digest] = entry
-            diagnostics.hit(fingerprint.digest)
-            return entry.tokenizer
-        }
-
-        if let pendingLoad = pending[fingerprint.digest] {
-            diagnostics.hit(fingerprint.digest)
-            return try await pendingLoad.task.value.tokenizer
-        }
-
-        loadSequence &+= 1
-        let sequence = loadSequence
-        let task = Task.detached { () throws -> CompletedLoad in
-            let tokenizer = try await upstream.load(from: directory)
-            let fingerprintAfterLoad = try? TokenizerInputFingerprint.calculate(in: directory)
-            return .init(tokenizer: tokenizer, fingerprintAfterLoad: fingerprintAfterLoad)
-        }
-        let pendingLoad = PendingLoad(
-            sequence: sequence,
-            task: task,
-            startedAt: startedAt
-        )
-        pending[fingerprint.digest] = pendingLoad
-        diagnostics.miss(fingerprint.digest)
-
-        do {
-            let completed = try await task.value
-            guard pending[fingerprint.digest]?.sequence == sequence else {
-                return completed.tokenizer
+        upstream: any TokenizerLoader
+    ) -> (Acquisition, Task<CompletedLoad, Error>?) {
+        lock.withLock {
+            if var entry = ready[fingerprint.digest] {
+                accessSequence &+= 1
+                entry.lastAccess = accessSequence
+                ready[fingerprint.digest] = entry
+                return (.ready(entry.tokenizer), nil)
             }
 
-            pending.removeValue(forKey: fingerprint.digest)
-
-            guard completed.fingerprintAfterLoad == fingerprint else {
-                diagnostics.reject(
-                    fingerprint.digest,
-                    elapsedMilliseconds(since: pendingLoad.startedAt)
-                )
-                return completed.tokenizer
+            let waiter = Waiter()
+            if var pendingLoad = pending[fingerprint.digest] {
+                pendingLoad.waiters[waiter.id] = waiter
+                pending[fingerprint.digest] = pendingLoad
+                return (.waiting(sequence: pendingLoad.sequence, waiter: waiter), nil)
             }
 
-            accessSequence &+= 1
-            ready[fingerprint.digest] = .init(
-                tokenizer: completed.tokenizer,
-                lastAccess: accessSequence
+            loadSequence &+= 1
+            let sequence = loadSequence
+            let task = Task.detached { () throws -> CompletedLoad in
+                let tokenizer = try await upstream.load(from: directory)
+                let fingerprintAfterLoad = try? TokenizerInputFingerprint.calculate(in: directory)
+                return .init(tokenizer: tokenizer, fingerprintAfterLoad: fingerprintAfterLoad)
+            }
+            pending[fingerprint.digest] = .init(
+                sequence: sequence,
+                task: task,
+                waiters: [waiter.id: waiter]
             )
-            evictToBudget()
-            return completed.tokenizer
-        }
-        catch {
-            if pending[fingerprint.digest]?.sequence == sequence {
-                pending.removeValue(forKey: fingerprint.digest)
-            }
-            throw error
+            return (.waiting(sequence: sequence, waiter: waiter), task)
         }
     }
 
-    private func evictToBudget() {
+    private func observe(
+        _ task: Task<CompletedLoad, Error>,
+        fingerprint: TokenizerInputFingerprint,
+        sequence: UInt64,
+        startedAt: UInt64
+    ) {
+        Task.detached { [self] in
+            let result = await task.result
+            complete(
+                result,
+                fingerprint: fingerprint,
+                sequence: sequence,
+                startedAt: startedAt
+            )
+        }
+    }
+
+    private func complete(
+        _ result: Result<CompletedLoad, Error>,
+        fingerprint: TokenizerInputFingerprint,
+        sequence: UInt64,
+        startedAt: UInt64
+    ) {
+        var finalResult = result
+        var waiters: [Waiter] = []
+        var evictedFingerprints: [String] = []
+        var rejected = false
+
+        lock.lock()
+        guard let pendingLoad = pending[fingerprint.digest], pendingLoad.sequence == sequence else {
+            lock.unlock()
+            return
+        }
+
+        pending.removeValue(forKey: fingerprint.digest)
+        waiters = Array(pendingLoad.waiters.values)
+
+        if case let .success(completed) = result {
+            if completed.fingerprintAfterLoad == fingerprint {
+                accessSequence &+= 1
+                ready[fingerprint.digest] = .init(
+                    tokenizer: completed.tokenizer,
+                    lastAccess: accessSequence
+                )
+                evictedFingerprints = evictToBudgetLocked()
+            }
+            else {
+                rejected = true
+                finalResult = .failure(TokenizerCacheError.inputsChangedDuringLoad)
+            }
+        }
+        lock.unlock()
+
+        if rejected {
+            diagnostics.reject(
+                fingerprint.digest,
+                Self.elapsedMilliseconds(since: startedAt)
+            )
+        }
+        for evictedFingerprint in evictedFingerprints {
+            diagnostics.evict(evictedFingerprint, "budget")
+        }
+        for waiter in waiters {
+            waiter.resolve(finalResult)
+        }
+    }
+
+    private func cancelWaiter(
+        fingerprint: String,
+        sequence: UInt64,
+        waiterID: UUID
+    ) {
+        var taskToCancel: Task<CompletedLoad, Error>?
+        lock.withLock {
+            guard var pendingLoad = pending[fingerprint], pendingLoad.sequence == sequence else {
+                return
+            }
+
+            pendingLoad.waiters.removeValue(forKey: waiterID)
+            if pendingLoad.waiters.isEmpty {
+                pending.removeValue(forKey: fingerprint)
+                taskToCancel = pendingLoad.task
+            }
+            else {
+                pending[fingerprint] = pendingLoad
+            }
+        }
+        taskToCancel?.cancel()
+    }
+
+    private func evictToBudgetLocked() -> [String] {
+        var fingerprints: [String] = []
         while ready.count > configuration.maximumEntries,
               let victim = ready.min(by: { lhs, rhs in
                   if lhs.value.lastAccess == rhs.value.lastAccess {
@@ -287,13 +430,92 @@ actor TokenizerCache {
               })
         {
             ready.removeValue(forKey: victim.key)
-            diagnostics.evict(victim.key, "budget")
+            fingerprints.append(victim.key)
         }
+        return fingerprints
     }
 
-    private nonisolated func elapsedMilliseconds(since startedAt: UInt64) -> Double {
+    private static func elapsedMilliseconds(since startedAt: UInt64) -> Double {
         Double(DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000
     }
+
+    private final class Waiter: @unchecked Sendable {
+        let id: UUID = .init()
+
+        func value(onCancel: @escaping @Sendable () -> Void) async throws -> CompletedLoad {
+            do {
+                try Task.checkCancellation()
+                return try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { continuation in
+                        let immediate = lock.withLock { () -> Result<CompletedLoad, Error>? in
+                            if let result {
+                                return result
+                            }
+                            if cancelled {
+                                return .failure(CancellationError())
+                            }
+                            self.continuation = continuation
+                            return nil
+                        }
+                        if let immediate {
+                            continuation.resume(with: immediate)
+                        }
+                    }
+                } onCancel: {
+                    if self.cancel() {
+                        onCancel()
+                    }
+                }
+            }
+            catch is CancellationError {
+                if cancel() {
+                    onCancel()
+                }
+                throw CancellationError()
+            }
+        }
+
+        func resolve(_ result: Result<CompletedLoad, Error>) {
+            let continuation = lock.withLock { () -> CheckedContinuation<CompletedLoad, Error>? in
+                guard self.result == nil, !cancelled else {
+                    return nil
+                }
+
+                self.result = result
+                let continuation = self.continuation
+                self.continuation = nil
+                return continuation
+            }
+            continuation?.resume(with: result)
+        }
+
+        private func cancel() -> Bool {
+            let (didCancel, continuation) = lock.withLock {
+                () -> (Bool, CheckedContinuation<CompletedLoad, Error>?) in
+                guard result == nil, !cancelled else {
+                    return (false, nil)
+                }
+
+                cancelled = true
+                let continuation = self.continuation
+                self.continuation = nil
+                return (true, continuation)
+            }
+            continuation?.resume(throwing: CancellationError())
+            return didCancel
+        }
+
+        private let lock: NSLock = .init()
+        private var continuation: CheckedContinuation<CompletedLoad, Error>?
+        private var result: Result<CompletedLoad, Error>?
+        private var cancelled = false
+    }
+}
+
+// MARK: - TokenizerCacheError
+
+enum TokenizerCacheError: Error {
+    case inputsChangedDuringLoad
 }
 
 // MARK: - CachedTokenizerLoader
