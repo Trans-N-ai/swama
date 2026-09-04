@@ -9,7 +9,7 @@ import Tokenizers
 public func loadEmbeddingModelContainer(modelName: String) async throws -> EmbedderModelContainer {
     try await loadEmbeddingModelContainer(
         modelName: modelName,
-        tokenizerLoader: #huggingFaceTokenizerLoader()
+        tokenizerLoader: CachedTokenizerLoader(upstream: #huggingFaceTokenizerLoader())
     )
 }
 

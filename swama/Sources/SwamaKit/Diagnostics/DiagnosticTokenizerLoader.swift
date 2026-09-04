@@ -25,11 +25,22 @@ final class ModelLoadPhaseRecorder: @unchecked Sendable {
 struct DiagnosticTokenizerLoader: TokenizerLoader {
     let upstream: any TokenizerLoader
     let phases: ModelLoadPhaseRecorder
+    let cache: TokenizerCache
+
+    init(
+        upstream: any TokenizerLoader,
+        phases: ModelLoadPhaseRecorder,
+        cache: TokenizerCache = .shared
+    ) {
+        self.upstream = upstream
+        self.phases = phases
+        self.cache = cache
+    }
 
     func load(from directory: URL) async throws -> any Tokenizer {
         let startedAt = DispatchTime.now().uptimeNanoseconds
         do {
-            let tokenizer = try await upstream.load(from: directory)
+            let tokenizer = try await cache.load(from: directory, using: upstream)
             phases.recordTokenizer(milliseconds: elapsedMilliseconds(since: startedAt))
             return tokenizer
         }
