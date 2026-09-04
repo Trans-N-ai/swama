@@ -1136,6 +1136,51 @@ package enum SwamaDiagnostics {
         }
     }
 
+    package static func hitTokenizerCache(fingerprint: String) {
+        recorder.record(
+            level: .debug,
+            subsystem: "tokenizer",
+            event: .tokenizerCacheHit,
+            data: ["fingerprint": .string(fingerprint)]
+        )
+    }
+
+    package static func missTokenizerCache(fingerprint: String) {
+        recorder.record(
+            level: .debug,
+            subsystem: "tokenizer",
+            event: .tokenizerCacheMiss,
+            data: ["fingerprint": .string(fingerprint)]
+        )
+    }
+
+    package static func evictTokenizerCache(fingerprint: String, reason: String) {
+        recorder.record(
+            level: .debug,
+            subsystem: "tokenizer",
+            event: .tokenizerCacheEvicted,
+            data: [
+                "fingerprint": .string(fingerprint),
+                "reason": .string(reason)
+            ]
+        )
+    }
+
+    package static func rejectTokenizerCache(
+        fingerprint: String,
+        durationMilliseconds: Double
+    ) {
+        recorder.record(
+            level: .warn,
+            subsystem: "tokenizer",
+            event: .tokenizerCacheRejected,
+            durationMs: durationMilliseconds,
+            outcome: .error,
+            error: .init(code: .tokenizerRejected, transient: true),
+            data: ["fingerprint": .string(fingerprint)]
+        )
+    }
+
     package static func startModelLoad(model: String) -> SwamaDiagnosticOperation {
         let operation = recorder.makeOperation()
         recorder.record(
