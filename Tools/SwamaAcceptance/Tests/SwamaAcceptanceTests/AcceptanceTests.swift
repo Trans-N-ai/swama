@@ -354,6 +354,36 @@ struct AcceptanceTests {
         )
         #expect(sameLine.map(\.module) == ["SwamaCore", "AppKit"])
         #expect(sameLine.map(\.line) == [3, 3])
+
+        let rawString = swiftImportedModules(
+            in: """
+            let explanation = #"literal " ; import AppKit "#
+            import SwamaCore
+
+            """,
+            matching: expression
+        )
+        #expect(rawString.map(\.module) == ["SwamaCore"])
+        #expect(rawString.map(\.line) == [2])
+
+        let rawMultilineSource = "let explanation = #\"\"\"\n"
+            + "literal \" ; import AppKit\n"
+            + "\"\"\"#\n"
+            + "import SwamaCore\n"
+        let rawMultiline = swiftImportedModules(in: rawMultilineSource, matching: expression)
+        #expect(rawMultiline.map(\.module) == ["SwamaCore"])
+        #expect(rawMultiline.map(\.line) == [4])
+
+        let extendedRegex = swiftImportedModules(
+            in: """
+            let pattern = #/; import AppKit/#
+            import SwamaCore
+
+            """,
+            matching: expression
+        )
+        #expect(extendedRegex.map(\.module) == ["SwamaCore"])
+        #expect(extendedRegex.map(\.line) == [2])
     }
 
     @Test func compilerPublicAPIGateRejectsUpstreamTypesAndConformances() throws {
@@ -459,6 +489,32 @@ struct AcceptanceTests {
             "spelling": "Foo",
             "preciseIdentifier": "s:99Foo"
         ]]
+        var emptySwiftPreciseSymbol = validSymbol
+        emptySwiftPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Empty",
+            "preciseIdentifier": "s:"
+        ]]
+        var zeroLengthSwiftPreciseSymbol = validSymbol
+        zeroLengthSwiftPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Empty",
+            "preciseIdentifier": "s:0"
+        ]]
+        var invalidSwiftPreciseSymbol = validSymbol
+        invalidSwiftPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "NotReal",
+            "preciseIdentifier": "s:not-real"
+        ]]
+        var unknownFragmentKindSymbol = validSymbol
+        unknownFragmentKindSymbol["declarationFragments"] = [[
+            "kind": "futureTypeReference",
+            "spelling": "ModelContainer",
+            "preciseIdentifier": "s:11MLXLMCommon14ModelContainerC"
+        ]]
+        var unknownAccessSymbol = validSymbol
+        unknownAccessSymbol["accessLevel"] = "futurePublic"
         let malformedGraphs: [JSONObject] = [
             ["module": ["name": "SwamaCore"], "symbols": [42], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [validSymbol], "relationships": [42]],
@@ -469,6 +525,11 @@ struct AcceptanceTests {
             ],
             ["module": ["name": "SwamaCore"], "symbols": [unqualifiedPreciseSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [truncatedPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [emptySwiftPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [zeroLengthSwiftPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [invalidSwiftPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [unknownFragmentKindSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [unknownAccessSymbol], "relationships": []],
             [
                 "module": ["name": "SwamaCore"],
                 "symbols": [validSymbol],
@@ -476,6 +537,15 @@ struct AcceptanceTests {
                     "kind": "conformsTo",
                     "source": "s:9SwamaCore7PayloadV",
                     "target": "ForeignProtocol"
+                ]]
+            ],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [validSymbol],
+                "relationships": [[
+                    "kind": "futureConformance",
+                    "source": "s:9SwamaCore7PayloadV",
+                    "target": "s:11MLXLMCommon14ModelContainerC"
                 ]]
             ]
         ]
@@ -488,6 +558,32 @@ struct AcceptanceTests {
                     allowedModules: ["Swift", "Foundation", "SwamaCore"]
                 )
             }
+        }
+
+        var validSwiftSymbol = validSymbol
+        validSwiftSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Int",
+            "preciseIdentifier": "s:Si"
+        ]]
+        #expect(throws: Never.self) {
+            _ = try analyzePublicAPISymbolGraphs(
+                [["module": ["name": "SwamaCore"], "symbols": [validSwiftSymbol], "relationships": []]],
+                target: "SwamaCore",
+                allowedModules: ["Swift", "Foundation", "SwamaCore"]
+            )
+        }
+        validSwiftSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Error",
+            "preciseIdentifier": "s:s5ErrorP"
+        ]]
+        #expect(throws: Never.self) {
+            _ = try analyzePublicAPISymbolGraphs(
+                [["module": ["name": "SwamaCore"], "symbols": [validSwiftSymbol], "relationships": []]],
+                target: "SwamaCore",
+                allowedModules: ["Swift", "Foundation", "SwamaCore"]
+            )
         }
     }
 
@@ -816,6 +912,51 @@ struct AcceptanceTests {
                         "type": ["library": ["automatic"]]
                     ]],
                     "targets": [["name": "SwamaCore", "dependencies": []]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["library": []]
+                    ]],
+                    "targets": [["name": "SwamaCore", "dependencies": []]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["executable": ["unexpected"]]
+                    ]],
+                    "targets": [["name": "SwamaCore", "dependencies": []]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [["fileSystem": [["identity": "dependency"]]]],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [[
+                        "name": "SwamaCore",
+                        "dependencies": [["product": ["Hidden", "", NSNull(), NSNull()]]]
+                    ]]
+                ],
+                "dependency": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "Hidden",
+                        "targets": ["Hidden"],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [["name": "Hidden", "dependencies": []]]
                 ]
             ]
         ]

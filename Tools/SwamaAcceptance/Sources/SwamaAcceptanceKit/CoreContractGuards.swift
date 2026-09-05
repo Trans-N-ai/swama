@@ -95,6 +95,18 @@ func analyzePublicAPISymbolGraphs(
     target: String,
     allowedModules: Set<String>
 ) throws -> JSONObject {
+    let knownAccessLevels: Set<String> = ["fileprivate", "internal", "open", "package", "private", "public"]
+    let knownRelationshipKinds: Set<String> = [
+        "conformsTo",
+        "defaultImplementationOf",
+        "extensionTo",
+        "inheritsFrom",
+        "memberOf",
+        "optionalRequirementOf",
+        "overloadOf",
+        "overrides",
+        "requirementOf"
+    ]
     var canonicalSymbols: [JSONObject] = []
     var violations: [JSONObject] = []
 
@@ -108,7 +120,13 @@ func analyzePublicAPISymbolGraphs(
         var relationshipsBySource: [String: [JSONObject]] = [:]
         for relationship in relationships {
             let source = try relationship.string("source")
-            _ = try relationship.string("kind")
+            let relationshipKind = try relationship.string("kind")
+            guard knownRelationshipKinds.contains(relationshipKind) else {
+                throw AcceptanceFailure.unknown(
+                    "public symbol relationship kind is unknown: \(relationshipKind)"
+                )
+            }
+
             _ = try relationship.string("target")
             if relationship["targetFallback"] != nil {
                 _ = try relationship.string("targetFallback")
@@ -118,6 +136,9 @@ func analyzePublicAPISymbolGraphs(
 
         for symbol in symbols {
             let access = try symbol.string("accessLevel")
+            guard knownAccessLevels.contains(access) else {
+                throw AcceptanceFailure.unknown("public symbol accessLevel is unknown: \(access)")
+            }
             guard access == "public" || access == "open" else {
                 continue
             }
@@ -133,11 +154,35 @@ func analyzePublicAPISymbolGraphs(
             let declaration = fragments.compactMap { $0["spelling"] as? String }.joined()
             let canonicalFragments = try fragments.map { fragment -> JSONObject in
                 let fragmentKind = try fragment.string("kind")
+                let allowedFragmentKinds: Set<String> = [
+                    "attribute",
+                    "externalParam",
+                    "genericParameter",
+                    "identifier",
+                    "internalParam",
+                    "keyword",
+                    "number",
+                    "string",
+                    "text",
+                    "typeIdentifier"
+                ]
+                guard allowedFragmentKinds.contains(fragmentKind) else {
+                    throw AcceptanceFailure.unknown(
+                        "public declaration fragment kind is unknown: \(fragmentKind)"
+                    )
+                }
+
                 var value: JSONObject = try [
                     "kind": fragmentKind,
                     "spelling": fragment.string("spelling")
                 ]
                 if fragment["preciseIdentifier"] != nil {
+                    guard fragmentKind == "typeIdentifier" else {
+                        throw AcceptanceFailure.unknown(
+                            "non-type declaration fragment carries preciseIdentifier: \(fragmentKind)"
+                        )
+                    }
+
                     let precise = try fragment.string("preciseIdentifier")
                     guard moduleName(in: precise) != nil else {
                         throw AcceptanceFailure.unknown(
@@ -178,12 +223,6 @@ func analyzePublicAPISymbolGraphs(
             var conformances: [String] = []
             for relationship in relationshipsBySource[identifier] ?? [] {
                 let relationshipKind = try relationship.string("kind")
-                guard ["conformsTo", "extensionTo", "inheritsFrom", "memberOf", "requirementOf"]
-                    .contains(relationshipKind)
-                else {
-                    continue
-                }
-
                 let targetIdentifier = try relationship.string("target")
                 let fallback = try relationship["targetFallback"] == nil
                     ? nil
@@ -333,6 +372,10 @@ private func moduleName(in preciseIdentifier: String) -> String? {
     }
 
     let payload = preciseIdentifier.dropFirst(2)
+    guard !payload.isEmpty else {
+        return nil
+    }
+
     var digits = ""
     for character in payload {
         guard character.isNumber else {
@@ -341,8 +384,11 @@ private func moduleName(in preciseIdentifier: String) -> String? {
 
         digits.append(character)
     }
+    guard !digits.isEmpty else {
+        return isValidStandardLibraryUSRPayload(String(payload)) ? "Swift" : nil
+    }
     guard let length = Int(digits), length > 0 else {
-        return "Swift"
+        return nil
     }
 
     let moduleStart = payload.index(payload.startIndex, offsetBy: digits.count)
@@ -351,6 +397,46 @@ private func moduleName(in preciseIdentifier: String) -> String? {
     }
 
     return String(payload[moduleStart ..< moduleEnd])
+}
+
+private func isValidStandardLibraryUSRPayload(_ payload: String) -> Bool {
+    let substitutions: Set<String> = [
+        "SD", "SP", "SR", "SS", "SV", "Sa", "Sb", "Sc", "Sd", "Sf", "Si", "Sp", "Sq", "Sr", "Su", "Sv"
+    ]
+    if substitutions.contains(payload) {
+        return true
+    }
+
+    let characters = Array(payload)
+    guard characters.first == "s" else {
+        return false
+    }
+
+    var index = 1
+    var digits = ""
+    while characters.indices.contains(index), characters[index].isNumber {
+        digits.append(characters[index])
+        index += 1
+    }
+    guard let nameLength = Int(digits), nameLength > 0,
+          characters.indices.contains(index + nameLength - 1)
+    else {
+        return false
+    }
+
+    let name = characters[index ..< index + nameLength]
+    guard name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else {
+        return false
+    }
+
+    index += nameLength
+    guard index == characters.count - 1,
+          let nominalKind = characters.last
+    else {
+        return false
+    }
+
+    return ["A", "C", "E", "O", "P", "V"].contains(nominalKind)
 }
 
 // MARK: - External consumer and target dependency boundary
@@ -881,13 +967,35 @@ private func packageProducts(_ manifest: JSONObject) throws -> [String: PackageP
         }
 
         let type = try product.object("type")
-        guard type.count == 1 else {
+        guard type.count == 1, let productKind = type.keys.first else {
             throw AcceptanceFailure.unknown("resolved package product type has an unsupported shape")
         }
 
-        let isLibrary = type["library"] != nil
-        if isLibrary {
-            _ = try strictStringArray(type, key: "library", context: "resolved library product")
+        let isLibrary: Bool
+        switch productKind {
+        case "library":
+            let payload = try strictStringArray(type, key: "library", context: "resolved library product")
+            guard payload.count == 1,
+                  let linkage = payload.first,
+                  ["automatic", "dynamic", "static"].contains(linkage)
+            else {
+                throw AcceptanceFailure.unknown("resolved library product linkage is invalid")
+            }
+
+            isLibrary = true
+
+        case "executable",
+             "plugin",
+             "snippet",
+             "test":
+            guard type[productKind] is NSNull else {
+                throw AcceptanceFailure.unknown("resolved non-library product payload is not null")
+            }
+
+            isLibrary = false
+
+        default:
+            throw AcceptanceFailure.unknown("resolved package product kind is unknown: \(productKind)")
         }
         result[name] = try PackageProduct(
             targets: strictStringArray(product, key: "targets", context: "resolved package product"),
@@ -967,8 +1075,8 @@ private func targetDependencyDescriptors(_ target: JSONObject) throws -> [Target
 
         let package: String?
         if kind == "product", !(parts[1] is NSNull) {
-            guard let value = parts[1] as? String else {
-                throw AcceptanceFailure.unknown("resolved product dependency package is not a string")
+            guard let value = parts[1] as? String, !value.isEmpty else {
+                throw AcceptanceFailure.unknown("resolved product dependency package is missing or empty")
             }
 
             package = value

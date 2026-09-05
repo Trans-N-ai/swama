@@ -23,7 +23,8 @@ func swiftImportedModules(
 ) -> [(module: String, line: Int)] {
     enum LexicalState {
         case normal
-        case string
+        case string(rawHashCount: Int, quoteCount: Int)
+        case regex(rawHashCount: Int)
         case lineComment
         case blockComment(depth: Int)
     }
@@ -44,6 +45,75 @@ func swiftImportedModules(
         statementLine = line
     }
 
+    func stringOpening(at start: Int) -> (rawHashCount: Int, quoteCount: Int, length: Int)? {
+        var cursor = start
+        var rawHashCount = 0
+        while characters.indices.contains(cursor), characters[cursor] == "#" {
+            rawHashCount += 1
+            cursor += 1
+        }
+        guard characters.indices.contains(cursor), characters[cursor] == "\"" else {
+            return nil
+        }
+
+        let hasTripleQuote = characters.indices.contains(cursor + 2)
+            && characters[cursor + 1] == "\""
+            && characters[cursor + 2] == "\""
+        let quoteCount = hasTripleQuote ? 3 : 1
+        return (rawHashCount, quoteCount, rawHashCount + quoteCount)
+    }
+
+    func stringClosingLength(at start: Int, rawHashCount: Int, quoteCount: Int) -> Int? {
+        for offset in 0 ..< quoteCount
+            where !characters.indices.contains(start + offset) || characters[start + offset] != "\""
+        {
+            return nil
+        }
+        let hashStart = start + quoteCount
+        for offset in 0 ..< rawHashCount
+            where !characters.indices.contains(hashStart + offset) || characters[hashStart + offset] != "#"
+        {
+            return nil
+        }
+        return quoteCount + rawHashCount
+    }
+
+    func regexOpening(at start: Int) -> (rawHashCount: Int, length: Int)? {
+        var cursor = start
+        var rawHashCount = 0
+        while characters.indices.contains(cursor), characters[cursor] == "#" {
+            rawHashCount += 1
+            cursor += 1
+        }
+        guard rawHashCount > 0,
+              characters.indices.contains(cursor),
+              characters[cursor] == "/"
+        else {
+            return nil
+        }
+
+        return (rawHashCount, rawHashCount + 1)
+    }
+
+    func regexClosingLength(at start: Int, rawHashCount: Int) -> Int? {
+        guard characters.indices.contains(start), characters[start] == "/" else {
+            return nil
+        }
+
+        for offset in 0 ..< rawHashCount
+            where !characters.indices.contains(start + 1 + offset) || characters[start + 1 + offset] != "#"
+        {
+            return nil
+        }
+        return rawHashCount + 1
+    }
+
+    func appendCharacters(from start: Int, count: Int) {
+        for offset in 0 ..< count {
+            statement.append(characters[start + offset])
+        }
+    }
+
     while index < characters.count {
         let character = characters[index]
         let next = characters.indices.contains(index + 1) ? characters[index + 1] : nil
@@ -58,9 +128,18 @@ func swiftImportedModules(
                 state = .blockComment(depth: 1)
                 index += 1
             }
-            else if character == "\"" {
-                statement.append(character)
-                state = .string
+            else if let opening = stringOpening(at: index) {
+                appendCharacters(from: index, count: opening.length)
+                state = .string(
+                    rawHashCount: opening.rawHashCount,
+                    quoteCount: opening.quoteCount
+                )
+                index += opening.length - 1
+            }
+            else if let opening = regexOpening(at: index) {
+                appendCharacters(from: index, count: opening.length)
+                state = .regex(rawHashCount: opening.rawHashCount)
+                index += opening.length - 1
             }
             else if character == ";" {
                 appendStatement()
@@ -74,14 +153,36 @@ func swiftImportedModules(
                 statement.append(character)
             }
 
-        case .string:
-            statement.append(character)
-            if character == "\\", next != nil {
+        case let .string(rawHashCount, quoteCount):
+            if rawHashCount == 0, character == "\\", next != nil {
+                statement.append(character)
                 index += 1
                 statement.append(characters[index])
             }
-            else if character == "\"" {
+            else if let closingLength = stringClosingLength(
+                at: index,
+                rawHashCount: rawHashCount,
+                quoteCount: quoteCount
+            ) {
+                appendCharacters(from: index, count: closingLength)
                 state = .normal
+                index += closingLength - 1
+            }
+            else {
+                statement.append(character)
+            }
+            if character == "\n" {
+                line += 1
+            }
+
+        case let .regex(rawHashCount):
+            if let closingLength = regexClosingLength(at: index, rawHashCount: rawHashCount) {
+                appendCharacters(from: index, count: closingLength)
+                state = .normal
+                index += closingLength - 1
+            }
+            else {
+                statement.append(character)
             }
             if character == "\n" {
                 line += 1
