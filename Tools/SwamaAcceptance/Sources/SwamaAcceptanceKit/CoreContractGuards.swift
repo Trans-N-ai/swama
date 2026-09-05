@@ -20,20 +20,7 @@ func compilerPublicAPIReport(
     var environment = try developerEnvironment(developerDirectory)
     environment["SWIFTPM_MODULECACHE_OVERRIDE"] = scratch.appendingPathComponent("module-cache").path
     let result = try runCommand(
-        [
-            "xcrun",
-            "swift",
-            "package",
-            "--package-path",
-            paths.package.path,
-            "--scratch-path",
-            scratch.path,
-            "--force-resolved-versions",
-            "dump-symbol-graph",
-            "--minimum-access-level",
-            "public",
-            "--skip-synthesized-members"
-        ],
+        symbolGraphCommand(package: paths.package, scratch: scratch),
         currentDirectory: paths.repository,
         environment: environment,
         timeout: contract.compilerTimeoutSeconds,
@@ -85,6 +72,24 @@ func compilerPublicAPIReport(
     return report
 }
 
+func symbolGraphCommand(package: URL, scratch: URL) -> [String] {
+    [
+        "xcrun",
+        "swift",
+        "package",
+        "--package-path",
+        package.path,
+        "--scratch-path",
+        scratch.path,
+        "--force-resolved-versions",
+        "dump-symbol-graph",
+        "--minimum-access-level",
+        "public",
+        "--skip-synthesized-members",
+        "--emit-extension-block-symbols"
+    ]
+}
+
 func analyzePublicAPISymbolGraphs(
     _ graphs: [JSONObject],
     target: String,
@@ -98,11 +103,11 @@ func analyzePublicAPISymbolGraphs(
             continue
         }
 
-        let symbols = try graph.object("symbols")
+        let symbols = try graph.array("symbols").compactMap { $0 as? JSONObject }
         let relationships = (try? graph.array("relationships").compactMap { $0 as? JSONObject }) ?? []
         let relationshipsBySource = Dictionary(grouping: relationships) { $0["source"] as? String ?? "" }
 
-        for symbol in symbols.values.compactMap({ $0 as? JSONObject }) {
+        for symbol in symbols {
             let access = (symbol["accessLevel"] as? String) ?? "public"
             guard access == "public" || access == "open" else {
                 continue
@@ -147,7 +152,8 @@ func analyzePublicAPISymbolGraphs(
             var conformances: [String] = []
             for relationship in relationshipsBySource[identifier] ?? [] {
                 guard let relationshipKind = relationship["kind"] as? String,
-                      ["conformsTo", "inheritsFrom", "requirementOf"].contains(relationshipKind),
+                      ["conformsTo", "extensionTo", "inheritsFrom", "memberOf", "requirementOf"]
+                      .contains(relationshipKind),
                       let targetIdentifier = relationship["target"] as? String
                 else {
                     continue
@@ -286,20 +292,34 @@ private func moduleName(in preciseIdentifier: String) -> String? {
 
 func externalConsumerBoundaryReport(
     fixture: URL,
-    contract: CoreGuardContract
+    contract: CoreGuardContract,
+    developerDirectory: URL = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
 ) throws -> JSONObject {
-    let manifestURL = fixture.appendingPathComponent("Package.swift")
-    let manifest = try String(contentsOf: manifestURL, encoding: .utf8)
-    let products = try captures(
-        #"\.product\s*\(\s*name:\s*\"([^\"]+)\""#,
-        in: manifest
+    let result = try runCommand(
+        [
+            "xcrun",
+            "swift",
+            "package",
+            "--package-path",
+            fixture.path,
+            "dump-package"
+        ],
+        currentDirectory: fixture,
+        environment: developerEnvironment(developerDirectory),
+        timeout: 60,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "external consumer manifest"
     )
-    let remotePackages = try captures(#"\.package\s*\(\s*url:\s*\"([^\"]+)\""#, in: manifest)
-    let expectedProducts = [contract.fixtureProduct]
-    let unexpectedProducts = Array(Set(products).subtracting(expectedProducts)).sorted()
-    let missingProducts = Array(Set(expectedProducts).subtracting(products)).sorted()
+    guard result.returnCode == 0,
+          let data = result.stdout.data(using: .utf8),
+          let description = try JSONSerialization.jsonObject(with: data) as? JSONObject
+    else {
+        throw AcceptanceFailure.unknown(
+            "cannot inspect external consumer manifest:\n\(commandFailureSummary(result))"
+        )
+    }
 
-    let allowedImports = Set(contract.fixtureAllowedImports)
     let expression = try NSRegularExpression(pattern: swiftImportDeclarationPattern)
     var imports: Set<String> = []
     let sourceRoot = fixture.appendingPathComponent("Sources")
@@ -314,23 +334,104 @@ func externalConsumerBoundaryReport(
             }
         }
     }
+    return try analyzeExternalConsumerPackage(description, imports: imports, contract: contract)
+}
+
+func analyzeExternalConsumerPackage(
+    _ description: JSONObject,
+    imports: Set<String>,
+    contract: CoreGuardContract
+) throws -> JSONObject {
+    let packageDependencies = try description.array("dependencies").compactMap { $0 as? JSONObject }
+    var packageDescriptors: [JSONObject] = []
+    for dependency in packageDependencies {
+        for kind in dependency.keys.sorted() {
+            guard let items = dependency[kind] as? [Any] else {
+                continue
+            }
+
+            for value in items {
+                guard let item = value as? JSONObject else {
+                    continue
+                }
+
+                packageDescriptors.append([
+                    "kind": kind,
+                    "identity": item["identity"] as? String ?? "unknown"
+                ])
+            }
+        }
+    }
+    let allowedPackageDependencies = packageDescriptors.filter {
+        $0["kind"] as? String == "fileSystem" && $0["identity"] as? String == "swama"
+    }
+    let unexpectedPackageDependencies = packageDescriptors.filter {
+        !($0["kind"] as? String == "fileSystem" && $0["identity"] as? String == "swama")
+    }
+
+    let targets = try description.array("targets").compactMap { $0 as? JSONObject }
+    var targetDependencies: [JSONObject] = []
+    for target in targets {
+        let targetName = target["name"] as? String ?? "unknown"
+        for value in (target["dependencies"] as? [Any]) ?? [] {
+            guard let dependency = value as? JSONObject else {
+                continue
+            }
+
+            for kind in dependency.keys.sorted() {
+                guard let parts = dependency[kind] as? [Any] else {
+                    continue
+                }
+
+                targetDependencies.append([
+                    "target": targetName,
+                    "kind": kind,
+                    "name": parts.first as? String ?? "unknown",
+                    "package": parts.count > 1 ? parts[1] as? String ?? "" : ""
+                ])
+            }
+        }
+    }
+    let allowedTargetDependencies = targetDependencies.filter {
+        $0["kind"] as? String == "product"
+            && $0["name"] as? String == contract.fixtureProduct
+            && $0["package"] as? String == "swama"
+    }
+    let unexpectedTargetDependencies = targetDependencies.filter {
+        !($0["kind"] as? String == "product"
+            && $0["name"] as? String == contract.fixtureProduct
+            && $0["package"] as? String == "swama"
+        )
+    }
+    let products = targetDependencies.compactMap { item -> String? in
+        item["kind"] as? String == "product" ? item["name"] as? String : nil
+    }
+    let unexpectedProducts = Array(Set(products).subtracting([contract.fixtureProduct])).sorted()
+    let missingProducts = allowedTargetDependencies.isEmpty ? [contract.fixtureProduct] : []
+    let allowedImports = Set(contract.fixtureAllowedImports)
     let unexpectedImports = Array(imports.subtracting(allowedImports)).sorted()
-    let missingImports = allowedImports.contains(contract.fixtureProduct) && !imports.contains(contract.fixtureProduct)
-        ? [contract.fixtureProduct]
-        : []
-    let passed = remotePackages.isEmpty
-        && unexpectedProducts.isEmpty
-        && missingProducts.isEmpty
+    let missingImports = !imports.contains(contract.fixtureProduct) ? [contract.fixtureProduct] : []
+    let passed = targets.count == 1
+        && packageDescriptors.count == 1
+        && allowedPackageDependencies.count == 1
+        && unexpectedPackageDependencies.isEmpty
+        && targetDependencies.count == 1
+        && allowedTargetDependencies.count == 1
+        && unexpectedTargetDependencies.isEmpty
         && unexpectedImports.isEmpty
         && missingImports.isEmpty
 
     return [
         "status": passed ? "ready" : "unmet",
-        "expected_products": expectedProducts,
+        "target_count": targets.count,
+        "package_dependencies": packageDescriptors,
+        "unexpected_package_dependencies": unexpectedPackageDependencies,
+        "target_dependencies": targetDependencies,
+        "unexpected_target_dependencies": unexpectedTargetDependencies,
+        "expected_products": [contract.fixtureProduct],
         "actual_products": products.sorted(),
         "unexpected_products": unexpectedProducts,
         "missing_products": missingProducts,
-        "remote_packages": remotePackages.sorted(),
         "actual_imports": imports.sorted(),
         "unexpected_imports": unexpectedImports,
         "missing_imports": missingImports,
@@ -344,98 +445,420 @@ func coreTargetDependencyReport(
     developerDirectory: URL,
     contract: CoreGuardContract
 ) throws -> JSONObject {
-    let result = try runCommand(
+    let environment = try developerEnvironment(developerDirectory)
+    let graphResult = try runCommand(
         [
             "xcrun",
             "swift",
             "package",
             "--package-path",
             paths.package.path,
-            "describe",
-            "--type",
+            "--force-resolved-versions",
+            "show-dependencies",
+            "--format",
             "json"
         ],
         currentDirectory: paths.repository,
-        environment: developerEnvironment(developerDirectory),
+        environment: environment,
         timeout: 60,
         sampleMemory: false,
         timeoutFailureKind: .unknown,
-        timeoutContext: "SwamaCore dependency graph"
+        timeoutContext: "SwamaCore resolved package graph"
     )
-    guard result.returnCode == 0,
-          let data = result.stdout.data(using: .utf8),
-          let description = try JSONSerialization.jsonObject(with: data) as? JSONObject
+    guard graphResult.returnCode == 0,
+          let data = graphResult.stdout.data(using: .utf8),
+          let resolvedGraph = try JSONSerialization.jsonObject(with: data) as? JSONObject
     else {
         throw AcceptanceFailure.unknown(
-            "cannot inspect SwamaCore dependency graph:\n\(commandFailureSummary(result))"
+            "cannot inspect SwamaCore resolved package graph:\n\(commandFailureSummary(graphResult))"
         )
     }
 
-    return try analyzeTargetDependencyGraph(
-        description,
+    let descriptors = try resolvedPackageDescriptors(resolvedGraph)
+    var manifests: [String: JSONObject] = [:]
+    for descriptor in descriptors.sorted(by: { $0.key < $1.key }) {
+        let manifestResult = try runCommand(
+            [
+                "xcrun",
+                "swift",
+                "package",
+                "--package-path",
+                descriptor.value.path,
+                "dump-package"
+            ],
+            currentDirectory: URL(fileURLWithPath: descriptor.value.path),
+            environment: environment,
+            timeout: 60,
+            sampleMemory: false,
+            timeoutFailureKind: .unknown,
+            timeoutContext: "resolved package manifest \(descriptor.key)"
+        )
+        guard manifestResult.returnCode == 0,
+              let manifestData = manifestResult.stdout.data(using: .utf8),
+              let manifest = try JSONSerialization.jsonObject(with: manifestData) as? JSONObject
+        else {
+            throw AcceptanceFailure.unknown(
+                "cannot inspect resolved package manifest \(descriptor.key):\n"
+                    + commandFailureSummary(manifestResult)
+            )
+        }
+
+        manifests[descriptor.key] = manifest
+    }
+
+    return try analyzeResolvedTargetDependencyGraph(
+        rootIdentity: resolvedGraph.string("identity"),
+        manifests: manifests,
+        packageAliases: descriptors.mapValues(\.directPackageAliases),
+        activeTraits: descriptors.mapValues(\.activeTraits),
         target: target,
         forbiddenProducts: Set(contract.forbiddenTransitiveProducts)
     )
 }
 
-func analyzeTargetDependencyGraph(
-    _ description: JSONObject,
+func analyzeResolvedTargetDependencyGraph(
+    rootIdentity: String,
+    manifests: [String: JSONObject],
+    packageAliases: [String: [String: String]]? = nil,
+    activeTraits: [String: Set<String>]? = nil,
     target: String,
     forbiddenProducts: Set<String>
 ) throws -> JSONObject {
-    let targetObjects = try description.array("targets").compactMap { $0 as? JSONObject }
-    let targetsByName = Dictionary(uniqueKeysWithValues: targetObjects.compactMap { item -> (String, JSONObject)? in
-        guard let name = item["name"] as? String else {
-            return nil
-        }
-
-        return (name, item)
-    })
-    guard targetsByName[target] != nil else {
-        return [
-            "status": "unmet",
-            "target": target,
-            "target_dependencies": [],
-            "product_dependencies": [],
-            "forbidden_products": [],
-            "passed": false
-        ]
+    guard manifests[rootIdentity] != nil else {
+        throw AcceptanceFailure.unknown("resolved package graph is missing root manifest: \(rootIdentity)")
     }
 
-    var queue = [target]
-    var visited: Set<String> = []
-    var products: Set<String> = []
-    while let name = queue.popLast() {
-        guard visited.insert(name).inserted, let item = targetsByName[name] else {
+    var productsByPackage: [String: [String: PackageProduct]] = [:]
+    var targetsByPackage: [String: [String: JSONObject]] = [:]
+    var aliasesByPackage = packageAliases ?? [:]
+    for (identity, manifest) in manifests {
+        productsByPackage[identity] = try packageProducts(manifest)
+        targetsByPackage[identity] = try packageTargets(manifest)
+        if aliasesByPackage[identity] == nil {
+            let identities = try packageDependencyIdentities(manifest)
+            aliasesByPackage[identity] = Dictionary(uniqueKeysWithValues: identities.map { ($0, $0) })
+        }
+    }
+
+    let rootProducts = productsByPackage[rootIdentity] ?? [:]
+    let rootTargets = targetsByPackage[rootIdentity] ?? [:]
+    let libraryProductTargets = rootProducts[target]?.targets ?? []
+    let libraryProductPresent = rootProducts[target]?.isLibrary == true
+        && libraryProductTargets == [target]
+        && rootTargets[target] != nil
+
+    var queue = [ResolvedTarget(package: rootIdentity, name: target)]
+    var visitedTargets: Set<ResolvedTarget> = []
+    var visitedProducts: Set<ResolvedProduct> = []
+    var unresolved: Set<String> = []
+    while let node = queue.popLast() {
+        guard visitedTargets.insert(node).inserted else {
+            continue
+        }
+        guard manifests[node.package] != nil else {
+            unresolved.insert("missing package manifest \(node.package)")
             continue
         }
 
-        let targetDependencies = (item["target_dependencies"] as? [String]) ?? []
-        let productDependencies = (item["product_dependencies"] as? [String]) ?? []
-        queue.append(contentsOf: targetDependencies)
-        products.formUnion(productDependencies)
+        let targets = targetsByPackage[node.package] ?? [:]
+        guard let targetDescription = targets[node.name] else {
+            unresolved.insert("missing target \(node.package):\(node.name)")
+            continue
+        }
+
+        let aliases = aliasesByPackage[node.package] ?? [:]
+        let traits = activeTraits?[node.package] ?? ["default"]
+
+        for dependency in try targetDependencyDescriptors(targetDescription) {
+            guard dependency.isActive(platform: "macos", traits: traits) else {
+                continue
+            }
+
+            switch dependency.kind {
+            case "target":
+                queue.append(ResolvedTarget(package: node.package, name: dependency.name))
+
+            case "product":
+                resolveProductDependency(
+                    name: dependency.name,
+                    requestedPackage: dependency.package,
+                    sourcePackage: node.package,
+                    packageAliases: aliases,
+                    productsByPackage: productsByPackage,
+                    queue: &queue,
+                    visitedProducts: &visitedProducts,
+                    unresolved: &unresolved
+                )
+
+            case "byName":
+                if targets[dependency.name] != nil {
+                    queue.append(ResolvedTarget(package: node.package, name: dependency.name))
+                }
+                else {
+                    resolveProductDependency(
+                        name: dependency.name,
+                        requestedPackage: nil,
+                        sourcePackage: node.package,
+                        packageAliases: aliases,
+                        productsByPackage: productsByPackage,
+                        queue: &queue,
+                        visitedProducts: &visitedProducts,
+                        unresolved: &unresolved
+                    )
+                }
+
+            default:
+                unresolved.insert(
+                    "unsupported dependency \(node.package):\(node.name) \(dependency.kind):\(dependency.name)"
+                )
+            }
+        }
     }
-    let forbidden = products.intersection(forbiddenProducts).sorted()
+
+    let forbidden = Set(visitedProducts.map(\.name)).intersection(forbiddenProducts).sorted()
+    let passed = libraryProductPresent && unresolved.isEmpty && forbidden.isEmpty
+    var manifestHashes: JSONObject = [:]
+    var resolvedTraits: JSONObject = [:]
+    for identity in Set(visitedTargets.map(\.package)).sorted() {
+        if let manifest = manifests[identity] {
+            manifestHashes[identity] = try sha256(compactJSONData(manifest))
+        }
+        resolvedTraits[identity] = (activeTraits?[identity] ?? ["default"]).sorted()
+    }
     return [
-        "status": forbidden.isEmpty ? "ready" : "violated",
+        "status": passed ? "ready" : (libraryProductPresent && unresolved.isEmpty ? "violated" : "unmet"),
         "target": target,
-        "target_dependencies": visited.sorted(),
-        "product_dependencies": products.sorted(),
+        "root_package": rootIdentity,
+        "library_product_present": libraryProductPresent,
+        "library_product_targets": libraryProductTargets,
+        "target_dependencies": visitedTargets.map(\.description).sorted(),
+        "product_dependencies": visitedProducts.map(\.description).sorted(),
         "forbidden_products": forbidden,
-        "passed": forbidden.isEmpty
+        "unresolved_dependencies": unresolved.sorted(),
+        "manifest_sha256": manifestHashes,
+        "resolved_package_traits": resolvedTraits,
+        "passed": passed
     ]
 }
 
-private func captures(_ pattern: String, in text: String) throws -> [String] {
-    let expression = try NSRegularExpression(pattern: pattern)
-    let range = NSRange(text.startIndex ..< text.endIndex, in: text)
-    return expression.matches(in: text, range: range).compactMap { match in
-        guard let capture = Range(match.range(at: 1), in: text) else {
-            return nil
+// MARK: - ResolvedPackageDescriptor
+
+private struct ResolvedPackageDescriptor {
+    let path: String
+    let directPackageAliases: [String: String]
+    let activeTraits: Set<String>
+}
+
+// MARK: - ResolvedTarget
+
+private struct ResolvedTarget: Hashable {
+    let package: String
+    let name: String
+
+    var description: String { "\(package):\(name)" }
+}
+
+// MARK: - ResolvedProduct
+
+private struct ResolvedProduct: Hashable {
+    let package: String
+    let name: String
+
+    var description: String { "\(package):\(name)" }
+}
+
+// MARK: - PackageProduct
+
+private struct PackageProduct {
+    let targets: [String]
+    let isLibrary: Bool
+}
+
+// MARK: - TargetDependencyDescriptor
+
+private struct TargetDependencyDescriptor {
+    let kind: String
+    let name: String
+    let package: String?
+    let condition: JSONObject?
+
+    func isActive(platform: String, traits: Set<String>) -> Bool {
+        guard let condition else {
+            return true
         }
 
-        return String(text[capture])
+        let platforms = Set((condition["platformNames"] as? [String]) ?? [])
+        let requiredTraits = Set((condition["traits"] as? [String]) ?? [])
+        return (platforms.isEmpty || platforms.contains(platform))
+            && requiredTraits.isSubset(of: traits)
     }
+}
+
+private func resolvedPackageDescriptors(_ root: JSONObject) throws -> [String: ResolvedPackageDescriptor] {
+    var result: [String: ResolvedPackageDescriptor] = [:]
+    var queue = [root]
+    while let node = queue.popLast() {
+        let identity = try node.string("identity")
+        let path = try node.string("path")
+        let dependencies = try node.array("dependencies").compactMap { $0 as? JSONObject }
+        var aliases: [String: String] = [:]
+        for dependency in dependencies {
+            let dependencyIdentity = try dependency.string("identity")
+            let dependencyName = try dependency.string("name")
+            for alias in [dependencyIdentity, dependencyName] {
+                if let existing = aliases[alias], existing != dependencyIdentity {
+                    throw AcceptanceFailure.unknown(
+                        "resolved package alias is ambiguous: \(identity):\(alias)"
+                    )
+                }
+                aliases[alias] = dependencyIdentity
+            }
+        }
+        let descriptor = ResolvedPackageDescriptor(
+            path: path,
+            directPackageAliases: aliases,
+            activeTraits: Set((node["traits"] as? [String]) ?? [])
+        )
+        if let existing = result[identity],
+           existing.path != descriptor.path
+           || existing.directPackageAliases != descriptor.directPackageAliases
+           || existing.activeTraits != descriptor.activeTraits
+        {
+            throw AcceptanceFailure.unknown(
+                "resolved package identity has inconsistent descriptors: \(identity)"
+            )
+        }
+        result[identity] = descriptor
+        queue.append(contentsOf: dependencies)
+    }
+    return result
+}
+
+private func packageProducts(_ manifest: JSONObject) throws -> [String: PackageProduct] {
+    var result: [String: PackageProduct] = [:]
+    for value in try manifest.array("products") {
+        guard let product = value as? JSONObject else {
+            throw AcceptanceFailure.unknown("resolved package product is not an object")
+        }
+
+        let name = try product.string("name")
+        guard result[name] == nil else {
+            throw AcceptanceFailure.unknown("resolved package has duplicate product: \(name)")
+        }
+
+        result[name] = try PackageProduct(
+            targets: product.array("targets").compactMap { $0 as? String },
+            isLibrary: (try? product.object("type").array("library")) != nil
+        )
+    }
+    return result
+}
+
+private func packageTargets(_ manifest: JSONObject) throws -> [String: JSONObject] {
+    var result: [String: JSONObject] = [:]
+    for value in try manifest.array("targets") {
+        guard let target = value as? JSONObject else {
+            throw AcceptanceFailure.unknown("resolved package target is not an object")
+        }
+
+        let name = try target.string("name")
+        guard result[name] == nil else {
+            throw AcceptanceFailure.unknown("resolved package has duplicate target: \(name)")
+        }
+
+        result[name] = target
+    }
+    return result
+}
+
+private func packageDependencyIdentities(_ manifest: JSONObject) throws -> Set<String> {
+    var result: Set<String> = []
+    for value in try manifest.array("dependencies") {
+        guard let dependency = value as? JSONObject else {
+            throw AcceptanceFailure.unknown("resolved package dependency is not an object")
+        }
+
+        for descriptors in dependency.values {
+            guard let descriptors = descriptors as? [Any] else {
+                throw AcceptanceFailure.unknown("resolved package dependency payload is not an array")
+            }
+
+            for value in descriptors {
+                guard let descriptor = value as? JSONObject else {
+                    throw AcceptanceFailure.unknown("resolved package dependency descriptor is not an object")
+                }
+
+                try result.insert(descriptor.string("identity"))
+            }
+        }
+    }
+    return result
+}
+
+private func targetDependencyDescriptors(_ target: JSONObject) throws -> [TargetDependencyDescriptor] {
+    var result: [TargetDependencyDescriptor] = []
+    for value in try target.array("dependencies") {
+        guard let dependency = value as? JSONObject, dependency.count == 1,
+              let kind = dependency.keys.first,
+              let parts = dependency[kind] as? [Any],
+              let name = parts.first as? String
+        else {
+            throw AcceptanceFailure.unknown("resolved target dependency has an unsupported shape")
+        }
+
+        result.append(TargetDependencyDescriptor(
+            kind: kind,
+            name: name,
+            package: kind == "product" && parts.count > 1 ? parts[1] as? String : nil,
+            condition: dependencyCondition(kind: kind, parts: parts)
+        ))
+    }
+    return result
+}
+
+private func dependencyCondition(kind: String, parts: [Any]) -> JSONObject? {
+    let index = kind == "product" ? 3 : 1
+    guard parts.indices.contains(index) else {
+        return nil
+    }
+
+    return parts[index] as? JSONObject
+}
+
+private func resolveProductDependency(
+    name: String,
+    requestedPackage: String?,
+    sourcePackage: String,
+    packageAliases: [String: String],
+    productsByPackage: [String: [String: PackageProduct]],
+    queue: inout [ResolvedTarget],
+    visitedProducts: inout Set<ResolvedProduct>,
+    unresolved: inout Set<String>
+) {
+    let candidates: [String] =
+        if let requestedPackage, !requestedPackage.isEmpty {
+            packageAliases[requestedPackage].map { [$0] } ?? []
+        }
+        else {
+            Set(packageAliases.values)
+                .filter { identity in
+                    productsByPackage[identity]?[name] != nil
+                }
+                .sorted()
+        }
+    guard candidates.count == 1,
+          let package = candidates.first,
+          let product = productsByPackage[package]?[name],
+          !product.targets.isEmpty
+    else {
+        if requestedPackage == nil || packageAliases[requestedPackage ?? ""] != nil {
+            unresolved.insert("unresolved product \(sourcePackage):\(name)")
+        }
+        return
+    }
+
+    visitedProducts.insert(ResolvedProduct(package: package, name: name))
+    queue.append(contentsOf: product.targets.map { ResolvedTarget(package: package, name: $0) })
 }
 
 // MARK: - Canonical three-route parity records
@@ -498,9 +921,8 @@ func validateParityRecord(_ record: JSONObject, contract: ParityContract) throws
             guard try !event.string("name").isEmpty else {
                 throw AcceptanceFailure.unknown("tool_call event name is empty")
             }
-            guard event["arguments"] != nil else {
-                throw AcceptanceFailure.unknown("tool_call event arguments are missing")
-            }
+
+            _ = try event.object("arguments")
 
         default:
             throw AcceptanceFailure.unknown("parity event type is not implemented: \(type)")
@@ -550,9 +972,11 @@ private func validateResponseTerminal(_ terminal: JSONObject, contract: ParityCo
         }
 
         try requireExactKeys(call, expected: ["name", "arguments"], context: "terminal tool call")
-        guard try !call.string("name").isEmpty, call["arguments"] != nil else {
+        guard try !call.string("name").isEmpty else {
             throw AcceptanceFailure.unknown("parity terminal tool call is incomplete")
         }
+
+        _ = try call.object("arguments")
     }
     let usage = try terminal.object("usage")
     try requireExactKeys(

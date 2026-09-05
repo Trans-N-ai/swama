@@ -349,7 +349,7 @@ struct AcceptanceTests {
         let graph: JSONObject = [
             "module": ["name": "SwamaCore"],
             "symbols": [
-                "model": symbolGraphSymbol(
+                symbolGraphSymbol(
                     precise: "s:9SwamaCore6EngineC5model11MLXLMCommon14ModelContainerCvp",
                     path: ["Engine", "model"],
                     declaration: [
@@ -357,34 +357,47 @@ struct AcceptanceTests {
                         typeFragment("ModelContainer", precise: "s:11MLXLMCommon14ModelContainerC")
                     ]
                 ),
-                "cache": symbolGraphSymbol(
+                symbolGraphSymbol(
                     precise: "s:9SwamaCore6EngineC5cacheSay11MLXLMCommon7KVCache_pGvp",
                     path: ["Engine", "cache"],
                     declaration: [
                         typeFragment("KVCache", precise: "s:11MLXLMCommon7KVCacheP")
                     ]
                 ),
-                "safe": symbolGraphSymbol(
+                symbolGraphSymbol(
                     precise: "s:9SwamaCore7PayloadV4data10Foundation4DataVvp",
                     path: ["Payload", "data"],
                     declaration: [
                         typeFragment("Data", precise: "s:10Foundation4DataV")
                     ]
                 ),
-                "payload": symbolGraphSymbol(
+                symbolGraphSymbol(
                     precise: "s:9SwamaCore7PayloadV",
                     path: ["Payload"],
                     declaration: [
                         typeFragment("Payload", precise: "s:9SwamaCore7PayloadV")
                     ]
+                ),
+                symbolGraphSymbol(
+                    precise: "s:9SwamaCore18externalMemberTestyyF",
+                    path: ["External", "member"],
+                    declaration: [["kind": "identifier", "spelling": "member"]]
                 )
             ],
-            "relationships": [[
-                "kind": "conformsTo",
-                "source": "s:9SwamaCore7PayloadV",
-                "target": "s:12ForeignTypes14ForeignProtocolP",
-                "targetFallback": "ForeignTypes.ForeignProtocol"
-            ]]
+            "relationships": [
+                [
+                    "kind": "conformsTo",
+                    "source": "s:9SwamaCore7PayloadV",
+                    "target": "s:12ForeignTypes14ForeignProtocolP",
+                    "targetFallback": "ForeignTypes.ForeignProtocol"
+                ],
+                [
+                    "kind": "memberOf",
+                    "source": "s:9SwamaCore18externalMemberTestyyF",
+                    "target": "s:8Upstream8ExternalV",
+                    "targetFallback": "Upstream.External"
+                ]
+            ]
         ]
 
         let report = try analyzePublicAPISymbolGraphs(
@@ -395,13 +408,24 @@ struct AcceptanceTests {
         #expect(report["passed"] as? Bool == false)
         let violations = (report["violations"] as? [JSONObject]) ?? []
         let modules = Set(violations.compactMap { $0["module"] as? String })
-        #expect(modules == ["ForeignTypes", "MLXLMCommon"])
+        #expect(modules == ["ForeignTypes", "MLXLMCommon", "Upstream"])
         #expect(Set(violations.compactMap { ($0["path"] as? [String])?.joined(separator: ".") }) == [
             "Engine.cache",
             "Engine.model",
+            "External.member",
             "Payload"
         ])
         #expect((report["manifest_sha256"] as? String)?.count == 64)
+    }
+
+    @Test func compilerSymbolGraphIncludesExtensionBlocks() {
+        let command = symbolGraphCommand(
+            package: URL(fileURLWithPath: "/package"),
+            scratch: URL(fileURLWithPath: "/scratch")
+        )
+        #expect(command.contains("--emit-extension-block-symbols"))
+        #expect(command.contains("--skip-synthesized-members"))
+        #expect(command.contains("public"))
     }
 
     @Test func coreBoundaryReportsCompilerOracleAsUnmetWhenTargetIsAbsent() throws {
@@ -433,23 +457,82 @@ struct AcceptanceTests {
         #expect(try report.array("unexpected_imports").contains { ($0 as? String) == "MLXLMCommon" })
     }
 
-    @Test func targetDependencyGraphRejectsTransitiveAudioProducts() throws {
+    @Test func consumerBoundaryRejectsExtraPathPackagesAndByNameTargets() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract).coreGuards
         let description: JSONObject = [
-            "targets": [
-                [
-                    "name": "SwamaCore",
-                    "target_dependencies": ["Implementation"],
-                    "product_dependencies": ["FoundationShim"]
-                ],
-                [
-                    "name": "Implementation",
-                    "target_dependencies": [],
-                    "product_dependencies": ["MLXAudioCore"]
+            "dependencies": [
+                ["fileSystem": [["identity": "swama"]]],
+                ["fileSystem": [["identity": "helper"]]]
+            ],
+            "targets": [[
+                "name": "SwamaAcceptanceProbe",
+                "dependencies": [
+                    ["product": ["SwamaCore", "swama", NSNull(), NSNull()]],
+                    ["byName": ["Helper", NSNull()]]
                 ]
+            ]]
+        ]
+
+        let report = try analyzeExternalConsumerPackage(
+            description,
+            imports: ["Foundation", "SwamaCore"],
+            contract: contract
+        )
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.array("unexpected_package_dependencies").contains { value in
+            (value as? JSONObject)?["identity"] as? String == "helper"
+        })
+        #expect(try report.array("unexpected_target_dependencies").contains { value in
+            (value as? JSONObject)?["kind"] as? String == "byName"
+        })
+    }
+
+    @Test func targetDependencyGraphRejectsTransitiveAudioProducts() throws {
+        let manifests: [String: JSONObject] = [
+            "swama": [
+                "dependencies": [["fileSystem": [["identity": "wrapper"]]]],
+                "products": [[
+                    "name": "SwamaCore",
+                    "targets": ["SwamaCore"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [
+                    [
+                        "name": "SwamaCore",
+                        "dependencies": [["target": ["Implementation", NSNull()]]]
+                    ],
+                    [
+                        "name": "Implementation",
+                        "dependencies": [["product": ["Wrapper", "wrapper", NSNull(), NSNull()]]]
+                    ]
+                ]
+            ],
+            "wrapper": [
+                "dependencies": [["fileSystem": [["identity": "audio"]]]],
+                "products": [[
+                    "name": "Wrapper",
+                    "targets": ["Wrapper"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [[
+                    "name": "Wrapper",
+                    "dependencies": [["product": ["MLXAudioCore", "audio", NSNull(), NSNull()]]]
+                ]]
+            ],
+            "audio": [
+                "dependencies": [],
+                "products": [[
+                    "name": "MLXAudioCore",
+                    "targets": ["MLXAudioCore"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [["name": "MLXAudioCore", "dependencies": []]]
             ]
         ]
-        let report = try analyzeTargetDependencyGraph(
-            description,
+        let report = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: manifests,
             target: "SwamaCore",
             forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
         )
@@ -457,9 +540,81 @@ struct AcceptanceTests {
         #expect(try report.boolean("passed") == false)
         #expect(try report.array("forbidden_products") as? [String] == ["MLXAudioCore"])
         #expect(try Set(report.array("target_dependencies").compactMap { $0 as? String }) == [
-            "Implementation",
-            "SwamaCore"
+            "audio:MLXAudioCore",
+            "swama:Implementation",
+            "swama:SwamaCore",
+            "wrapper:Wrapper"
         ])
+        #expect(try Set(report.array("product_dependencies").compactMap { $0 as? String }) == [
+            "audio:MLXAudioCore",
+            "wrapper:Wrapper"
+        ])
+        #expect(try report.boolean("library_product_present"))
+        #expect(try report.array("unresolved_dependencies").isEmpty)
+    }
+
+    @Test func resolvedTargetDependencyOracleReadsTheRealSwiftPMPackageGraph() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract).coreGuards
+        let report = try coreTargetDependencyReport(
+            target: "SwamaKit",
+            paths: paths,
+            developerDirectory: URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer"),
+            contract: contract
+        )
+
+        #expect(try report.boolean("passed") == false)
+        #expect(try Set(report.array("forbidden_products").compactMap { $0 as? String }) == [
+            "MLXAudioCore",
+            "MLXAudioSTT",
+            "MLXAudioTTS"
+        ])
+        #expect(try report.array("unresolved_dependencies").isEmpty)
+        #expect(try report.object("manifest_sha256").keys.contains("mlx-audio-swift"))
+        #expect(try report.object("resolved_package_traits").array("swama") as? [String] == ["default"])
+    }
+
+    @Test func targetDependencyGraphRejectsAMissingLibraryProduct() throws {
+        let missingProduct: [String: JSONObject] = [
+            "swama": [
+                "dependencies": [],
+                "products": [],
+                "targets": [["name": "SwamaCore", "dependencies": []]]
+            ]
+        ]
+        let missingReport = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: missingProduct,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+
+        #expect(try missingReport.boolean("passed") == false)
+        #expect(try missingReport.boolean("library_product_present") == false)
+        #expect(try missingReport.string("status") == "unmet")
+        #expect(try missingReport.array("forbidden_products").isEmpty)
+
+        let miswiredProduct: [String: JSONObject] = [
+            "swama": [
+                "dependencies": [],
+                "products": [[
+                    "name": "SwamaCore",
+                    "targets": ["Implementation"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [["name": "SwamaCore", "dependencies": []]]
+            ]
+        ]
+        let miswiredReport = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: miswiredProduct,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+
+        #expect(try miswiredReport.boolean("passed") == false)
+        #expect(try miswiredReport.boolean("library_product_present") == false)
+        #expect(try miswiredReport.array("library_product_targets") as? [String] == ["Implementation"])
     }
 
     @Test func inlinableAndUsableFromInlineCannotOpenUncheckedReachability() throws {
@@ -511,6 +666,47 @@ struct AcceptanceTests {
         unknownEvent["events"] = [["sequence": 0, "type": "mystery"]]
         #expect(throws: AcceptanceFailure.self) {
             _ = try validateParityRecord(unknownEvent, contract: contract)
+        }
+
+        var validToolCalls = valid
+        validToolCalls["events"] = [[
+            "sequence": 0,
+            "type": "tool_call",
+            "name": "lookup",
+            "arguments": ["query": "hello"]
+        ]]
+        validToolCalls["terminal"] = [
+            "kind": "response",
+            "output": "",
+            "tool_calls": [["name": "lookup", "arguments": ["query": "hello"]]],
+            "finish_reason": "tool_call",
+            "usage": ["prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2]
+        ]
+        #expect(throws: Never.self) {
+            _ = try validateParityRecord(validToolCalls, contract: contract)
+        }
+
+        var nullEventArguments = validToolCalls
+        nullEventArguments["events"] = [[
+            "sequence": 0,
+            "type": "tool_call",
+            "name": "lookup",
+            "arguments": NSNull()
+        ]]
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try validateParityRecord(nullEventArguments, contract: contract)
+        }
+
+        var scalarTerminalArguments = validToolCalls
+        scalarTerminalArguments["terminal"] = [
+            "kind": "response",
+            "output": "",
+            "tool_calls": [["name": "lookup", "arguments": 42]],
+            "finish_reason": "tool_call",
+            "usage": ["prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2]
+        ]
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try validateParityRecord(scalarTerminalArguments, contract: contract)
         }
     }
 

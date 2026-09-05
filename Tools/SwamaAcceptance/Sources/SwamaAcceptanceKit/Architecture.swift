@@ -45,7 +45,8 @@ func architectureReport(
     if let coreGuards {
         report["external_consumer_boundary"] = try externalConsumerBoundaryReport(
             fixture: paths.fixture,
-            contract: coreGuards
+            contract: coreGuards,
+            developerDirectory: developerDirectory
         )
         report["semantic_parity_schema"] = paritySchemaReport(coreGuards.parity)
     }

@@ -100,10 +100,11 @@ stage may be red while an earlier migration stage is green:
 - `core-boundary` requires the `SwamaCore` product/target. It invokes SwiftPM's
   compiler symbol-graph dump and rejects every public declaration or
   conformance that references a module outside Swift, Foundation, and
-  SwamaCore. It also walks the SwiftPM target dependency graph and rejects a
-  transitive MLX Audio product. `@inlinable` and `@usableFromInline` are
-  forbidden in the stable target so unchecked implementation reachability
-  cannot escape the compiler-derived declaration boundary.
+  SwamaCore. It also walks the resolved SwiftPM product/target graph across
+  package boundaries and rejects a transitive MLX Audio product. `@inlinable`
+  and `@usableFromInline` are forbidden in the stable target so unchecked
+  implementation reachability cannot escape the compiler-derived declaration
+  boundary.
 - `consumer-boundary` additionally requires the external fixture to depend on
   and import only `SwamaCore`, with no remote/upstream package or product.
 
@@ -117,5 +118,7 @@ future Core/CLI/HTTP comparison. Each record has an exact route, contiguous
 ordered text/tool events, and exactly one terminal outcome: response,
 cancelled, or stable error code. Unknown keys, routes, event types, terminal
 kinds, finish reasons, malformed tool calls, and inconsistent usage totals are
-invalid evidence (`UNKNOWN`), not a passing comparison. Runtime production of
-all three routes remains explicitly unmet until the consumer adapter PRs land.
+invalid evidence (`UNKNOWN`), not a passing comparison. Tool-call `arguments`
+are canonical JSON objects in both streamed events and terminal responses.
+Runtime production of all three routes remains explicitly unmet until the
+consumer adapter PRs land.
