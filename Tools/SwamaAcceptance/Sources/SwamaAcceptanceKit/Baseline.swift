@@ -13,8 +13,10 @@ func runBaseline(
     environment["SWAMA_PROMPT_CACHE"] = "0"
     let architecture = try architectureReport(
         contract: contract.architecture,
+        coreGuards: contract.coreGuards,
         stage: architectureStage,
-        paths: paths
+        paths: paths,
+        developerDirectory: developerDirectory
     )
     guard architecture["passed"] as? Bool == true else {
         throw AcceptanceFailure.failed("architecture gate failed")

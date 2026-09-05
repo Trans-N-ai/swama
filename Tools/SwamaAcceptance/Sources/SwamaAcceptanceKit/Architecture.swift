@@ -22,12 +22,15 @@ func swiftImportedModule(in line: String, matching expression: NSRegularExpressi
 enum ArchitectureStage: String, Sendable {
     case legacyRatchet = "legacy-ratchet"
     case coreBoundary = "core-boundary"
+    case consumerBoundary = "consumer-boundary"
 }
 
 func architectureReport(
     contract: ArchitectureContract,
+    coreGuards: CoreGuardContract? = nil,
     stage: ArchitectureStage,
-    paths: WorkspacePaths
+    paths: WorkspacePaths,
+    developerDirectory: URL = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
 ) throws -> JSONObject {
     let packageManifest = try String(contentsOf: paths.package.appendingPathComponent("Package.swift"), encoding: .utf8)
     let swamaKit = paths.package.appendingPathComponent("Sources/SwamaKit")
@@ -39,6 +42,13 @@ func architectureReport(
         "legacy_forbidden_imports": legacyImports,
         "legacy_public_mlx_leaks": legacyLeaks
     ]
+    if let coreGuards {
+        report["external_consumer_boundary"] = try externalConsumerBoundaryReport(
+            fixture: paths.fixture,
+            contract: coreGuards
+        )
+        report["semantic_parity_schema"] = paritySchemaReport(coreGuards.parity)
+    }
 
     switch stage {
     case .legacyRatchet:
@@ -64,16 +74,55 @@ func architectureReport(
         report["removed_public_mlx_leaks"] = removedLeaks
         report["passed"] = newImports.isEmpty && newLeaks.isEmpty
 
-    case .coreBoundary:
+    case .consumerBoundary,
+         .coreBoundary:
         let coreRoot = paths.package.appendingPathComponent("Sources/\(contract.goalCoreTarget)")
         let coreImports = try imports(in: coreRoot, forbidden: forbidden, repository: paths.repository)
-        let coreLeaks = try publicMLXLeaks(in: coreRoot, repository: paths.repository)
         let targetPresent = packageManifest.contains("name: \"\(contract.goalCoreTarget)\"")
             && FileManager.default.fileExists(atPath: coreRoot.path)
         report["core_target_present"] = targetPresent
         report["core_forbidden_imports"] = coreImports
-        report["core_public_mlx_leaks"] = coreLeaks
-        report["passed"] = targetPresent && coreImports.isEmpty && coreLeaks.isEmpty
+        let compiler: JSONObject
+        let dependencies: JSONObject
+        if targetPresent, let coreGuards {
+            compiler = try compilerPublicAPIReport(
+                target: contract.goalCoreTarget,
+                paths: paths,
+                developerDirectory: developerDirectory,
+                contract: coreGuards
+            )
+            dependencies = try coreTargetDependencyReport(
+                target: contract.goalCoreTarget,
+                paths: paths,
+                developerDirectory: developerDirectory,
+                contract: coreGuards
+            )
+        }
+        else {
+            compiler = [
+                "status": "unmet",
+                "reason": "target \(contract.goalCoreTarget) is absent",
+                "passed": false
+            ]
+            dependencies = [
+                "status": "unmet",
+                "reason": "target \(contract.goalCoreTarget) is absent",
+                "passed": false
+            ]
+        }
+        report["compiler_public_api"] = compiler
+        report["core_target_dependencies"] = dependencies
+        let corePassed = targetPresent
+            && coreImports.isEmpty
+            && compiler["passed"] as? Bool == true
+            && dependencies["passed"] as? Bool == true
+        if stage == .consumerBoundary {
+            let consumerPassed = (report["external_consumer_boundary"] as? JSONObject)?["passed"] as? Bool == true
+            report["passed"] = corePassed && consumerPassed
+        }
+        else {
+            report["passed"] = corePassed
+        }
     }
     return report
 }

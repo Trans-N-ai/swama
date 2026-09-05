@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "build": {
     "product_timeout_seconds": 1200,
     "external_fixture_timeout_seconds": 1200,
@@ -99,5 +99,47 @@
       "SwamaServer",
       "SwamaAppSupport"
     ]
+  },
+  "core_guards": {
+    "schema_version": 1,
+    "compiler_timeout_seconds": 1200,
+    "allowed_public_modules": [
+      "Swift",
+      "Foundation",
+      "SwamaCore"
+    ],
+    "fixture_product": "SwamaCore",
+    "fixture_allowed_imports": [
+      "Foundation",
+      "SwamaCore"
+    ],
+    "forbidden_transitive_products": [
+      "MLXAudioCore",
+      "MLXAudioSTT",
+      "MLXAudioTTS"
+    ],
+    "parity": {
+      "schema_version": 1,
+      "required_routes": [
+        "core",
+        "cli",
+        "http"
+      ],
+      "event_types": [
+        "text_delta",
+        "tool_call"
+      ],
+      "terminal_kinds": [
+        "response",
+        "cancelled",
+        "error"
+      ],
+      "finish_reasons": [
+        "completed",
+        "length",
+        "tool_call",
+        "other"
+      ]
+    }
   }
 }

@@ -82,3 +82,40 @@ Reports contain a canonical JSON self-hash. This detects accidental edits and
 truncation; it is not authentication because anyone can edit and reseal a
 report. The baseline of record must therefore be generated and retained by an
 independent reviewer. An author-generated baseline cannot replace it.
+
+## Staged Core contract guards
+
+The architecture command has three intentionally separate stages. A later
+stage may be red while an earlier migration stage is green:
+
+```bash
+"$HARNESS" architecture --repo-root "$PWD" --stage legacy-ratchet
+"$HARNESS" architecture --repo-root "$PWD" --stage core-boundary
+"$HARNESS" architecture --repo-root "$PWD" --stage consumer-boundary
+```
+
+- `legacy-ratchet` prevents new shell-framework imports and new known public
+  MLX leaks in `SwamaKit`. It also reports the future consumer and parity goals
+  as explicitly unmet without failing the accepted legacy stage.
+- `core-boundary` requires the `SwamaCore` product/target. It invokes SwiftPM's
+  compiler symbol-graph dump and rejects every public declaration or
+  conformance that references a module outside Swift, Foundation, and
+  SwamaCore. It also walks the SwiftPM target dependency graph and rejects a
+  transitive MLX Audio product. `@inlinable` and `@usableFromInline` are
+  forbidden in the stable target so unchecked implementation reachability
+  cannot escape the compiler-derived declaration boundary.
+- `consumer-boundary` additionally requires the external fixture to depend on
+  and import only `SwamaCore`, with no remote/upstream package or product.
+
+Absence of `SwamaCore` is a structured `unmet` result, never an empty-symbol
+success. The compiler manifest records symbol kind, path, declaration
+fragments, conformances, referenced modules, violations, and a non-zero graph
+count so later API snapshots can be reviewed and compared.
+
+The contract also freezes a fail-closed semantic-parity record schema for the
+future Core/CLI/HTTP comparison. Each record has an exact route, contiguous
+ordered text/tool events, and exactly one terminal outcome: response,
+cancelled, or stable error code. Unknown keys, routes, event types, terminal
+kinds, finish reasons, malformed tool calls, and inconsistent usage totals are
+invalid evidence (`UNKNOWN`), not a passing comparison. Runtime production of
+all three routes remains explicitly unmet until the consumer adapter PRs land.

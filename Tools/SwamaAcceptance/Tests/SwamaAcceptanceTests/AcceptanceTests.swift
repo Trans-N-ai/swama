@@ -345,6 +345,175 @@ struct AcceptanceTests {
         #expect(swiftImportedModule(in: "let example = \"import NIO\"", matching: expression) == nil)
     }
 
+    @Test func compilerPublicAPIGateRejectsUpstreamTypesAndConformances() throws {
+        let graph: JSONObject = [
+            "module": ["name": "SwamaCore"],
+            "symbols": [
+                "model": symbolGraphSymbol(
+                    precise: "s:9SwamaCore6EngineC5model11MLXLMCommon14ModelContainerCvp",
+                    path: ["Engine", "model"],
+                    declaration: [
+                        typeFragment("Engine", precise: "s:9SwamaCore6EngineC"),
+                        typeFragment("ModelContainer", precise: "s:11MLXLMCommon14ModelContainerC")
+                    ]
+                ),
+                "cache": symbolGraphSymbol(
+                    precise: "s:9SwamaCore6EngineC5cacheSay11MLXLMCommon7KVCache_pGvp",
+                    path: ["Engine", "cache"],
+                    declaration: [
+                        typeFragment("KVCache", precise: "s:11MLXLMCommon7KVCacheP")
+                    ]
+                ),
+                "safe": symbolGraphSymbol(
+                    precise: "s:9SwamaCore7PayloadV4data10Foundation4DataVvp",
+                    path: ["Payload", "data"],
+                    declaration: [
+                        typeFragment("Data", precise: "s:10Foundation4DataV")
+                    ]
+                ),
+                "payload": symbolGraphSymbol(
+                    precise: "s:9SwamaCore7PayloadV",
+                    path: ["Payload"],
+                    declaration: [
+                        typeFragment("Payload", precise: "s:9SwamaCore7PayloadV")
+                    ]
+                )
+            ],
+            "relationships": [[
+                "kind": "conformsTo",
+                "source": "s:9SwamaCore7PayloadV",
+                "target": "s:12ForeignTypes14ForeignProtocolP",
+                "targetFallback": "ForeignTypes.ForeignProtocol"
+            ]]
+        ]
+
+        let report = try analyzePublicAPISymbolGraphs(
+            [graph],
+            target: "SwamaCore",
+            allowedModules: ["Swift", "Foundation", "SwamaCore"]
+        )
+        #expect(report["passed"] as? Bool == false)
+        let violations = (report["violations"] as? [JSONObject]) ?? []
+        let modules = Set(violations.compactMap { $0["module"] as? String })
+        #expect(modules == ["ForeignTypes", "MLXLMCommon"])
+        #expect(Set(violations.compactMap { ($0["path"] as? [String])?.joined(separator: ".") }) == [
+            "Engine.cache",
+            "Engine.model",
+            "Payload"
+        ])
+        #expect((report["manifest_sha256"] as? String)?.count == 64)
+    }
+
+    @Test func coreBoundaryReportsCompilerOracleAsUnmetWhenTargetIsAbsent() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract)
+        let report = try architectureReport(
+            contract: contract.architecture,
+            coreGuards: contract.coreGuards,
+            stage: .coreBoundary,
+            paths: paths
+        )
+
+        #expect(report["passed"] as? Bool == false)
+        let compiler = try report.object("compiler_public_api")
+        #expect(try compiler.string("status") == "unmet")
+        #expect(try compiler.boolean("passed") == false)
+    }
+
+    @Test func consumerBoundaryNamesEveryCurrentMLXDependencyAndImport() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract)
+        let report = try externalConsumerBoundaryReport(
+            fixture: paths.fixture,
+            contract: contract.coreGuards
+        )
+
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.array("unexpected_products").contains { ($0 as? String) == "MLXLMCommon" })
+        #expect(try report.array("unexpected_imports").contains { ($0 as? String) == "MLXLMCommon" })
+    }
+
+    @Test func targetDependencyGraphRejectsTransitiveAudioProducts() throws {
+        let description: JSONObject = [
+            "targets": [
+                [
+                    "name": "SwamaCore",
+                    "target_dependencies": ["Implementation"],
+                    "product_dependencies": ["FoundationShim"]
+                ],
+                [
+                    "name": "Implementation",
+                    "target_dependencies": [],
+                    "product_dependencies": ["MLXAudioCore"]
+                ]
+            ]
+        ]
+        let report = try analyzeTargetDependencyGraph(
+            description,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.array("forbidden_products") as? [String] == ["MLXAudioCore"])
+        #expect(try Set(report.array("target_dependencies").compactMap { $0 as? String }) == [
+            "Implementation",
+            "SwamaCore"
+        ])
+    }
+
+    @Test func inlinableAndUsableFromInlineCannotOpenUncheckedReachability() throws {
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-inline-boundary-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        try Data(
+            """
+            @inlinable public func leak() {}
+            @available(macOS 15.4, *) @usableFromInline internal let hidden = 1
+            // @inlinable public func commentOnly() {}
+            let example = "@usableFromInline"
+
+            """.utf8
+        ).write(to: temporary.appendingPathComponent("Leak.swift"))
+
+        let hits = try publicReachabilityAttributeHits(in: temporary, repository: temporary)
+        #expect(hits.count == 2)
+        #expect(Set(hits.compactMap { $0["attribute"] as? String }) == ["@inlinable", "@usableFromInline"])
+    }
+
+    @Test func paritySchemaRejectsMissingRouteAndUnknownEvents() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract).coreGuards.parity
+        let valid: JSONObject = [
+            "schema_version": contract.schemaVersion,
+            "case_id": "fixed-case",
+            "route": "core",
+            "events": [["sequence": 0, "type": "text_delta", "text": "ok"]],
+            "terminal": [
+                "kind": "response",
+                "output": "ok",
+                "tool_calls": [],
+                "finish_reason": "completed",
+                "usage": ["prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2]
+            ]
+        ]
+        #expect(throws: Never.self) { _ = try validateParityRecord(valid, contract: contract) }
+
+        var missingRoute = valid
+        missingRoute.removeValue(forKey: "route")
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try validateParityRecord(missingRoute, contract: contract)
+        }
+
+        var unknownEvent = valid
+        unknownEvent["events"] = [["sequence": 0, "type": "mystery"]]
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try validateParityRecord(unknownEvent, contract: contract)
+        }
+    }
+
     @Test func medianUsesAllMeasuredSamples() {
         #expect(median([511, 568, 580, 574, 572]) == 572)
     }
@@ -550,11 +719,13 @@ struct AcceptanceTests {
         }
         let childPIDValue = try #require(
             Int(String(contentsOf: childPIDFile, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         )
         let grandchildPIDValue = try #require(
             Int(String(contentsOf: grandchildPIDFile, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         )
         childPID = pid_t(childPIDValue)
         grandchildPID = pid_t(grandchildPIDValue)
@@ -565,10 +736,12 @@ struct AcceptanceTests {
     @Test func contractCarriesSeparateProductAndFixtureBuildBudgets() throws {
         let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
         let contract = try AcceptanceContract.load(from: paths.contract)
-        #expect(contract.schemaVersion == 3)
+        #expect(contract.schemaVersion == 4)
         #expect(contract.build.productTimeoutSeconds == 1200)
         #expect(contract.build.externalFixtureTimeoutSeconds == 1200)
         #expect(contract.build.externalFixtureTimeoutRetryLimit == 1)
+        #expect(contract.coreGuards.schemaVersion == 1)
+        #expect(contract.coreGuards.parity.requiredRoutes == ["core", "cli", "http"])
     }
 
     @Test func cleanWorktreeCanBeBoundToHead() throws {
@@ -638,6 +811,24 @@ struct AcceptanceTests {
             Issue.record("unexpected error: \(error)")
             return nil
         }
+    }
+
+    private func symbolGraphSymbol(
+        precise: String,
+        path: [String],
+        declaration: [JSONObject]
+    ) -> JSONObject {
+        [
+            "identifier": ["precise": precise, "interfaceLanguage": "swift"],
+            "kind": ["identifier": "swift.property", "displayName": "Instance Property"],
+            "pathComponents": path,
+            "declarationFragments": declaration,
+            "accessLevel": "public"
+        ]
+    }
+
+    private func typeFragment(_ spelling: String, precise: String) -> JSONObject {
+        ["kind": "typeIdentifier", "spelling": spelling, "preciseIdentifier": precise]
     }
 
     private func syntheticReport(paths: WorkspacePaths) throws -> JSONObject {
