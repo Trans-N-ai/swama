@@ -325,98 +325,53 @@ struct AcceptanceTests {
     }
 
     @Test func architectureImportParserHandlesAttributesAccessAndScopedImports() throws {
-        let expression = try NSRegularExpression(pattern: swiftImportDeclarationPattern)
-        let imports = [
-            "import SwamaServer": "SwamaServer",
-            "@_exported import NIO": "NIO",
-            "@preconcurrency import AppKit": "AppKit",
-            "@testable import SwamaServer": "SwamaServer",
-            "@_implementationOnly import ArgumentParser": "ArgumentParser",
-            "@_spi(Testing) import NIOHTTP1": "NIOHTTP1",
-            "internal import SwamaAppSupport": "SwamaAppSupport",
-            "package import struct NIOCore.ByteBuffer": "NIOCore",
-            "@preconcurrency import MLXLMCommon": "MLXLMCommon"
-        ]
-
-        for (line, module) in imports {
-            #expect(swiftImportedModule(in: line, matching: expression) == module)
-        }
-        #expect(swiftImportedModule(in: "// @_exported import NIO", matching: expression) == nil)
-        #expect(swiftImportedModule(in: "let example = \"import NIO\"", matching: expression) == nil)
-        let sameLine = swiftImportedModules(
-            in: """
-            let explanation = "ignore; import NIO"
-            // ignore; import ArgumentParser
-            import SwamaCore; import AppKit // import NIOHTTP1
-
-            """,
-            matching: expression
-        )
-        #expect(sameLine.map(\.module) == ["SwamaCore", "AppKit"])
-        #expect(sameLine.map(\.line) == [3, 3])
-
-        let rawString = swiftImportedModules(
-            in: """
-            let explanation = #"literal " ; import AppKit "#
-            import SwamaCore
-
-            """,
-            matching: expression
-        )
-        #expect(rawString.map(\.module) == ["SwamaCore"])
-        #expect(rawString.map(\.line) == [2])
-
-        let rawMultilineSource = "let explanation = #\"\"\"\n"
-            + "literal \" ; import AppKit\n"
-            + "\"\"\"#\n"
-            + "import SwamaCore\n"
-        let rawMultiline = swiftImportedModules(in: rawMultilineSource, matching: expression)
-        #expect(rawMultiline.map(\.module) == ["SwamaCore"])
-        #expect(rawMultiline.map(\.line) == [4])
-
-        let extendedRegex = swiftImportedModules(
-            in: """
-            let pattern = #/; import AppKit/#
-            import SwamaCore
-
-            """,
-            matching: expression
-        )
-        #expect(extendedRegex.map(\.module) == ["SwamaCore"])
-        #expect(extendedRegex.map(\.line) == [2])
-
-        let escapedRegexSource = "let pattern = #/foo\\/#; import AppKit/#\n"
-            + "let many = ##/foo\\/##; import NIO/##\n"
-            + "import SwamaCore\n"
-        let escapedRegex = swiftImportedModules(in: escapedRegexSource, matching: expression)
-        #expect(escapedRegex.map(\.module) == ["SwamaCore"])
-        #expect(escapedRegex.map(\.line) == [3])
-
-        let escapedRawSource = ###"""
-        let one = #"literal \#"#; import AppKit"#
-        let many = ##"literal \##"##; import NIO"##
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-import-parser-\(UUID().uuidString).swift")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = ####"""
+        let explanation = "ignore; import FakeString"
+        // ignore; import FakeComment
+        let raw = #"literal \#"#; import FakeRaw"#
         let multiline = #"""
-        literal \#"""#; import ArgumentParser
+        literal \#"""#; import FakeMultiline
         """#
-        import SwamaCore
-        """###
-        let escapedRaw = swiftImportedModules(in: escapedRawSource, matching: expression)
-        #expect(escapedRaw.map(\.module) == ["SwamaCore"])
-        #expect(escapedRaw.map(\.line) == [6])
+        let extended = #/foo\/#; import FakeExtended/#
+        let bare = /foo; import FakeBare/
+        prefix operator /
+        prefix func / (value: Int) -> Int { value }
+        let customPrefix = /1
+        let afterPlus = 1 + /foo; import FakeAfterPlus/
+        let quotient = 8 / 2
+        @_exported import NIO
+        internal import AppKit
+        package import struct NIOCore.ByteBuffer
+        import SwamaCore; import ArgumentParser
+        """####
+        try Data(source.utf8).write(to: temporary)
 
-        let bareRegexSource = "let pattern = /foo; import AppKit/\n"
-            + "let escaped = /foo\\/; import NIO/\n"
-            + "import SwamaCore\n"
-        let bareRegex = swiftImportedModules(in: bareRegexSource, matching: expression)
-        #expect(bareRegex.map(\.module) == ["SwamaCore"])
-        #expect(bareRegex.map(\.line) == [3])
-
-        let division = swiftImportedModules(
-            in: "let quotient = 8 / 2; import AppKit\n",
-            matching: expression
+        let declarations = try compilerImportedModules(
+            in: temporary,
+            developerDirectory: URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
         )
-        #expect(division.map(\.module) == ["AppKit"])
-        #expect(division.map(\.line) == [1])
+        #expect(declarations.map(\.module) == [
+            "NIO",
+            "AppKit",
+            "NIOCore",
+            "SwamaCore",
+            "ArgumentParser"
+        ])
+        #expect(declarations.allSatisfy { $0.line > 0 })
+        #expect(declarations[3].line == declarations[4].line)
+        for malformed in [
+            #"(source_file "<test>" (import_decl module="Foo")"#,
+            #"noise (source_file "<test>")"#,
+            #"(source_file "<test>" (import_decl module="Foo"))"#
+        ] {
+            #expect(throws: AcceptanceFailure.self) {
+                _ = try parseCompilerImportAST(malformed)
+            }
+        }
     }
 
     @Test func compilerPublicAPIGateRejectsUpstreamTypesAndConformances() throws {
@@ -607,6 +562,19 @@ struct AcceptanceTests {
             ("Int", "s:Si"),
             ("Error", "s:s5ErrorP"),
             ("Hashable", "s:SH"),
+            ("FloatingPoint", "s:SF"),
+            ("BidirectionalCollection", "s:SK"),
+            ("Comparable", "s:SL"),
+            ("MutableCollection", "s:SM"),
+            ("ClosedRange", "s:SN"),
+            ("Sequence", "s:ST"),
+            ("Numeric", "s:Sj"),
+            ("RandomAccessCollection", "s:Sk"),
+            ("Collection", "s:Sl"),
+            ("RangeReplaceableCollection", "s:Sm"),
+            ("IteratorProtocol", "s:St"),
+            ("Strideable", "s:Sx"),
+            ("BinaryInteger", "s:Sz"),
             ("Range", "s:Sn"),
             ("Set", "s:Sh"),
             ("Void", "s:s4Voida"),
@@ -618,13 +586,13 @@ struct AcceptanceTests {
                 "spelling": spelling,
                 "preciseIdentifier": precise
             ]]
-            #expect(throws: Never.self) {
-                _ = try analyzePublicAPISymbolGraphs(
-                    [["module": ["name": "SwamaCore"], "symbols": [validSwiftSymbol], "relationships": []]],
-                    target: "SwamaCore",
-                    allowedModules: ["Swift", "Foundation", "SwamaCore"]
-                )
-            }
+            let report = try analyzePublicAPISymbolGraphs(
+                [["module": ["name": "SwamaCore"], "symbols": [validSwiftSymbol], "relationships": []]],
+                target: "SwamaCore",
+                allowedModules: ["Swift", "Foundation", "SwamaCore"]
+            )
+            #expect(try report.boolean("passed"))
+            #expect(try report.array("violations").isEmpty)
         }
 
         var validAttributeSymbol = validSymbol
@@ -632,13 +600,13 @@ struct AcceptanceTests {
             ["kind": "attribute", "spelling": "MainActor", "preciseIdentifier": "s:ScM"],
             typeFragment("Payload", precise: "s:9SwamaCore7PayloadV")
         ]
-        #expect(throws: Never.self) {
-            _ = try analyzePublicAPISymbolGraphs(
-                [["module": ["name": "SwamaCore"], "symbols": [validAttributeSymbol], "relationships": []]],
-                target: "SwamaCore",
-                allowedModules: ["Swift", "Foundation", "SwamaCore"]
-            )
-        }
+        let validAttributeReport = try analyzePublicAPISymbolGraphs(
+            [["module": ["name": "SwamaCore"], "symbols": [validAttributeSymbol], "relationships": []]],
+            target: "SwamaCore",
+            allowedModules: ["Swift", "Foundation", "SwamaCore"]
+        )
+        #expect(try validAttributeReport.boolean("passed"))
+        #expect(try validAttributeReport.array("violations").isEmpty)
 
         var externalAttributeSymbol = validSymbol
         externalAttributeSymbol["declarationFragments"] = [
@@ -666,23 +634,29 @@ struct AcceptanceTests {
             ("s:ScA", "_Concurrency.Actor"),
             ("s:Se", "Swift.Decodable")
         ] {
-            #expect(throws: Never.self) {
-                _ = try analyzePublicAPISymbolGraphs(
-                    [[
-                        "module": ["name": "SwamaCore"],
-                        "symbols": [validSymbol],
-                        "relationships": [[
-                            "kind": "conformsTo",
-                            "source": "s:9SwamaCore7PayloadV",
-                            "target": precise,
-                            "targetFallback": fallback
-                        ]]
-                    ]],
-                    target: "SwamaCore",
-                    allowedModules: ["Swift", "Foundation", "SwamaCore"]
-                )
-            }
+            let report = try analyzePublicAPISymbolGraphs(
+                [[
+                    "module": ["name": "SwamaCore"],
+                    "symbols": [validSymbol],
+                    "relationships": [[
+                        "kind": "conformsTo",
+                        "source": "s:9SwamaCore7PayloadV",
+                        "target": precise,
+                        "targetFallback": fallback
+                    ]]
+                ]],
+                target: "SwamaCore",
+                allowedModules: ["Swift", "Foundation", "SwamaCore"]
+            )
+            #expect(try report.boolean("passed"))
+            #expect(try report.array("violations").isEmpty)
         }
+
+        #expect(try parseDemangledSwiftModule("Swift.ClosedRange\n", mangled: "$sSN") == "Swift")
+        #expect(try parseDemangledSwiftModule("$sSN\n", mangled: "$sSN") == nil)
+        #expect(try parseDemangledSwiftModule("Swift.Int\nnoise\n", mangled: "$sSi") == nil)
+        #expect(try parseDemangledSwiftModule("Other.Type\n", mangled: "$sXX") == nil)
+        #expect(try parseDemangledSwiftModule("Swift.Int noise\n", mangled: "$sSi") == nil)
     }
 
     @Test func coreBoundaryReportsCompilerOracleAsUnmetWhenTargetIsAbsent() throws {

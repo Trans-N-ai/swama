@@ -1,248 +1,106 @@
 import Foundation
 
-/// Import attributes are open-ended (`@_exported`, `@_spi(...)`, etc.), so match their
-/// grammar rather than enumerating spellings. Access modifiers and scoped-import kinds are
-/// finite parts of the Swift import declaration grammar.
-let swiftImportDeclarationPattern =
-    #"^\s*(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|package|public|open)\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func|macro)\s+)?([A-Za-z_][A-Za-z0-9_]*)\b"#
+func compilerImportedModules(
+    in file: URL,
+    developerDirectory: URL
+) throws -> [(module: String, line: Int)] {
+    let swift = developerDirectory.appendingPathComponent(
+        "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
+    )
+    guard FileManager.default.isExecutableFile(atPath: swift.path) else {
+        throw AcceptanceFailure.unknown("missing Swift frontend: \(swift.path)")
+    }
 
-func swiftImportedModule(in line: String, matching expression: NSRegularExpression) -> String? {
-    let range = NSRange(line.startIndex ..< line.endIndex, in: line)
-    guard let match = expression.firstMatch(in: line, range: range),
-          let moduleRange = Range(match.range(at: 1), in: line)
+    let sentinelModule = "__SwamaAcceptanceImportSentinel"
+    let source = try String(contentsOf: file, encoding: .utf8)
+    let compilerInput = FileManager.default
+        .temporaryDirectory
+        .appendingPathComponent("swama-imports-\(UUID().uuidString).swift")
+    defer { try? FileManager.default.removeItem(at: compilerInput) }
+    try Data("\(source)\nimport \(sentinelModule)\n".utf8).write(to: compilerInput, options: .atomic)
+
+    let result = try runCommand(
+        [
+            swift.path,
+            "-frontend",
+            "-dump-parse",
+            "-enable-bare-slash-regex",
+            compilerInput.path
+        ],
+        currentDirectory: compilerInput.deletingLastPathComponent(),
+        environment: developerEnvironment(developerDirectory),
+        timeout: 30,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "Swift import parser"
+    )
+    guard result.returnCode == 0 else {
+        throw AcceptanceFailure.unknown(
+            "cannot parse Swift imports in \(file.lastPathComponent):\n\(commandFailureSummary(result))"
+        )
+    }
+
+    do {
+        let declarations = try parseCompilerImportAST(result.stdout)
+        guard declarations.count(where: { $0.module == sentinelModule }) == 1 else {
+            throw AcceptanceFailure.unknown("Swift import parser omitted or duplicated its sentinel")
+        }
+
+        return declarations.filter { $0.module != sentinelModule }
+    }
+    catch {
+        throw AcceptanceFailure.unknown(
+            "cannot interpret Swift import AST for \(file.lastPathComponent): \(error)"
+        )
+    }
+}
+
+func parseCompilerImportAST(_ output: String) throws -> [(module: String, line: Int)] {
+    guard isCompleteCompilerAST(output) else {
+        throw AcceptanceFailure.unknown("Swift import parser emitted incomplete or noisy AST output")
+    }
+
+    let moduleExpression = try NSRegularExpression(pattern: #"module="([^"]+)""#)
+    let lineExpression = try NSRegularExpression(
+        pattern: #"range=\[.*:(\d+):\d+ - line:\d+:\d+\]"#
+    )
+    var declarations: [(module: String, line: Int)] = []
+    for outputLine in output.split(separator: "\n").map(String.init)
+        where outputLine.contains("(import_decl")
+    {
+        guard let module = regexCapture(moduleExpression, in: outputLine, group: 1),
+              let lineValue = regexCapture(lineExpression, in: outputLine, group: 1),
+              let line = Int(lineValue),
+              let rootModule = module.split(separator: ".").first.map(String.init)
+        else {
+            throw AcceptanceFailure.unknown(
+                "Swift import parser emitted an unsupported import declaration: \(outputLine)"
+            )
+        }
+
+        declarations.append((rootModule, line))
+    }
+    return declarations
+}
+
+private func isCompleteCompilerAST(_ output: String) -> Bool {
+    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.hasPrefix("(source_file") && trimmed.hasSuffix(")")
+}
+
+private func regexCapture(
+    _ expression: NSRegularExpression,
+    in text: String,
+    group: Int
+) -> String? {
+    let range = NSRange(text.startIndex ..< text.endIndex, in: text)
+    guard let match = expression.firstMatch(in: text, range: range),
+          let capture = Range(match.range(at: group), in: text)
     else {
         return nil
     }
 
-    return String(line[moduleRange])
-}
-
-func swiftImportedModules(
-    in source: String,
-    matching expression: NSRegularExpression
-) -> [(module: String, line: Int)] {
-    enum LexicalState {
-        case normal
-        case string(rawHashCount: Int, quoteCount: Int)
-        case regex(rawHashCount: Int)
-        case lineComment
-        case blockComment(depth: Int)
-    }
-
-    let characters = Array(source)
-    var state = LexicalState.normal
-    var statement = ""
-    var statementLine = 1
-    var line = 1
-    var index = 0
-    var declarations: [(module: String, line: Int)] = []
-
-    func appendStatement() {
-        if let module = swiftImportedModule(in: statement, matching: expression) {
-            declarations.append((module, statementLine))
-        }
-        statement = ""
-        statementLine = line
-    }
-
-    func stringOpening(at start: Int) -> (rawHashCount: Int, quoteCount: Int, length: Int)? {
-        var cursor = start
-        var rawHashCount = 0
-        while characters.indices.contains(cursor), characters[cursor] == "#" {
-            rawHashCount += 1
-            cursor += 1
-        }
-        guard characters.indices.contains(cursor), characters[cursor] == "\"" else {
-            return nil
-        }
-
-        let hasTripleQuote = characters.indices.contains(cursor + 2)
-            && characters[cursor + 1] == "\""
-            && characters[cursor + 2] == "\""
-        let quoteCount = hasTripleQuote ? 3 : 1
-        return (rawHashCount, quoteCount, rawHashCount + quoteCount)
-    }
-
-    func stringClosingLength(at start: Int, rawHashCount: Int, quoteCount: Int) -> Int? {
-        if rawHashCount > 0, start > rawHashCount {
-            let hashStart = start - rawHashCount
-            let hasEscapeHashes = characters[hashStart ..< start].allSatisfy { $0 == "#" }
-            if hasEscapeHashes, characters[hashStart - 1] == "\\" {
-                return nil
-            }
-        }
-        for offset in 0 ..< quoteCount
-            where !characters.indices.contains(start + offset) || characters[start + offset] != "\""
-        {
-            return nil
-        }
-        let hashStart = start + quoteCount
-        for offset in 0 ..< rawHashCount
-            where !characters.indices.contains(hashStart + offset) || characters[hashStart + offset] != "#"
-        {
-            return nil
-        }
-        return quoteCount + rawHashCount
-    }
-
-    func regexOpening(at start: Int) -> (rawHashCount: Int, length: Int)? {
-        var cursor = start
-        var rawHashCount = 0
-        while characters.indices.contains(cursor), characters[cursor] == "#" {
-            rawHashCount += 1
-            cursor += 1
-        }
-        guard characters.indices.contains(cursor),
-              characters[cursor] == "/"
-        else {
-            return nil
-        }
-
-        if rawHashCount == 0 {
-            let trimmed = statement.trimmingCharacters(in: .whitespaces)
-            let expressionPrefixes = "=([{,:;!&|?"
-            let expressionKeywords: Set<String> = [
-                "await", "case", "consume", "copy", "discard", "in", "return", "throw", "try", "yield"
-            ]
-            let lastWord = trimmed.split { !$0.isLetter && !$0.isNumber && $0 != "_" }.last.map(String.init)
-            guard trimmed.isEmpty
-                || trimmed.last.map(expressionPrefixes.contains) == true
-                || lastWord.map(expressionKeywords.contains) == true
-            else {
-                return nil
-            }
-        }
-
-        return (rawHashCount, rawHashCount + 1)
-    }
-
-    func regexClosingLength(at start: Int, rawHashCount: Int) -> Int? {
-        var cursor = start
-        var precedingBackslashes = 0
-        while cursor > 0, characters[cursor - 1] == "\\" {
-            precedingBackslashes += 1
-            cursor -= 1
-        }
-        guard precedingBackslashes.isMultiple(of: 2) else {
-            return nil
-        }
-        guard characters.indices.contains(start), characters[start] == "/" else {
-            return nil
-        }
-
-        for offset in 0 ..< rawHashCount
-            where !characters.indices.contains(start + 1 + offset) || characters[start + 1 + offset] != "#"
-        {
-            return nil
-        }
-        return rawHashCount + 1
-    }
-
-    func appendCharacters(from start: Int, count: Int) {
-        for offset in 0 ..< count {
-            statement.append(characters[start + offset])
-        }
-    }
-
-    while index < characters.count {
-        let character = characters[index]
-        let next = characters.indices.contains(index + 1) ? characters[index + 1] : nil
-        switch state {
-        case .normal:
-            if character == "/", next == "/" {
-                state = .lineComment
-                index += 1
-            }
-            else if character == "/", next == "*" {
-                statement.append(" ")
-                state = .blockComment(depth: 1)
-                index += 1
-            }
-            else if let opening = stringOpening(at: index) {
-                appendCharacters(from: index, count: opening.length)
-                state = .string(
-                    rawHashCount: opening.rawHashCount,
-                    quoteCount: opening.quoteCount
-                )
-                index += opening.length - 1
-            }
-            else if let opening = regexOpening(at: index) {
-                appendCharacters(from: index, count: opening.length)
-                state = .regex(rawHashCount: opening.rawHashCount)
-                index += opening.length - 1
-            }
-            else if character == ";" {
-                appendStatement()
-            }
-            else if character == "\n" {
-                appendStatement()
-                line += 1
-                statementLine = line
-            }
-            else {
-                statement.append(character)
-            }
-
-        case let .string(rawHashCount, quoteCount):
-            if rawHashCount == 0, character == "\\", next != nil {
-                statement.append(character)
-                index += 1
-                statement.append(characters[index])
-            }
-            else if let closingLength = stringClosingLength(
-                at: index,
-                rawHashCount: rawHashCount,
-                quoteCount: quoteCount
-            ) {
-                appendCharacters(from: index, count: closingLength)
-                state = .normal
-                index += closingLength - 1
-            }
-            else {
-                statement.append(character)
-            }
-            if character == "\n" {
-                line += 1
-            }
-
-        case let .regex(rawHashCount):
-            if let closingLength = regexClosingLength(at: index, rawHashCount: rawHashCount) {
-                appendCharacters(from: index, count: closingLength)
-                state = .normal
-                index += closingLength - 1
-            }
-            else {
-                statement.append(character)
-            }
-            if character == "\n" {
-                line += 1
-            }
-
-        case .lineComment:
-            if character == "\n" {
-                appendStatement()
-                line += 1
-                statementLine = line
-                state = .normal
-            }
-
-        case let .blockComment(depth):
-            if character == "/", next == "*" {
-                state = .blockComment(depth: depth + 1)
-                index += 1
-            }
-            else if character == "*", next == "/" {
-                state = depth == 1 ? .normal : .blockComment(depth: depth - 1)
-                index += 1
-            }
-            else if character == "\n" {
-                line += 1
-            }
-        }
-        index += 1
-    }
-    appendStatement()
-    return declarations
+    return String(text[capture])
 }
 
 // MARK: - ArchitectureStage
@@ -263,7 +121,12 @@ func architectureReport(
     let packageManifest = try String(contentsOf: paths.package.appendingPathComponent("Package.swift"), encoding: .utf8)
     let swamaKit = paths.package.appendingPathComponent("Sources/SwamaKit")
     let forbidden = Set(contract.goalForbiddenImports)
-    let legacyImports = try imports(in: swamaKit, forbidden: forbidden, repository: paths.repository)
+    let legacyImports = try imports(
+        in: swamaKit,
+        forbidden: forbidden,
+        repository: paths.repository,
+        developerDirectory: developerDirectory
+    )
     let legacyLeaks = try publicMLXLeaks(in: swamaKit, repository: paths.repository)
     var report: JSONObject = [
         "stage": stage.rawValue,
@@ -307,7 +170,12 @@ func architectureReport(
     case .consumerBoundary,
          .coreBoundary:
         let coreRoot = paths.package.appendingPathComponent("Sources/\(contract.goalCoreTarget)")
-        let coreImports = try imports(in: coreRoot, forbidden: forbidden, repository: paths.repository)
+        let coreImports = try imports(
+            in: coreRoot,
+            forbidden: forbidden,
+            repository: paths.repository,
+            developerDirectory: developerDirectory
+        )
         let targetPresent = packageManifest.contains("name: \"\(contract.goalCoreTarget)\"")
             && FileManager.default.fileExists(atPath: coreRoot.path)
         report["core_target_present"] = targetPresent
@@ -360,18 +228,17 @@ func architectureReport(
 private func imports(
     in root: URL,
     forbidden: Set<String>,
-    repository: URL
+    repository: URL,
+    developerDirectory: URL
 ) throws -> [JSONObject] {
     guard FileManager.default.fileExists(atPath: root.path) else {
         return []
     }
 
-    let expression = try NSRegularExpression(pattern: swiftImportDeclarationPattern)
     var hits: [JSONObject] = []
 
     for file in try regularFiles(in: root, extensions: ["swift"]).sorted(by: { $0.path < $1.path }) {
-        let text = try String(contentsOf: file, encoding: .utf8)
-        for declaration in swiftImportedModules(in: text, matching: expression) {
+        for declaration in try compilerImportedModules(in: file, developerDirectory: developerDirectory) {
             if forbidden.contains(declaration.module) {
                 hits.append([
                     "file": relativePath(file, to: repository),

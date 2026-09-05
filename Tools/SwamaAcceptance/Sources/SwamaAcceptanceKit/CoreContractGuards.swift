@@ -58,7 +58,8 @@ func compilerPublicAPIReport(
     var report = try analyzePublicAPISymbolGraphs(
         graphs,
         target: target,
-        allowedModules: Set(contract.allowedPublicModules)
+        allowedModules: Set(contract.allowedPublicModules),
+        developerDirectory: developerDirectory
     )
     let reachabilityHits = try publicReachabilityAttributeHits(
         in: paths.package.appendingPathComponent("Sources/\(target)"),
@@ -93,8 +94,10 @@ func symbolGraphCommand(package: URL, scratch: URL) -> [String] {
 func analyzePublicAPISymbolGraphs(
     _ graphs: [JSONObject],
     target: String,
-    allowedModules: Set<String>
+    allowedModules: Set<String>,
+    developerDirectory: URL = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
 ) throws -> JSONObject {
+    let moduleResolver = try PreciseIdentifierModuleResolver(developerDirectory: developerDirectory)
     let knownAccessLevels: Set<String> = ["fileprivate", "internal", "open", "package", "private", "public"]
     let knownRelationshipKinds: Set<String> = [
         "conformsTo",
@@ -184,14 +187,14 @@ func analyzePublicAPISymbolGraphs(
                     }
 
                     let precise = try fragment.string("preciseIdentifier")
-                    guard moduleName(in: precise) != nil else {
+                    guard let module = try moduleResolver.moduleName(in: precise) else {
                         throw AcceptanceFailure.unknown(
                             "public declaration has an unparseable preciseIdentifier: \(precise)"
                         )
                     }
 
                     value["precise_identifier"] = precise
-                    value["module"] = moduleName(in: precise) ?? "unknown"
+                    value["module"] = module
                 }
                 return value
             }
@@ -205,7 +208,7 @@ func analyzePublicAPISymbolGraphs(
                 }
 
                 let precise = try fragment.string("preciseIdentifier")
-                guard let module = moduleName(in: precise) else {
+                guard let module = try moduleResolver.moduleName(in: precise) else {
                     throw AcceptanceFailure.unknown(
                         "public typeIdentifier has an unparseable module: \(precise)"
                     )
@@ -229,7 +232,7 @@ func analyzePublicAPISymbolGraphs(
                 let fallback = try relationship["targetFallback"] == nil
                     ? nil
                     : relationship.string("targetFallback")
-                guard let module = moduleName(in: targetIdentifier) else {
+                guard let module = try moduleResolver.moduleName(in: targetIdentifier) else {
                     throw AcceptanceFailure.unknown(
                         "public relationship has an unparseable target: \(targetIdentifier)"
                     )
@@ -366,82 +369,108 @@ private func optionalStrictStringArray(_ object: JSONObject, key: String, contex
     return try strictStringArray(object, key: key, context: context)
 }
 
-private func moduleName(in preciseIdentifier: String) -> String? {
-    let knownClangModules = ["c:@T@NSTimeInterval": "Foundation"]
-    if let module = knownClangModules[preciseIdentifier] {
-        return module
-    }
-    guard preciseIdentifier.hasPrefix("s:") else {
-        return preciseIdentifier.contains(":") ? "__foreign__" : nil
+// MARK: - PreciseIdentifierModuleResolver
+
+private final class PreciseIdentifierModuleResolver {
+    private enum Resolution {
+        case module(String)
+        case invalid
     }
 
-    let payload = preciseIdentifier.dropFirst(2)
-    guard !payload.isEmpty else {
-        return nil
+    private let demangler: URL
+    private var cache: [String: Resolution] = [:]
+
+    init(developerDirectory: URL) throws {
+        demangler = developerDirectory.appendingPathComponent(
+            "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-demangle"
+        )
+        guard FileManager.default.isExecutableFile(atPath: demangler.path) else {
+            throw AcceptanceFailure.unknown("missing Swift demangler: \(demangler.path)")
+        }
     }
 
-    var digits = ""
-    for character in payload {
-        guard character.isNumber else {
-            break
+    func moduleName(in preciseIdentifier: String) throws -> String? {
+        if let cached = cache[preciseIdentifier] {
+            switch cached {
+            case let .module(module):
+                return module
+            case .invalid:
+                return nil
+            }
         }
 
-        digits.append(character)
-    }
-    guard !digits.isEmpty else {
-        return isValidStandardLibraryUSRPayload(String(payload)) ? "Swift" : nil
-    }
-    guard let length = Int(digits), length > 0 else {
-        return nil
+        let module = try resolve(preciseIdentifier)
+        cache[preciseIdentifier] = module.map(Resolution.module) ?? .invalid
+        return module
     }
 
-    let moduleStart = payload.index(payload.startIndex, offsetBy: digits.count)
-    guard let moduleEnd = payload.index(moduleStart, offsetBy: length, limitedBy: payload.endIndex) else {
-        return nil
-    }
+    private func resolve(_ preciseIdentifier: String) throws -> String? {
+        let knownClangModules = ["c:@T@NSTimeInterval": "Foundation"]
+        if let module = knownClangModules[preciseIdentifier] {
+            return module
+        }
+        guard preciseIdentifier.hasPrefix("s:") else {
+            return preciseIdentifier.contains(":") ? "__foreign__" : nil
+        }
 
-    return String(payload[moduleStart ..< moduleEnd])
+        let payload = preciseIdentifier.dropFirst(2)
+        guard !payload.isEmpty else {
+            return nil
+        }
+
+        let digits = payload.prefix(while: \.isNumber)
+        if !digits.isEmpty {
+            guard let length = Int(digits), length > 0 else {
+                return nil
+            }
+
+            let moduleStart = payload.index(payload.startIndex, offsetBy: digits.count)
+            guard let moduleEnd = payload.index(
+                moduleStart,
+                offsetBy: length,
+                limitedBy: payload.endIndex
+            ),
+                moduleEnd < payload.endIndex
+            else {
+                return nil
+            }
+
+            return String(payload[moduleStart ..< moduleEnd])
+        }
+
+        let mangled = "$s\(payload)"
+        let result = try runCommand(
+            [demangler.path, "--compact", mangled],
+            currentDirectory: FileManager.default.temporaryDirectory,
+            timeout: 10,
+            sampleMemory: false,
+            timeoutFailureKind: .unknown,
+            timeoutContext: "Swift USR demangler"
+        )
+        guard result.returnCode == 0 else {
+            throw AcceptanceFailure.unknown(
+                "cannot demangle Swift preciseIdentifier \(preciseIdentifier):\n"
+                    + commandFailureSummary(result)
+            )
+        }
+
+        return try parseDemangledSwiftModule(result.stdout, mangled: mangled)
+    }
 }
 
-private func isValidStandardLibraryUSRPayload(_ payload: String) -> Bool {
-    let substitutions: Set<String> = [
-        "SD", "SE", "SH", "SP", "SQ", "SR", "SS", "SV", "SY", "Sa", "Sb", "Sc", "ScA", "ScM", "Sd", "Se",
-        "Sf", "Sh", "Si", "Sn", "Sp", "Sq", "Sr", "Su", "Sv"
-    ]
-    if substitutions.contains(payload) {
-        return true
+func parseDemangledSwiftModule(_ output: String, mangled: String) throws -> String? {
+    let lines = output.split(whereSeparator: \.isNewline).map(String.init)
+    guard lines.count == 1, let demangled = lines.first, demangled != mangled else {
+        return nil
     }
 
-    let characters = Array(payload)
-    guard characters.first == "s" else {
-        return false
+    let expression = try NSRegularExpression(pattern: #"^Swift\.[A-Za-z_][A-Za-z0-9_]*$"#)
+    let range = NSRange(demangled.startIndex ..< demangled.endIndex, in: demangled)
+    guard expression.firstMatch(in: demangled, range: range)?.range == range else {
+        return nil
     }
 
-    var index = 1
-    var digits = ""
-    while characters.indices.contains(index), characters[index].isNumber {
-        digits.append(characters[index])
-        index += 1
-    }
-    guard let nameLength = Int(digits), nameLength > 0,
-          characters.indices.contains(index + nameLength - 1)
-    else {
-        return false
-    }
-
-    let name = characters[index ..< index + nameLength]
-    guard name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else {
-        return false
-    }
-
-    index += nameLength
-    guard index == characters.count - 1,
-          let nominalKind = characters.last
-    else {
-        return false
-    }
-
-    return ["A", "C", "E", "O", "P", "V", "a"].contains(nominalKind)
+    return "Swift"
 }
 
 // MARK: - External consumer and target dependency boundary
@@ -477,13 +506,14 @@ func externalConsumerBoundaryReport(
         )
     }
 
-    let expression = try NSRegularExpression(pattern: swiftImportDeclarationPattern)
     var imports: Set<String> = []
     let sourceRoot = fixture.appendingPathComponent("Sources")
     if FileManager.default.fileExists(atPath: sourceRoot.path) {
         for file in try regularFiles(in: sourceRoot, extensions: ["swift"]) {
-            let source = try String(contentsOf: file, encoding: .utf8)
-            for declaration in swiftImportedModules(in: source, matching: expression) {
+            for declaration in try compilerImportedModules(
+                in: file,
+                developerDirectory: developerDirectory
+            ) {
                 imports.insert(declaration.module)
             }
         }
