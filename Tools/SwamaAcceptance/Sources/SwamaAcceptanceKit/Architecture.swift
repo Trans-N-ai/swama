@@ -64,6 +64,13 @@ func swiftImportedModules(
     }
 
     func stringClosingLength(at start: Int, rawHashCount: Int, quoteCount: Int) -> Int? {
+        if rawHashCount > 0, start > rawHashCount {
+            let hashStart = start - rawHashCount
+            let hasEscapeHashes = characters[hashStart ..< start].allSatisfy { $0 == "#" }
+            if hasEscapeHashes, characters[hashStart - 1] == "\\" {
+                return nil
+            }
+        }
         for offset in 0 ..< quoteCount
             where !characters.indices.contains(start + offset) || characters[start + offset] != "\""
         {
@@ -85,17 +92,40 @@ func swiftImportedModules(
             rawHashCount += 1
             cursor += 1
         }
-        guard rawHashCount > 0,
-              characters.indices.contains(cursor),
+        guard characters.indices.contains(cursor),
               characters[cursor] == "/"
         else {
             return nil
+        }
+
+        if rawHashCount == 0 {
+            let trimmed = statement.trimmingCharacters(in: .whitespaces)
+            let expressionPrefixes = "=([{,:;!&|?"
+            let expressionKeywords: Set<String> = [
+                "await", "case", "consume", "copy", "discard", "in", "return", "throw", "try", "yield"
+            ]
+            let lastWord = trimmed.split { !$0.isLetter && !$0.isNumber && $0 != "_" }.last.map(String.init)
+            guard trimmed.isEmpty
+                || trimmed.last.map(expressionPrefixes.contains) == true
+                || lastWord.map(expressionKeywords.contains) == true
+            else {
+                return nil
+            }
         }
 
         return (rawHashCount, rawHashCount + 1)
     }
 
     func regexClosingLength(at start: Int, rawHashCount: Int) -> Int? {
+        var cursor = start
+        var precedingBackslashes = 0
+        while cursor > 0, characters[cursor - 1] == "\\" {
+            precedingBackslashes += 1
+            cursor -= 1
+        }
+        guard precedingBackslashes.isMultiple(of: 2) else {
+            return nil
+        }
         guard characters.indices.contains(start), characters[start] == "/" else {
             return nil
         }

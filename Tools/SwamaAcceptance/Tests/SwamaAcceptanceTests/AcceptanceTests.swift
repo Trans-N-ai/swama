@@ -384,6 +384,39 @@ struct AcceptanceTests {
         )
         #expect(extendedRegex.map(\.module) == ["SwamaCore"])
         #expect(extendedRegex.map(\.line) == [2])
+
+        let escapedRegexSource = "let pattern = #/foo\\/#; import AppKit/#\n"
+            + "let many = ##/foo\\/##; import NIO/##\n"
+            + "import SwamaCore\n"
+        let escapedRegex = swiftImportedModules(in: escapedRegexSource, matching: expression)
+        #expect(escapedRegex.map(\.module) == ["SwamaCore"])
+        #expect(escapedRegex.map(\.line) == [3])
+
+        let escapedRawSource = ###"""
+        let one = #"literal \#"#; import AppKit"#
+        let many = ##"literal \##"##; import NIO"##
+        let multiline = #"""
+        literal \#"""#; import ArgumentParser
+        """#
+        import SwamaCore
+        """###
+        let escapedRaw = swiftImportedModules(in: escapedRawSource, matching: expression)
+        #expect(escapedRaw.map(\.module) == ["SwamaCore"])
+        #expect(escapedRaw.map(\.line) == [6])
+
+        let bareRegexSource = "let pattern = /foo; import AppKit/\n"
+            + "let escaped = /foo\\/; import NIO/\n"
+            + "import SwamaCore\n"
+        let bareRegex = swiftImportedModules(in: bareRegexSource, matching: expression)
+        #expect(bareRegex.map(\.module) == ["SwamaCore"])
+        #expect(bareRegex.map(\.line) == [3])
+
+        let division = swiftImportedModules(
+            in: "let quotient = 8 / 2; import AppKit\n",
+            matching: expression
+        )
+        #expect(division.map(\.module) == ["AppKit"])
+        #expect(division.map(\.line) == [1])
     }
 
     @Test func compilerPublicAPIGateRejectsUpstreamTypesAndConformances() throws {
@@ -543,6 +576,16 @@ struct AcceptanceTests {
                 "module": ["name": "SwamaCore"],
                 "symbols": [validSymbol],
                 "relationships": [[
+                    "kind": "conformsTo",
+                    "source": "s:9SwamaCore7PayloadV",
+                    "target": "s:not-real",
+                    "targetFallback": "Swift.Encodable"
+                ]]
+            ],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [validSymbol],
+                "relationships": [[
                     "kind": "futureConformance",
                     "source": "s:9SwamaCore7PayloadV",
                     "target": "s:11MLXLMCommon14ModelContainerC"
@@ -560,30 +603,85 @@ struct AcceptanceTests {
             }
         }
 
-        var validSwiftSymbol = validSymbol
-        validSwiftSymbol["declarationFragments"] = [[
-            "kind": "typeIdentifier",
-            "spelling": "Int",
-            "preciseIdentifier": "s:Si"
-        ]]
+        for (spelling, precise) in [
+            ("Int", "s:Si"),
+            ("Error", "s:s5ErrorP"),
+            ("Hashable", "s:SH"),
+            ("Range", "s:Sn"),
+            ("Set", "s:Sh"),
+            ("Void", "s:s4Voida"),
+            ("TimeInterval", "c:@T@NSTimeInterval")
+        ] {
+            var validSwiftSymbol = validSymbol
+            validSwiftSymbol["declarationFragments"] = [[
+                "kind": "typeIdentifier",
+                "spelling": spelling,
+                "preciseIdentifier": precise
+            ]]
+            #expect(throws: Never.self) {
+                _ = try analyzePublicAPISymbolGraphs(
+                    [["module": ["name": "SwamaCore"], "symbols": [validSwiftSymbol], "relationships": []]],
+                    target: "SwamaCore",
+                    allowedModules: ["Swift", "Foundation", "SwamaCore"]
+                )
+            }
+        }
+
+        var validAttributeSymbol = validSymbol
+        validAttributeSymbol["declarationFragments"] = [
+            ["kind": "attribute", "spelling": "MainActor", "preciseIdentifier": "s:ScM"],
+            typeFragment("Payload", precise: "s:9SwamaCore7PayloadV")
+        ]
         #expect(throws: Never.self) {
             _ = try analyzePublicAPISymbolGraphs(
-                [["module": ["name": "SwamaCore"], "symbols": [validSwiftSymbol], "relationships": []]],
+                [["module": ["name": "SwamaCore"], "symbols": [validAttributeSymbol], "relationships": []]],
                 target: "SwamaCore",
                 allowedModules: ["Swift", "Foundation", "SwamaCore"]
             )
         }
-        validSwiftSymbol["declarationFragments"] = [[
-            "kind": "typeIdentifier",
-            "spelling": "Error",
-            "preciseIdentifier": "s:s5ErrorP"
-        ]]
-        #expect(throws: Never.self) {
-            _ = try analyzePublicAPISymbolGraphs(
-                [["module": ["name": "SwamaCore"], "symbols": [validSwiftSymbol], "relationships": []]],
-                target: "SwamaCore",
-                allowedModules: ["Swift", "Foundation", "SwamaCore"]
-            )
+
+        var externalAttributeSymbol = validSymbol
+        externalAttributeSymbol["declarationFragments"] = [
+            [
+                "kind": "attribute",
+                "spelling": "ExternalWrapper",
+                "preciseIdentifier": "s:8Upstream15ExternalWrapperV"
+            ],
+            typeFragment("Payload", precise: "s:9SwamaCore7PayloadV")
+        ]
+        let externalAttributeReport = try analyzePublicAPISymbolGraphs(
+            [["module": ["name": "SwamaCore"], "symbols": [externalAttributeSymbol], "relationships": []]],
+            target: "SwamaCore",
+            allowedModules: ["Swift", "Foundation", "SwamaCore"]
+        )
+        #expect(try externalAttributeReport.boolean("passed") == false)
+        #expect(try externalAttributeReport.array("violations").contains { value in
+            (value as? JSONObject)?["module"] as? String == "Upstream"
+        })
+
+        for (precise, fallback) in [
+            ("s:SE", "Swift.Encodable"),
+            ("s:SQ", "Swift.Equatable"),
+            ("s:SY", "Swift.RawRepresentable"),
+            ("s:ScA", "_Concurrency.Actor"),
+            ("s:Se", "Swift.Decodable")
+        ] {
+            #expect(throws: Never.self) {
+                _ = try analyzePublicAPISymbolGraphs(
+                    [[
+                        "module": ["name": "SwamaCore"],
+                        "symbols": [validSymbol],
+                        "relationships": [[
+                            "kind": "conformsTo",
+                            "source": "s:9SwamaCore7PayloadV",
+                            "target": precise,
+                            "targetFallback": fallback
+                        ]]
+                    ]],
+                    target: "SwamaCore",
+                    allowedModules: ["Swift", "Foundation", "SwamaCore"]
+                )
+            }
         }
     }
 

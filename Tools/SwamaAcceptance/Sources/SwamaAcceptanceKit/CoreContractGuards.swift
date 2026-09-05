@@ -177,9 +177,9 @@ func analyzePublicAPISymbolGraphs(
                     "spelling": fragment.string("spelling")
                 ]
                 if fragment["preciseIdentifier"] != nil {
-                    guard fragmentKind == "typeIdentifier" else {
+                    guard ["attribute", "typeIdentifier"].contains(fragmentKind) else {
                         throw AcceptanceFailure.unknown(
-                            "non-type declaration fragment carries preciseIdentifier: \(fragmentKind)"
+                            "unsupported declaration fragment carries preciseIdentifier: \(fragmentKind)"
                         )
                     }
 
@@ -197,7 +197,9 @@ func analyzePublicAPISymbolGraphs(
             }
             var references: Set<String> = []
 
-            for fragment in fragments where fragment["kind"] as? String == "typeIdentifier" {
+            for fragment in fragments
+                where ["attribute", "typeIdentifier"].contains(fragment["kind"] as? String ?? "")
+            {
                 guard fragment["preciseIdentifier"] != nil else {
                     continue
                 }
@@ -227,9 +229,7 @@ func analyzePublicAPISymbolGraphs(
                 let fallback = try relationship["targetFallback"] == nil
                     ? nil
                     : relationship.string("targetFallback")
-                guard let module = moduleName(in: targetIdentifier)
-                    ?? fallback?.split(separator: ".").first.map(String.init)
-                else {
+                guard let module = moduleName(in: targetIdentifier) else {
                     throw AcceptanceFailure.unknown(
                         "public relationship has an unparseable target: \(targetIdentifier)"
                     )
@@ -367,6 +367,10 @@ private func optionalStrictStringArray(_ object: JSONObject, key: String, contex
 }
 
 private func moduleName(in preciseIdentifier: String) -> String? {
+    let knownClangModules = ["c:@T@NSTimeInterval": "Foundation"]
+    if let module = knownClangModules[preciseIdentifier] {
+        return module
+    }
     guard preciseIdentifier.hasPrefix("s:") else {
         return preciseIdentifier.contains(":") ? "__foreign__" : nil
     }
@@ -401,7 +405,8 @@ private func moduleName(in preciseIdentifier: String) -> String? {
 
 private func isValidStandardLibraryUSRPayload(_ payload: String) -> Bool {
     let substitutions: Set<String> = [
-        "SD", "SP", "SR", "SS", "SV", "Sa", "Sb", "Sc", "Sd", "Sf", "Si", "Sp", "Sq", "Sr", "Su", "Sv"
+        "SD", "SE", "SH", "SP", "SQ", "SR", "SS", "SV", "SY", "Sa", "Sb", "Sc", "ScA", "ScM", "Sd", "Se",
+        "Sf", "Sh", "Si", "Sn", "Sp", "Sq", "Sr", "Su", "Sv"
     ]
     if substitutions.contains(payload) {
         return true
@@ -436,7 +441,7 @@ private func isValidStandardLibraryUSRPayload(_ payload: String) -> Bool {
         return false
     }
 
-    return ["A", "C", "E", "O", "P", "V"].contains(nominalKind)
+    return ["A", "C", "E", "O", "P", "V", "a"].contains(nominalKind)
 }
 
 // MARK: - External consumer and target dependency boundary
