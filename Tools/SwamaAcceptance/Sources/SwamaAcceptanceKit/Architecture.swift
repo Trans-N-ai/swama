@@ -17,6 +17,103 @@ func swiftImportedModule(in line: String, matching expression: NSRegularExpressi
     return String(line[moduleRange])
 }
 
+func swiftImportedModules(
+    in source: String,
+    matching expression: NSRegularExpression
+) -> [(module: String, line: Int)] {
+    enum LexicalState {
+        case normal
+        case string
+        case lineComment
+        case blockComment(depth: Int)
+    }
+
+    let characters = Array(source)
+    var state = LexicalState.normal
+    var statement = ""
+    var statementLine = 1
+    var line = 1
+    var index = 0
+    var declarations: [(module: String, line: Int)] = []
+
+    func appendStatement() {
+        if let module = swiftImportedModule(in: statement, matching: expression) {
+            declarations.append((module, statementLine))
+        }
+        statement = ""
+        statementLine = line
+    }
+
+    while index < characters.count {
+        let character = characters[index]
+        let next = characters.indices.contains(index + 1) ? characters[index + 1] : nil
+        switch state {
+        case .normal:
+            if character == "/", next == "/" {
+                state = .lineComment
+                index += 1
+            }
+            else if character == "/", next == "*" {
+                statement.append(" ")
+                state = .blockComment(depth: 1)
+                index += 1
+            }
+            else if character == "\"" {
+                statement.append(character)
+                state = .string
+            }
+            else if character == ";" {
+                appendStatement()
+            }
+            else if character == "\n" {
+                appendStatement()
+                line += 1
+                statementLine = line
+            }
+            else {
+                statement.append(character)
+            }
+
+        case .string:
+            statement.append(character)
+            if character == "\\", next != nil {
+                index += 1
+                statement.append(characters[index])
+            }
+            else if character == "\"" {
+                state = .normal
+            }
+            if character == "\n" {
+                line += 1
+            }
+
+        case .lineComment:
+            if character == "\n" {
+                appendStatement()
+                line += 1
+                statementLine = line
+                state = .normal
+            }
+
+        case let .blockComment(depth):
+            if character == "/", next == "*" {
+                state = .blockComment(depth: depth + 1)
+                index += 1
+            }
+            else if character == "*", next == "/" {
+                state = depth == 1 ? .normal : .blockComment(depth: depth - 1)
+                index += 1
+            }
+            else if character == "\n" {
+                line += 1
+            }
+        }
+        index += 1
+    }
+    appendStatement()
+    return declarations
+}
+
 // MARK: - ArchitectureStage
 
 enum ArchitectureStage: String, Sendable {
@@ -143,17 +240,12 @@ private func imports(
 
     for file in try regularFiles(in: root, extensions: ["swift"]).sorted(by: { $0.path < $1.path }) {
         let text = try String(contentsOf: file, encoding: .utf8)
-        for (index, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-            let value = String(line)
-            guard let module = swiftImportedModule(in: value, matching: expression) else {
-                continue
-            }
-
-            if forbidden.contains(module) {
+        for declaration in swiftImportedModules(in: text, matching: expression) {
+            if forbidden.contains(declaration.module) {
                 hits.append([
                     "file": relativePath(file, to: repository),
-                    "line": index + 1,
-                    "module": module
+                    "line": declaration.line,
+                    "module": declaration.module
                 ])
             }
         }

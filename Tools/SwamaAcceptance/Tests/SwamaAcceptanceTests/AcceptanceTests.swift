@@ -343,6 +343,17 @@ struct AcceptanceTests {
         }
         #expect(swiftImportedModule(in: "// @_exported import NIO", matching: expression) == nil)
         #expect(swiftImportedModule(in: "let example = \"import NIO\"", matching: expression) == nil)
+        let sameLine = swiftImportedModules(
+            in: """
+            let explanation = "ignore; import NIO"
+            // ignore; import ArgumentParser
+            import SwamaCore; import AppKit // import NIOHTTP1
+
+            """,
+            matching: expression
+        )
+        #expect(sameLine.map(\.module) == ["SwamaCore", "AppKit"])
+        #expect(sameLine.map(\.line) == [3, 3])
     }
 
     @Test func compilerPublicAPIGateRejectsUpstreamTypesAndConformances() throws {
@@ -436,6 +447,18 @@ struct AcceptanceTests {
         )
         var malformedFragmentSymbol = validSymbol
         malformedFragmentSymbol["declarationFragments"] = [42]
+        var unqualifiedPreciseSymbol = validSymbol
+        unqualifiedPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "ForeignType",
+            "preciseIdentifier": "ForeignType"
+        ]]
+        var truncatedPreciseSymbol = validSymbol
+        truncatedPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Foo",
+            "preciseIdentifier": "s:99Foo"
+        ]]
         let malformedGraphs: [JSONObject] = [
             ["module": ["name": "SwamaCore"], "symbols": [42], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [validSymbol], "relationships": [42]],
@@ -443,6 +466,17 @@ struct AcceptanceTests {
                 "module": ["name": "SwamaCore"],
                 "symbols": [malformedFragmentSymbol],
                 "relationships": []
+            ],
+            ["module": ["name": "SwamaCore"], "symbols": [unqualifiedPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [truncatedPreciseSymbol], "relationships": []],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [validSymbol],
+                "relationships": [[
+                    "kind": "conformsTo",
+                    "source": "s:9SwamaCore7PayloadV",
+                    "target": "ForeignProtocol"
+                ]]
             ]
         ]
 
@@ -727,6 +761,75 @@ struct AcceptanceTests {
         #expect(try report.array("unresolved_dependencies") as? [String] == [
             "unresolved product swama:HiddenProduct"
         ])
+    }
+
+    @Test func targetDependencyGraphRejectsMalformedNestedEvidence() throws {
+        let malformed: [[String: JSONObject]] = [
+            [
+                "swama": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore", NSNull()],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [["name": "SwamaCore", "dependencies": []]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [[
+                        "name": "SwamaCore",
+                        "dependencies": [["product": ["Hidden", 42, NSNull(), NSNull()]]]
+                    ]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [[
+                        "name": "SwamaCore",
+                        "dependencies": [["product": ["Hidden", NSNull(), NSNull(), "active"]]]
+                    ]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [["fileSystem": [[
+                        "identity": "dependency",
+                        "nameForTargetDependencyResolutionOnly": 42
+                    ]]]],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [["name": "SwamaCore", "dependencies": []]]
+                ]
+            ]
+        ]
+
+        for manifests in malformed {
+            #expect(throws: AcceptanceFailure.self) {
+                _ = try analyzeResolvedTargetDependencyGraph(
+                    rootIdentity: "swama",
+                    manifests: manifests,
+                    target: "SwamaCore",
+                    forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+                )
+            }
+        }
     }
 
     @Test func targetDependencyGraphResolvesCustomPackageAliases() throws {
