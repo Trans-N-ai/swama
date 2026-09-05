@@ -428,6 +428,35 @@ struct AcceptanceTests {
         #expect(command.contains("public"))
     }
 
+    @Test func compilerPublicAPIGateRejectsMalformedSymbolGraphEntries() throws {
+        let validSymbol = symbolGraphSymbol(
+            precise: "s:9SwamaCore7PayloadV",
+            path: ["Payload"],
+            declaration: [typeFragment("Payload", precise: "s:9SwamaCore7PayloadV")]
+        )
+        var malformedFragmentSymbol = validSymbol
+        malformedFragmentSymbol["declarationFragments"] = [42]
+        let malformedGraphs: [JSONObject] = [
+            ["module": ["name": "SwamaCore"], "symbols": [42], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [validSymbol], "relationships": [42]],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [malformedFragmentSymbol],
+                "relationships": []
+            ]
+        ]
+
+        for graph in malformedGraphs {
+            #expect(throws: AcceptanceFailure.self) {
+                _ = try analyzePublicAPISymbolGraphs(
+                    [graph],
+                    target: "SwamaCore",
+                    allowedModules: ["Swift", "Foundation", "SwamaCore"]
+                )
+            }
+        }
+    }
+
     @Test func coreBoundaryReportsCompilerOracleAsUnmetWhenTargetIsAbsent() throws {
         let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
         let contract = try AcceptanceContract.load(from: paths.contract)
@@ -449,6 +478,7 @@ struct AcceptanceTests {
         let contract = try AcceptanceContract.load(from: paths.contract)
         let report = try externalConsumerBoundaryReport(
             fixture: paths.fixture,
+            expectedPackage: paths.package,
             contract: contract.coreGuards
         )
 
@@ -462,8 +492,8 @@ struct AcceptanceTests {
         let contract = try AcceptanceContract.load(from: paths.contract).coreGuards
         let description: JSONObject = [
             "dependencies": [
-                ["fileSystem": [["identity": "swama"]]],
-                ["fileSystem": [["identity": "helper"]]]
+                ["fileSystem": [["identity": "swama", "path": "/repo/swama"]]],
+                ["fileSystem": [["identity": "helper", "path": "/repo/helper"]]]
             ],
             "targets": [[
                 "name": "SwamaAcceptanceProbe",
@@ -477,6 +507,7 @@ struct AcceptanceTests {
         let report = try analyzeExternalConsumerPackage(
             description,
             imports: ["Foundation", "SwamaCore"],
+            expectedPackagePath: "/repo/swama",
             contract: contract
         )
         #expect(try report.boolean("passed") == false)
@@ -486,6 +517,58 @@ struct AcceptanceTests {
         #expect(try report.array("unexpected_target_dependencies").contains { value in
             (value as? JSONObject)?["kind"] as? String == "byName"
         })
+
+        let wrongPath: JSONObject = [
+            "dependencies": [[
+                "fileSystem": [["identity": "swama", "path": "/tmp/unreviewed/swama"]]
+            ]],
+            "targets": [[
+                "name": "SwamaAcceptanceProbe",
+                "dependencies": [["product": ["SwamaCore", "swama", NSNull(), NSNull()]]]
+            ]]
+        ]
+        let wrongPathReport = try analyzeExternalConsumerPackage(
+            wrongPath,
+            imports: ["Foundation", "SwamaCore"],
+            expectedPackagePath: "/repo/swama",
+            contract: contract
+        )
+        #expect(try wrongPathReport.boolean("passed") == false)
+        #expect(try wrongPathReport.array("unexpected_package_dependencies").contains { value in
+            (value as? JSONObject)?["path"] as? String == "/tmp/unreviewed/swama"
+        })
+    }
+
+    @Test func consumerBoundaryRejectsMalformedManifestEntries() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract).coreGuards
+        let validDependency: JSONObject = [
+            "fileSystem": [["identity": "swama", "path": "/repo/swama"]]
+        ]
+        let validTarget: JSONObject = [
+            "name": "SwamaAcceptanceProbe",
+            "dependencies": [["product": ["SwamaCore", "swama", NSNull(), NSNull()]]]
+        ]
+        let malformed: [JSONObject] = [
+            ["dependencies": [42], "targets": [validTarget]],
+            ["dependencies": [["fileSystem": [42]]], "targets": [validTarget]],
+            ["dependencies": [validDependency], "targets": [42]],
+            [
+                "dependencies": [validDependency],
+                "targets": [["name": "SwamaAcceptanceProbe", "dependencies": [42]]]
+            ]
+        ]
+
+        for description in malformed {
+            #expect(throws: AcceptanceFailure.self) {
+                _ = try analyzeExternalConsumerPackage(
+                    description,
+                    imports: ["Foundation", "SwamaCore"],
+                    expectedPackagePath: "/repo/swama",
+                    contract: contract
+                )
+            }
+        }
     }
 
     @Test func targetDependencyGraphRejectsTransitiveAudioProducts() throws {
@@ -569,7 +652,6 @@ struct AcceptanceTests {
             "MLXAudioSTT",
             "MLXAudioTTS"
         ])
-        #expect(try report.array("unresolved_dependencies").isEmpty)
         #expect(try report.object("manifest_sha256").keys.contains("mlx-audio-swift"))
         #expect(try report.object("resolved_package_traits").array("swama") as? [String] == ["default"])
     }
@@ -615,6 +697,94 @@ struct AcceptanceTests {
         #expect(try miswiredReport.boolean("passed") == false)
         #expect(try miswiredReport.boolean("library_product_present") == false)
         #expect(try miswiredReport.array("library_product_targets") as? [String] == ["Implementation"])
+    }
+
+    @Test func targetDependencyGraphRejectsAnUnknownExplicitPackageAlias() throws {
+        let manifests: [String: JSONObject] = [
+            "swama": [
+                "dependencies": [],
+                "products": [[
+                    "name": "SwamaCore",
+                    "targets": ["SwamaCore"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [[
+                    "name": "SwamaCore",
+                    "dependencies": [[
+                        "product": ["HiddenProduct", "undeclared-package", NSNull(), NSNull()]
+                    ]]
+                ]]
+            ]
+        ]
+        let report = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: manifests,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.array("unresolved_dependencies") as? [String] == [
+            "unresolved product swama:HiddenProduct"
+        ])
+    }
+
+    @Test func targetDependencyGraphResolvesCustomPackageAliases() throws {
+        let manifests: [String: JSONObject] = [
+            "swama": [
+                "dependencies": [["fileSystem": [[
+                    "identity": "dependency",
+                    "nameForTargetDependencyResolutionOnly": "ChosenAlias"
+                ]]]],
+                "products": [[
+                    "name": "SwamaCore",
+                    "targets": ["SwamaCore"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [[
+                    "name": "SwamaCore",
+                    "dependencies": [[
+                        "product": ["HiddenProduct", "ChosenAlias", NSNull(), NSNull()]
+                    ]]
+                ]]
+            ],
+            "dependency": [
+                "dependencies": [["fileSystem": [["identity": "audio"]]]],
+                "products": [[
+                    "name": "HiddenProduct",
+                    "targets": ["HiddenTarget"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [[
+                    "name": "HiddenTarget",
+                    "dependencies": [[
+                        "product": ["MLXAudioCore", "audio", NSNull(), NSNull()]
+                    ]]
+                ]]
+            ],
+            "audio": [
+                "dependencies": [],
+                "products": [[
+                    "name": "MLXAudioCore",
+                    "targets": ["MLXAudioCore"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [["name": "MLXAudioCore", "dependencies": []]]
+            ]
+        ]
+        let report = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: manifests,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.array("forbidden_products") as? [String] == ["MLXAudioCore"])
+        #expect(try report.array("unresolved_dependencies").isEmpty)
+        #expect(try report.array("product_dependencies").contains { value in
+            (value as? String) == "dependency:HiddenProduct"
+        })
     }
 
     @Test func inlinableAndUsableFromInlineCannotOpenUncheckedReachability() throws {

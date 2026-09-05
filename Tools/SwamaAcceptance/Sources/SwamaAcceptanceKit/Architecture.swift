@@ -45,6 +45,7 @@ func architectureReport(
     if let coreGuards {
         report["external_consumer_boundary"] = try externalConsumerBoundaryReport(
             fixture: paths.fixture,
+            expectedPackage: paths.package,
             contract: coreGuards,
             developerDirectory: developerDirectory
         )

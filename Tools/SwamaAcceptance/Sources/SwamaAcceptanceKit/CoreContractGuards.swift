@@ -103,27 +103,41 @@ func analyzePublicAPISymbolGraphs(
             continue
         }
 
-        let symbols = try graph.array("symbols").compactMap { $0 as? JSONObject }
-        let relationships = (try? graph.array("relationships").compactMap { $0 as? JSONObject }) ?? []
-        let relationshipsBySource = Dictionary(grouping: relationships) { $0["source"] as? String ?? "" }
+        let symbols = try strictObjectArray(graph, key: "symbols", context: "symbol graph")
+        let relationships = try strictObjectArray(graph, key: "relationships", context: "symbol graph")
+        var relationshipsBySource: [String: [JSONObject]] = [:]
+        for relationship in relationships {
+            let source = try relationship.string("source")
+            _ = try relationship.string("kind")
+            _ = try relationship.string("target")
+            if relationship["targetFallback"] != nil {
+                _ = try relationship.string("targetFallback")
+            }
+            relationshipsBySource[source, default: []].append(relationship)
+        }
 
         for symbol in symbols {
-            let access = (symbol["accessLevel"] as? String) ?? "public"
+            let access = try symbol.string("accessLevel")
             guard access == "public" || access == "open" else {
                 continue
             }
 
             let identifier = try symbol.object("identifier").string("precise")
             let kind = try symbol.object("kind").string("identifier")
-            let path = try symbol.array("pathComponents").compactMap { $0 as? String }
-            let fragments = try symbol.array("declarationFragments").compactMap { $0 as? JSONObject }
+            let path = try strictStringArray(symbol, key: "pathComponents", context: "public symbol")
+            let fragments = try strictObjectArray(
+                symbol,
+                key: "declarationFragments",
+                context: "public symbol"
+            )
             let declaration = fragments.compactMap { $0["spelling"] as? String }.joined()
-            let canonicalFragments = fragments.map { fragment -> JSONObject in
-                var value: JSONObject = [
-                    "kind": fragment["kind"] as? String ?? "unknown",
-                    "spelling": fragment["spelling"] as? String ?? ""
+            let canonicalFragments = try fragments.map { fragment -> JSONObject in
+                var value: JSONObject = try [
+                    "kind": fragment.string("kind"),
+                    "spelling": fragment.string("spelling")
                 ]
-                if let precise = fragment["preciseIdentifier"] as? String {
+                if fragment["preciseIdentifier"] != nil {
+                    let precise = try fragment.string("preciseIdentifier")
                     value["precise_identifier"] = precise
                     value["module"] = moduleName(in: precise) ?? "unknown"
                 }
@@ -151,15 +165,17 @@ func analyzePublicAPISymbolGraphs(
 
             var conformances: [String] = []
             for relationship in relationshipsBySource[identifier] ?? [] {
-                guard let relationshipKind = relationship["kind"] as? String,
-                      ["conformsTo", "extensionTo", "inheritsFrom", "memberOf", "requirementOf"]
-                      .contains(relationshipKind),
-                      let targetIdentifier = relationship["target"] as? String
+                let relationshipKind = try relationship.string("kind")
+                guard ["conformsTo", "extensionTo", "inheritsFrom", "memberOf", "requirementOf"]
+                    .contains(relationshipKind)
                 else {
                     continue
                 }
 
-                let fallback = relationship["targetFallback"] as? String
+                let targetIdentifier = try relationship.string("target")
+                let fallback = try relationship["targetFallback"] == nil
+                    ? nil
+                    : relationship.string("targetFallback")
                 let module = moduleName(in: targetIdentifier) ?? fallback?.split(separator: ".").first.map(String.init)
                 if let module {
                     references.insert(module)
@@ -262,6 +278,30 @@ private func publicAPIViolation(
     ]
 }
 
+private func strictObjectArray(_ object: JSONObject, key: String, context: String) throws -> [JSONObject] {
+    try object.array(key).enumerated().map { index, value in
+        guard let value = value as? JSONObject else {
+            throw AcceptanceFailure.unknown(
+                "\(context) \(key)[\(index)] is not an object"
+            )
+        }
+
+        return value
+    }
+}
+
+private func strictStringArray(_ object: JSONObject, key: String, context: String) throws -> [String] {
+    try object.array(key).enumerated().map { index, value in
+        guard let value = value as? String else {
+            throw AcceptanceFailure.unknown(
+                "\(context) \(key)[\(index)] is not a string"
+            )
+        }
+
+        return value
+    }
+}
+
 private func moduleName(in preciseIdentifier: String) -> String? {
     guard preciseIdentifier.hasPrefix("s:") else {
         return preciseIdentifier.contains(":") ? "__foreign__" : nil
@@ -292,6 +332,7 @@ private func moduleName(in preciseIdentifier: String) -> String? {
 
 func externalConsumerBoundaryReport(
     fixture: URL,
+    expectedPackage: URL,
     contract: CoreGuardContract,
     developerDirectory: URL = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
 ) throws -> JSONObject {
@@ -334,62 +375,106 @@ func externalConsumerBoundaryReport(
             }
         }
     }
-    return try analyzeExternalConsumerPackage(description, imports: imports, contract: contract)
+    return try analyzeExternalConsumerPackage(
+        description,
+        imports: imports,
+        expectedPackagePath: canonicalFilesystemPath(expectedPackage.path),
+        contract: contract
+    )
 }
 
 func analyzeExternalConsumerPackage(
     _ description: JSONObject,
     imports: Set<String>,
+    expectedPackagePath: String,
     contract: CoreGuardContract
 ) throws -> JSONObject {
-    let packageDependencies = try description.array("dependencies").compactMap { $0 as? JSONObject }
+    let packageDependencies = try strictObjectArray(
+        description,
+        key: "dependencies",
+        context: "external consumer package"
+    )
     var packageDescriptors: [JSONObject] = []
     for dependency in packageDependencies {
-        for kind in dependency.keys.sorted() {
-            guard let items = dependency[kind] as? [Any] else {
-                continue
-            }
+        guard dependency.count == 1, let kind = dependency.keys.first else {
+            throw AcceptanceFailure.unknown("external consumer package dependency has an unsupported shape")
+        }
 
-            for value in items {
-                guard let item = value as? JSONObject else {
-                    continue
+        let items = try strictObjectArray(
+            dependency,
+            key: kind,
+            context: "external consumer package dependency"
+        )
+        for item in items {
+            let identity = try item.string("identity")
+            let path: String =
+                if kind == "fileSystem" {
+                    try canonicalFilesystemPath(item.string("path"))
                 }
-
-                packageDescriptors.append([
-                    "kind": kind,
-                    "identity": item["identity"] as? String ?? "unknown"
-                ])
-            }
+                else {
+                    ""
+                }
+            packageDescriptors.append([
+                "kind": kind,
+                "identity": identity,
+                "path": path,
+                "path_sha256": sha256(Data(path.utf8))
+            ])
         }
     }
     let allowedPackageDependencies = packageDescriptors.filter {
-        $0["kind"] as? String == "fileSystem" && $0["identity"] as? String == "swama"
+        $0["kind"] as? String == "fileSystem"
+            && $0["identity"] as? String == "swama"
+            && $0["path"] as? String == expectedPackagePath
     }
     let unexpectedPackageDependencies = packageDescriptors.filter {
-        !($0["kind"] as? String == "fileSystem" && $0["identity"] as? String == "swama")
+        !($0["kind"] as? String == "fileSystem"
+            && $0["identity"] as? String == "swama"
+            && $0["path"] as? String == expectedPackagePath
+        )
     }
 
-    let targets = try description.array("targets").compactMap { $0 as? JSONObject }
+    let targets = try strictObjectArray(description, key: "targets", context: "external consumer package")
     var targetDependencies: [JSONObject] = []
     for target in targets {
-        let targetName = target["name"] as? String ?? "unknown"
-        for value in (target["dependencies"] as? [Any]) ?? [] {
-            guard let dependency = value as? JSONObject else {
-                continue
+        let targetName = try target.string("name")
+        for dependency in try strictObjectArray(
+            target,
+            key: "dependencies",
+            context: "external consumer target \(targetName)"
+        ) {
+            guard dependency.count == 1, let kind = dependency.keys.first else {
+                throw AcceptanceFailure.unknown(
+                    "external consumer target dependency has an unsupported shape"
+                )
             }
 
-            for kind in dependency.keys.sorted() {
-                guard let parts = dependency[kind] as? [Any] else {
-                    continue
+            let parts = try dependency.array(kind)
+            guard let name = parts.first as? String else {
+                throw AcceptanceFailure.unknown(
+                    "external consumer target dependency name is not a string"
+                )
+            }
+
+            let package: String
+            if parts.count > 1, !(parts[1] is NSNull) {
+                guard let value = parts[1] as? String else {
+                    throw AcceptanceFailure.unknown(
+                        "external consumer target dependency package is not a string"
+                    )
                 }
 
-                targetDependencies.append([
-                    "target": targetName,
-                    "kind": kind,
-                    "name": parts.first as? String ?? "unknown",
-                    "package": parts.count > 1 ? parts[1] as? String ?? "" : ""
-                ])
+                package = value
             }
+            else {
+                package = ""
+            }
+            targetDependencies.append([
+                "target": targetName,
+                "kind": kind,
+                "name": name,
+                "package": package
+            ])
         }
     }
     let allowedTargetDependencies = targetDependencies.filter {
@@ -424,6 +509,8 @@ func analyzeExternalConsumerPackage(
     return [
         "status": passed ? "ready" : "unmet",
         "target_count": targets.count,
+        "expected_package_path": expectedPackagePath,
+        "expected_package_path_sha256": sha256(Data(expectedPackagePath.utf8)),
         "package_dependencies": packageDescriptors,
         "unexpected_package_dependencies": unexpectedPackageDependencies,
         "target_dependencies": targetDependencies,
@@ -437,6 +524,13 @@ func analyzeExternalConsumerPackage(
         "missing_imports": missingImports,
         "passed": passed
     ]
+}
+
+private func canonicalFilesystemPath(_ path: String) -> String {
+    URL(fileURLWithPath: path)
+        .standardizedFileURL
+        .resolvingSymlinksInPath()
+        .path
 }
 
 func coreTargetDependencyReport(
@@ -534,10 +628,17 @@ func analyzeResolvedTargetDependencyGraph(
     for (identity, manifest) in manifests {
         productsByPackage[identity] = try packageProducts(manifest)
         targetsByPackage[identity] = try packageTargets(manifest)
-        if aliasesByPackage[identity] == nil {
-            let identities = try packageDependencyIdentities(manifest)
-            aliasesByPackage[identity] = Dictionary(uniqueKeysWithValues: identities.map { ($0, $0) })
+        let declaredAliases = try packageDependencyAliases(manifest)
+        var aliases = aliasesByPackage[identity] ?? [:]
+        for (alias, packageIdentity) in declaredAliases {
+            if let existing = aliases[alias], existing != packageIdentity {
+                throw AcceptanceFailure.unknown(
+                    "package dependency alias is ambiguous: \(identity):\(alias)"
+                )
+            }
+            aliases[alias] = packageIdentity
         }
+        aliasesByPackage[identity] = aliases
     }
 
     let rootProducts = productsByPackage[rootIdentity] ?? [:]
@@ -771,8 +872,8 @@ private func packageTargets(_ manifest: JSONObject) throws -> [String: JSONObjec
     return result
 }
 
-private func packageDependencyIdentities(_ manifest: JSONObject) throws -> Set<String> {
-    var result: Set<String> = []
+private func packageDependencyAliases(_ manifest: JSONObject) throws -> [String: String] {
+    var result: [String: String] = [:]
     for value in try manifest.array("dependencies") {
         guard let dependency = value as? JSONObject else {
             throw AcceptanceFailure.unknown("resolved package dependency is not an object")
@@ -788,7 +889,17 @@ private func packageDependencyIdentities(_ manifest: JSONObject) throws -> Set<S
                     throw AcceptanceFailure.unknown("resolved package dependency descriptor is not an object")
                 }
 
-                try result.insert(descriptor.string("identity"))
+                let identity = try descriptor.string("identity")
+                let aliases = [identity, descriptor["nameForTargetDependencyResolutionOnly"] as? String]
+                    .compactMap(\.self)
+                for alias in aliases {
+                    if let existing = result[alias], existing != identity {
+                        throw AcceptanceFailure.unknown(
+                            "package dependency alias maps to multiple identities: \(alias)"
+                        )
+                    }
+                    result[alias] = identity
+                }
             }
         }
     }
@@ -851,9 +962,7 @@ private func resolveProductDependency(
           let product = productsByPackage[package]?[name],
           !product.targets.isEmpty
     else {
-        if requestedPackage == nil || packageAliases[requestedPackage ?? ""] != nil {
-            unresolved.insert("unresolved product \(sourcePackage):\(name)")
-        }
+        unresolved.insert("unresolved product \(sourcePackage):\(name)")
         return
     }
 

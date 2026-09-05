@@ -106,7 +106,9 @@ stage may be red while an earlier migration stage is green:
   implementation reachability cannot escape the compiler-derived declaration
   boundary.
 - `consumer-boundary` additionally requires the external fixture to depend on
-  and import only `SwamaCore`, with no remote/upstream package or product.
+  and import only `SwamaCore`, with its sole filesystem dependency resolving
+  to this workspace's exact `swama` package and no remote/upstream package or
+  product.
 
 Absence of `SwamaCore` is a structured `unmet` result, never an empty-symbol
 success. The compiler manifest records symbol kind, path, declaration
