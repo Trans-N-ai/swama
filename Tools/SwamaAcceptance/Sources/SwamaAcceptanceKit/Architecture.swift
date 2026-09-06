@@ -13,11 +13,46 @@ func compilerImportedModules(
 
     let sentinelModule = "__SwamaAcceptanceImportSentinel"
     let source = try String(contentsOf: file, encoding: .utf8)
+    let expandedSource = sourceRemovingConditionalCompilationDirectives(source)
+    let inputs = expandedSource == source ? [source] : [source, expandedSource]
+    var declarations: [(module: String, line: Int, offset: Int)] = []
+    var seen: Set<String> = []
+
+    for input in inputs {
+        for declaration in try compilerImportedModules(
+            in: input,
+            sourceFile: file,
+            swift: swift,
+            developerDirectory: developerDirectory,
+            sentinelModule: sentinelModule
+        ) {
+            let key = "\(declaration.offset)\u{0}\(declaration.module)"
+            if seen.insert(key).inserted {
+                declarations.append(declaration)
+            }
+        }
+    }
+
+    return declarations
+        .sorted { lhs, rhs in
+            lhs.offset == rhs.offset ? lhs.module < rhs.module : lhs.offset < rhs.offset
+        }
+        .map { ($0.module, $0.line) }
+}
+
+private func compilerImportedModules(
+    in source: String,
+    sourceFile: URL,
+    swift: URL,
+    developerDirectory: URL,
+    sentinelModule: String
+) throws -> [(module: String, line: Int, offset: Int)] {
+    let compilerSource = "\(source)\nimport \(sentinelModule)\n"
     let compilerInput = FileManager.default
         .temporaryDirectory
         .appendingPathComponent("swama-imports-\(UUID().uuidString).swift")
     defer { try? FileManager.default.removeItem(at: compilerInput) }
-    try Data("\(source)\nimport \(sentinelModule)\n".utf8).write(to: compilerInput, options: .atomic)
+    try Data(compilerSource.utf8).write(to: compilerInput, options: .atomic)
 
     let result = try runCommand(
         [
@@ -36,12 +71,15 @@ func compilerImportedModules(
     )
     guard result.returnCode == 0 else {
         throw AcceptanceFailure.unknown(
-            "cannot parse Swift imports in \(file.lastPathComponent):\n\(commandFailureSummary(result))"
+            "cannot parse Swift imports in \(sourceFile.lastPathComponent):\n\(commandFailureSummary(result))"
         )
     }
 
     do {
-        let declarations = try parseCompilerImportAST(result.stdout)
+        let declarations = try parseCompilerImportAST(
+            result.stdout,
+            sentinelModule: sentinelModule
+        )
         guard declarations.count(where: { $0.module == sentinelModule }) == 1 else {
             throw AcceptanceFailure.unknown("Swift import parser omitted or duplicated its sentinel")
         }
@@ -50,27 +88,32 @@ func compilerImportedModules(
     }
     catch {
         throw AcceptanceFailure.unknown(
-            "cannot interpret Swift import AST for \(file.lastPathComponent): \(error)"
+            "cannot interpret Swift import AST for \(sourceFile.lastPathComponent): \(error)"
         )
     }
 }
 
-func parseCompilerImportAST(_ output: String) throws -> [(module: String, line: Int)] {
-    guard isCompleteCompilerAST(output) else {
-        throw AcceptanceFailure.unknown("Swift import parser emitted incomplete or noisy AST output")
-    }
+func parseCompilerImportAST(
+    _ output: String,
+    sentinelModule: String
+) throws -> [(module: String, line: Int, offset: Int)] {
+    try validateCompilerImportAST(output, sentinelModule: sentinelModule)
 
     let moduleExpression = try NSRegularExpression(pattern: #"module="([^"]+)""#)
-    let lineExpression = try NSRegularExpression(
-        pattern: #"range=\[.*:(\d+):\d+ - line:\d+:\d+\]"#
+    let rangeExpression = try NSRegularExpression(
+        pattern: #"range=\[.*:(\d+):(\d+) - line:\d+:\d+\]"#
     )
-    var declarations: [(module: String, line: Int)] = []
+    var declarations: [(module: String, line: Int, offset: Int)] = []
     for outputLine in output.split(separator: "\n").map(String.init)
         where outputLine.contains("(import_decl")
     {
         guard let module = regexCapture(moduleExpression, in: outputLine, group: 1),
-              let lineValue = regexCapture(lineExpression, in: outputLine, group: 1),
+              let lineValue = regexCapture(rangeExpression, in: outputLine, group: 1),
+              let columnValue = regexCapture(rangeExpression, in: outputLine, group: 2),
               let line = Int(lineValue),
+              let column = Int(columnValue),
+              line > 0,
+              column > 0,
               let rootModule = module.split(separator: ".").first.map(String.init)
         else {
             throw AcceptanceFailure.unknown(
@@ -78,14 +121,49 @@ func parseCompilerImportAST(_ output: String) throws -> [(module: String, line: 
             )
         }
 
-        declarations.append((rootModule, line))
+        let (lineOffset, lineOverflow) = line.multipliedReportingOverflow(by: 1_000_000)
+        let (offset, columnOverflow) = lineOffset.addingReportingOverflow(column)
+        guard !lineOverflow, !columnOverflow else {
+            throw AcceptanceFailure.unknown("Swift import parser emitted an overflowing source location")
+        }
+
+        declarations.append((rootModule, line, offset))
     }
     return declarations
 }
 
-private func isCompleteCompilerAST(_ output: String) -> Bool {
-    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.hasPrefix("(source_file") && trimmed.hasSuffix(")")
+private func validateCompilerImportAST(
+    _ output: String,
+    sentinelModule: String
+) throws {
+    var lines = output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    while lines.last?.isEmpty == true {
+        lines.removeLast()
+    }
+    guard let first = lines.first, first.hasPrefix("(source_file ") else {
+        throw AcceptanceFailure.unknown("Swift import parser emitted a missing or noisy source_file root")
+    }
+    guard lines.dropFirst().allSatisfy({ !$0.hasPrefix("(") }) else {
+        throw AcceptanceFailure.unknown("Swift import parser emitted an additional top-level record")
+    }
+
+    let sentinelField = "module=\"\(sentinelModule)\""
+    guard output.components(separatedBy: sentinelField).count == 2 else {
+        throw AcceptanceFailure.unknown("Swift import parser omitted or duplicated its sentinel")
+    }
+
+    let escapedSentinel = NSRegularExpression.escapedPattern(for: sentinelModule)
+    let sentinelExpression = try NSRegularExpression(
+        pattern: #"^\s+\(import_decl .* module=""# + escapedSentinel + #""\)\)$"#
+    )
+    guard let last = lines.last else {
+        throw AcceptanceFailure.unknown("Swift import parser emitted an empty AST")
+    }
+
+    let lastRange = NSRange(last.startIndex ..< last.endIndex, in: last)
+    guard sentinelExpression.firstMatch(in: last, range: lastRange)?.range == lastRange else {
+        throw AcceptanceFailure.unknown("Swift import parser emitted a truncated or noisy AST suffix")
+    }
 }
 
 private func regexCapture(
@@ -101,6 +179,46 @@ private func regexCapture(
     }
 
     return String(text[capture])
+}
+
+func sourceRemovingConditionalCompilationDirectives(_ source: String) -> String {
+    var bytes = Array(source.utf8)
+    var lineStart = 0
+    while lineStart < bytes.count {
+        var lineEnd = lineStart
+        while lineEnd < bytes.count, bytes[lineEnd] != 0x0A, bytes[lineEnd] != 0x0D {
+            lineEnd += 1
+        }
+
+        var tokenStart = lineStart
+        while tokenStart < lineEnd, bytes[tokenStart] == 0x20 || bytes[tokenStart] == 0x09 {
+            tokenStart += 1
+        }
+        let directiveTokens = ["#elseif", "#endif", "#else", "#if"]
+        let isDirective = directiveTokens.contains { token in
+            let tokenBytes = Array(token.utf8)
+            guard tokenStart + tokenBytes.count <= lineEnd,
+                  Array(bytes[tokenStart ..< tokenStart + tokenBytes.count]) == tokenBytes
+            else {
+                return false
+            }
+
+            let boundary = tokenStart + tokenBytes.count
+            return boundary == lineEnd || bytes[boundary] == 0x20 || bytes[boundary] == 0x09
+        }
+        if isDirective {
+            for index in lineStart ..< lineEnd {
+                bytes[index] = 0x20
+            }
+        }
+
+        lineStart = lineEnd
+        while lineStart < bytes.count, bytes[lineStart] == 0x0A || bytes[lineStart] == 0x0D {
+            lineStart += 1
+        }
+    }
+
+    return String(decoding: bytes, as: UTF8.self)
 }
 
 // MARK: - ArchitectureStage

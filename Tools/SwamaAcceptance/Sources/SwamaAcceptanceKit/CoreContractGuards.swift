@@ -97,7 +97,10 @@ func analyzePublicAPISymbolGraphs(
     allowedModules: Set<String>,
     developerDirectory: URL = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
 ) throws -> JSONObject {
-    let moduleResolver = try PreciseIdentifierModuleResolver(developerDirectory: developerDirectory)
+    let moduleResolver = try PreciseIdentifierModuleResolver(
+        developerDirectory: developerDirectory,
+        preciseIdentifiers: preciseIdentifiersNeedingResolution(in: graphs, target: target)
+    )
     let knownAccessLevels: Set<String> = ["fileprivate", "internal", "open", "package", "private", "public"]
     let knownRelationshipKinds: Set<String> = [
         "conformsTo",
@@ -369,6 +372,42 @@ private func optionalStrictStringArray(_ object: JSONObject, key: String, contex
     return try strictStringArray(object, key: key, context: context)
 }
 
+// MARK: - Precise identifier discovery
+
+private func preciseIdentifiersNeedingResolution(
+    in graphs: [JSONObject],
+    target: String
+) throws -> Set<String> {
+    var identifiers: Set<String> = []
+    for graph in graphs where try graph.object("module").string("name") == target {
+        let symbols = try strictObjectArray(graph, key: "symbols", context: "symbol graph")
+        var publicSymbolIdentifiers: Set<String> = []
+        for symbol in symbols {
+            let access = try symbol.string("accessLevel")
+            guard access == "public" || access == "open" else {
+                continue
+            }
+
+            try publicSymbolIdentifiers.insert(symbol.object("identifier").string("precise"))
+            for fragment in try strictObjectArray(
+                symbol,
+                key: "declarationFragments",
+                context: "public symbol"
+            ) where fragment["preciseIdentifier"] != nil {
+                try identifiers.insert(fragment.string("preciseIdentifier"))
+            }
+        }
+        for relationship in try strictObjectArray(graph, key: "relationships", context: "symbol graph") {
+            guard try publicSymbolIdentifiers.contains(relationship.string("source")) else {
+                continue
+            }
+
+            try identifiers.insert(relationship.string("target"))
+        }
+    }
+    return identifiers
+}
+
 // MARK: - PreciseIdentifierModuleResolver
 
 private final class PreciseIdentifierModuleResolver {
@@ -380,12 +419,43 @@ private final class PreciseIdentifierModuleResolver {
     private let demangler: URL
     private var cache: [String: Resolution] = [:]
 
-    init(developerDirectory: URL) throws {
+    init(developerDirectory: URL, preciseIdentifiers: Set<String>) throws {
         demangler = developerDirectory.appendingPathComponent(
             "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-demangle"
         )
         guard FileManager.default.isExecutableFile(atPath: demangler.path) else {
             throw AcceptanceFailure.unknown("missing Swift demangler: \(demangler.path)")
+        }
+
+        let swiftIdentifiers = preciseIdentifiers
+            .filter { $0.hasPrefix("s:") }
+            .sorted()
+        guard !swiftIdentifiers.isEmpty else {
+            return
+        }
+
+        let mangledNames = swiftIdentifiers.map { "$s\($0.dropFirst(2))" }
+        let result = try runCommand(
+            [demangler.path] + mangledNames,
+            currentDirectory: FileManager.default.temporaryDirectory,
+            timeout: 30,
+            sampleMemory: false,
+            timeoutFailureKind: .unknown,
+            timeoutContext: "Swift USR demangler"
+        )
+        guard result.returnCode == 0, result.stderr.isEmpty else {
+            throw AcceptanceFailure.unknown(
+                "cannot demangle Swift preciseIdentifiers:\n" + commandFailureSummary(result)
+            )
+        }
+
+        let modules = try parseBatchDemanglerOutput(
+            result.stdout,
+            preciseIdentifiers: swiftIdentifiers,
+            mangledNames: mangledNames
+        )
+        for (identifier, module) in zip(swiftIdentifiers, modules) {
+            cache[identifier] = module.map(Resolution.module) ?? .invalid
         }
     }
 
@@ -413,64 +483,74 @@ private final class PreciseIdentifierModuleResolver {
             return preciseIdentifier.contains(":") ? "__foreign__" : nil
         }
 
-        let payload = preciseIdentifier.dropFirst(2)
-        guard !payload.isEmpty else {
-            return nil
-        }
-
-        let digits = payload.prefix(while: \.isNumber)
-        if !digits.isEmpty {
-            guard let length = Int(digits), length > 0 else {
-                return nil
-            }
-
-            let moduleStart = payload.index(payload.startIndex, offsetBy: digits.count)
-            guard let moduleEnd = payload.index(
-                moduleStart,
-                offsetBy: length,
-                limitedBy: payload.endIndex
-            ),
-                moduleEnd < payload.endIndex
-            else {
-                return nil
-            }
-
-            return String(payload[moduleStart ..< moduleEnd])
-        }
-
-        let mangled = "$s\(payload)"
-        let result = try runCommand(
-            [demangler.path, "--compact", mangled],
-            currentDirectory: FileManager.default.temporaryDirectory,
-            timeout: 10,
-            sampleMemory: false,
-            timeoutFailureKind: .unknown,
-            timeoutContext: "Swift USR demangler"
+        throw AcceptanceFailure.unknown(
+            "Swift preciseIdentifier was not included in the sealed demangler batch: \(preciseIdentifier)"
         )
-        guard result.returnCode == 0 else {
-            throw AcceptanceFailure.unknown(
-                "cannot demangle Swift preciseIdentifier \(preciseIdentifier):\n"
-                    + commandFailureSummary(result)
-            )
-        }
-
-        return try parseDemangledSwiftModule(result.stdout, mangled: mangled)
     }
 }
 
-func parseDemangledSwiftModule(_ output: String, mangled: String) throws -> String? {
-    let lines = output.split(whereSeparator: \.isNewline).map(String.init)
-    guard lines.count == 1, let demangled = lines.first, demangled != mangled else {
-        return nil
+func parseBatchDemanglerOutput(
+    _ output: String,
+    preciseIdentifiers: [String],
+    mangledNames: [String]
+) throws -> [String?] {
+    guard preciseIdentifiers.count == mangledNames.count else {
+        throw AcceptanceFailure.unknown("Swift demangler batch identity count is inconsistent")
+    }
+    guard output.last == "\n", !output.contains("\r") else {
+        throw AcceptanceFailure.unknown("Swift demangler batch has an incomplete record terminator")
     }
 
-    let expression = try NSRegularExpression(pattern: #"^Swift\.[A-Za-z_][A-Za-z0-9_]*$"#)
+    let lines = output.dropLast().split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    guard lines.count == mangledNames.count else {
+        throw AcceptanceFailure.unknown(
+            "Swift demangler batch returned \(lines.count) records for \(mangledNames.count) inputs"
+        )
+    }
+
+    return try zip(zip(preciseIdentifiers, mangledNames), lines).map { pair, line in
+        let (preciseIdentifier, mangled) = pair
+        let prefix = "\(mangled) ---> "
+        guard line.hasPrefix(prefix) else {
+            throw AcceptanceFailure.unknown(
+                "Swift demangler batch returned a reordered or unsupported record"
+            )
+        }
+
+        let demangled = String(line.dropFirst(prefix.count))
+        guard !demangled.isEmpty else {
+            throw AcceptanceFailure.unknown("Swift demangler batch returned an empty record")
+        }
+        guard demangled != mangled else {
+            return nil
+        }
+
+        let payload = preciseIdentifier.dropFirst(2)
+        let requiresSwiftModule = payload.first?.isNumber != true
+        return try demangledModuleName(
+            demangled,
+            requiresSwiftModule: requiresSwiftModule
+        )
+    }
+}
+
+private func demangledModuleName(
+    _ demangled: String,
+    requiresSwiftModule: Bool
+) throws -> String? {
+    let expression = try NSRegularExpression(
+        pattern: #"^([A-Za-z_][A-Za-z0-9_]*)\.[A-Za-z_][A-Za-z0-9_.]*$"#
+    )
     let range = NSRange(demangled.startIndex ..< demangled.endIndex, in: demangled)
-    guard expression.firstMatch(in: demangled, range: range)?.range == range else {
+    guard let match = expression.firstMatch(in: demangled, range: range),
+          match.range == range,
+          let moduleRange = Range(match.range(at: 1), in: demangled)
+    else {
         return nil
     }
 
-    return "Swift"
+    let module = String(demangled[moduleRange])
+    return requiresSwiftModule && module != "Swift" ? nil : module
 }
 
 // MARK: - External consumer and target dependency boundary

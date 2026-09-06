@@ -343,6 +343,13 @@ struct AcceptanceTests {
         let customPrefix = /1
         let afterPlus = 1 + /foo; import FakeAfterPlus/
         let quotient = 8 / 2
+        #if os(macOS)
+        import MLXLMCommon
+        #elseif os(iOS)
+        import UIKit
+        #else
+        import Foundation
+        #endif
         @_exported import NIO
         internal import AppKit
         package import struct NIOCore.ByteBuffer
@@ -355,6 +362,9 @@ struct AcceptanceTests {
             developerDirectory: URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
         )
         #expect(declarations.map(\.module) == [
+            "MLXLMCommon",
+            "UIKit",
+            "Foundation",
             "NIO",
             "AppKit",
             "NIOCore",
@@ -362,16 +372,60 @@ struct AcceptanceTests {
             "ArgumentParser"
         ])
         #expect(declarations.allSatisfy { $0.line > 0 })
-        #expect(declarations[3].line == declarations[4].line)
+        if declarations.count == 8 {
+            #expect(declarations[6].line == declarations[7].line)
+        }
+        let sentinel = "__SwamaAcceptanceImportSentinel"
+        let validAST = """
+        (source_file "/tmp/test.swift"
+          (import_decl decl_context=0x1 range=[/tmp/test.swift:1:1 - line:1:7] module="Foo")
+          (import_decl decl_context=0x1 range=[/tmp/test.swift:2:1 - line:2:8] module="\(sentinel)"))
+        """
+        #expect(try parseCompilerImportAST(validAST, sentinelModule: sentinel).map(\.module) == [
+            "Foo",
+            sentinel
+        ])
         for malformed in [
-            #"(source_file "<test>" (import_decl module="Foo")"#,
-            #"noise (source_file "<test>")"#,
-            #"(source_file "<test>" (import_decl module="Foo"))"#
+            validAST.dropLast().description,
+            "noise \(validAST)",
+            "(source_file \"/tmp/first.swift\")\n\(validAST)",
+            "(source_file \"/tmp/test.swift\"\n(unexpected_output)\n"
+                + "  (import_decl decl_context=0x1 range=[/tmp/test.swift:2:1 - line:2:8] "
+                + "module=\"\(sentinel)\"))",
+            validAST.replacingOccurrences(
+                of: "module=\"\(sentinel)\"))",
+                with: "module=\"\(sentinel)\")\n"
+                    + "  (import_decl decl_context=0x1 range=[/tmp/test.swift:3:1 - line:3:8] "
+                    + "module=\"\(sentinel)\"))"
+            ),
+            validAST + "\n  (unexpected_output)",
+            "\(validAST)\nnoise"
         ] {
             #expect(throws: AcceptanceFailure.self) {
-                _ = try parseCompilerImportAST(malformed)
+                _ = try parseCompilerImportAST(malformed, sentinelModule: sentinel)
             }
         }
+
+        let stripped = sourceRemovingConditionalCompilationDirectives(source)
+        #expect(stripped.utf8.count == source.utf8.count)
+        #expect(stripped.split(separator: "\n", omittingEmptySubsequences: false).count
+            == source.split(separator: "\n", omittingEmptySubsequences: false).count
+        )
+        #expect(!stripped.contains("#if os(macOS)"))
+        #expect(stripped.contains("import MLXLMCommon"))
+        #expect(stripped.contains("import Foundation"))
+    }
+
+    @Test func compilerImportParserAcceptsTheRealDiagnosticsFile() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let file = paths.package
+            .appendingPathComponent("Sources/SwamaKit/Diagnostics/SwamaDiagnostics.swift")
+        let declarations = try compilerImportedModules(
+            in: file,
+            developerDirectory: URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
+        )
+        #expect(declarations.map(\.module) == ["CryptoKit", "Darwin", "Foundation"])
+        #expect(declarations.map(\.line) == [1, 2, 3])
     }
 
     @Test func compilerPublicAPIGateRejectsUpstreamTypesAndConformances() throws {
@@ -417,7 +471,7 @@ struct AcceptanceTests {
                 [
                     "kind": "conformsTo",
                     "source": "s:9SwamaCore7PayloadV",
-                    "target": "s:12ForeignTypes14ForeignProtocolP",
+                    "target": "s:12ForeignTypes15ForeignProtocolP",
                     "targetFallback": "ForeignTypes.ForeignProtocol"
                 ],
                 [
@@ -495,6 +549,12 @@ struct AcceptanceTests {
             "spelling": "NotReal",
             "preciseIdentifier": "s:not-real"
         ]]
+        var invalidNumericPreciseSymbol = validSymbol
+        invalidNumericPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Swift",
+            "preciseIdentifier": "s:5Swift?"
+        ]]
         var unknownFragmentKindSymbol = validSymbol
         unknownFragmentKindSymbol["declarationFragments"] = [[
             "kind": "futureTypeReference",
@@ -516,6 +576,7 @@ struct AcceptanceTests {
             ["module": ["name": "SwamaCore"], "symbols": [emptySwiftPreciseSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [zeroLengthSwiftPreciseSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [invalidSwiftPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [invalidNumericPreciseSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [unknownFragmentKindSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [unknownAccessSymbol], "relationships": []],
             [
@@ -652,11 +713,36 @@ struct AcceptanceTests {
             #expect(try report.array("violations").isEmpty)
         }
 
-        #expect(try parseDemangledSwiftModule("Swift.ClosedRange\n", mangled: "$sSN") == "Swift")
-        #expect(try parseDemangledSwiftModule("$sSN\n", mangled: "$sSN") == nil)
-        #expect(try parseDemangledSwiftModule("Swift.Int\nnoise\n", mangled: "$sSi") == nil)
-        #expect(try parseDemangledSwiftModule("Other.Type\n", mangled: "$sXX") == nil)
-        #expect(try parseDemangledSwiftModule("Swift.Int noise\n", mangled: "$sSi") == nil)
+        let preciseIdentifiers = ["s:SN", "s:5Other4TypeV"]
+        let mangledNames = ["$sSN", "$s5Other4TypeV"]
+        let parsedModules = try parseBatchDemanglerOutput(
+            "$sSN ---> Swift.ClosedRange\n$s5Other4TypeV ---> Other.Type\n",
+            preciseIdentifiers: preciseIdentifiers,
+            mangledNames: mangledNames
+        )
+        #expect(parsedModules[0] == "Swift")
+        #expect(parsedModules[1] == "Other")
+        for malformed in [
+            "$s5Other4TypeV ---> Other.Type\n$sSN ---> Swift.ClosedRange\n",
+            "\n$sSN ---> Swift.ClosedRange\n$s5Other4TypeV ---> Other.Type\n",
+            "$sSN ---> Swift.ClosedRange\n$s5Other4TypeV ---> Other.Type",
+            "$sSN ---> Swift.ClosedRange\n$s5Other4TypeV ---> Other.Type\nnoise\n"
+        ] {
+            #expect(throws: AcceptanceFailure.self) {
+                _ = try parseBatchDemanglerOutput(
+                    malformed,
+                    preciseIdentifiers: preciseIdentifiers,
+                    mangledNames: mangledNames
+                )
+            }
+        }
+
+        let invalidModules = try parseBatchDemanglerOutput(
+            "$s5Swift? ---> $s5Swift?\n$sXX ---> Other.Type\n",
+            preciseIdentifiers: ["s:5Swift?", "s:XX"],
+            mangledNames: ["$s5Swift?", "$sXX"]
+        )
+        #expect(invalidModules == [nil, nil])
     }
 
     @Test func coreBoundaryReportsCompilerOracleAsUnmetWhenTargetIsAbsent() throws {
