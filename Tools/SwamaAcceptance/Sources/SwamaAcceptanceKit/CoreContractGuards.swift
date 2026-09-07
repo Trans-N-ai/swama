@@ -289,13 +289,10 @@ func analyzePublicAPISymbolGraphs(
     allowedModules: Set<String>,
     developerDirectory: URL = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
 ) throws -> JSONObject {
-    let localIdentifiers = try localSymbolIdentifiers(in: graphs, target: target)
+    let localExtensionIdentifiers = try localExtensionIdentifiers(in: graphs, target: target)
     let moduleResolver = try PreciseIdentifierModuleResolver(
         developerDirectory: developerDirectory,
         preciseIdentifiers: preciseIdentifiersNeedingResolution(in: graphs, target: target)
-            .subtracting(localIdentifiers),
-        localIdentifiers: localIdentifiers,
-        localModule: target
     )
     let knownAccessLevels: Set<String> = ["fileprivate", "internal", "open", "package", "private", "public"]
     let knownRelationshipKinds: Set<String> = [
@@ -352,7 +349,12 @@ func analyzePublicAPISymbolGraphs(
                 let extensionTargets = try symbolRelationships.filter {
                     try $0.string("kind") == "extensionTo"
                 }
-                guard identifier.hasPrefix("s:e:"), extensionTargets.count == 1 else {
+                let extensionTarget = try extensionTargets.first?.string("target")
+                guard identifier.hasPrefix("s:e:"),
+                      extensionTargets.count == 1,
+                      extensionTarget?.hasPrefix("s:e:") == false,
+                      extensionTarget != identifier
+                else {
                     throw AcceptanceFailure.unknown(
                         "public extension symbol is missing its unique extensionTo relationship: \(identifier)"
                     )
@@ -442,10 +444,20 @@ func analyzePublicAPISymbolGraphs(
                 let fallback = try relationship["targetFallback"] == nil
                     ? nil
                     : relationship.string("targetFallback")
-                guard let module = try moduleResolver.moduleName(in: targetIdentifier) else {
-                    throw AcceptanceFailure.unknown(
-                        "public relationship has an unparseable target: \(targetIdentifier)"
-                    )
+                let module: String
+                if relationshipKind == "memberOf",
+                   localExtensionIdentifiers.contains(targetIdentifier)
+                {
+                    module = target
+                }
+                else {
+                    guard let resolved = try moduleResolver.moduleName(in: targetIdentifier) else {
+                        throw AcceptanceFailure.unknown(
+                            "public relationship has an unparseable target: \(targetIdentifier)"
+                        )
+                    }
+
+                    module = resolved
                 }
 
                 references.insert(module)
@@ -581,7 +593,7 @@ private func optionalStrictStringArray(_ object: JSONObject, key: String, contex
 
 // MARK: - Precise identifier discovery
 
-private func localSymbolIdentifiers(
+private func localExtensionIdentifiers(
     in graphs: [JSONObject],
     target: String
 ) throws -> Set<String> {
@@ -590,7 +602,11 @@ private func localSymbolIdentifiers(
         for symbol in try strictObjectArray(graph, key: "symbols", context: "symbol graph") {
             let precise = try symbol.object("identifier").string("precise")
             let kind = try symbol.object("kind").string("identifier")
-            if kind == "swift.extension", precise.hasPrefix("s:e:") {
+            let access = try symbol.string("accessLevel")
+            if ["public", "open"].contains(access),
+               kind == "swift.extension",
+               precise.hasPrefix("s:e:")
+            {
                 identifiers.insert(precise)
             }
         }
@@ -641,21 +657,12 @@ private final class PreciseIdentifierModuleResolver {
     }
 
     private let demangler: URL
-    private let localIdentifiers: Set<String>
-    private let localModule: String
     private var cache: [String: Resolution] = [:]
 
-    init(
-        developerDirectory: URL,
-        preciseIdentifiers: Set<String>,
-        localIdentifiers: Set<String>,
-        localModule: String
-    ) throws {
+    init(developerDirectory: URL, preciseIdentifiers: Set<String>) throws {
         demangler = developerDirectory.appendingPathComponent(
             "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-demangle"
         )
-        self.localIdentifiers = localIdentifiers
-        self.localModule = localModule
         guard FileManager.default.isExecutableFile(atPath: demangler.path) else {
             throw AcceptanceFailure.unknown("missing Swift demangler: \(demangler.path)")
         }
@@ -693,9 +700,6 @@ private final class PreciseIdentifierModuleResolver {
     }
 
     func moduleName(in preciseIdentifier: String) throws -> String? {
-        if localIdentifiers.contains(preciseIdentifier) {
-            return localModule
-        }
         if let cached = cache[preciseIdentifier] {
             switch cached {
             case let .module(module):

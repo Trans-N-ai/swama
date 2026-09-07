@@ -708,6 +708,35 @@ struct AcceptanceTests {
             "identifier": "swift.extension",
             "displayName": "Extension"
         ]
+        let extensionIdentifier = "s:e:s:10ForeignKit12ExternalTypeV9SwamaCoreE"
+        var publicExtensionSymbol = extensionWithoutTargetSymbol
+        publicExtensionSymbol["identifier"] = [
+            "precise": extensionIdentifier,
+            "interfaceLanguage": "swift"
+        ]
+        publicExtensionSymbol["declarationFragments"] = [
+            ["kind": "keyword", "spelling": "extension"],
+            ["kind": "text", "spelling": " ExternalType"]
+        ]
+        var internalExtensionSymbol = publicExtensionSymbol
+        internalExtensionSymbol["accessLevel"] = "internal"
+        var opaqueFragmentSymbol = validSymbol
+        opaqueFragmentSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "ExternalType",
+            "preciseIdentifier": extensionIdentifier
+        ]]
+        let publicMember = symbolGraphSymbol(
+            precise: "s:9SwamaCore11publicMemberyyF",
+            path: ["publicMember"],
+            declaration: [["kind": "identifier", "spelling": "publicMember"]]
+        )
+        let validExtensionTarget: JSONObject = [
+            "kind": "extensionTo",
+            "source": extensionIdentifier,
+            "target": "s:10ForeignKit12ExternalTypeV",
+            "targetFallback": "ForeignKit.ExternalType"
+        ]
         let malformedGraphs: [JSONObject] = [
             ["module": ["name": "SwamaCore"], "symbols": [42], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [validSymbol], "relationships": [42]],
@@ -726,6 +755,44 @@ struct AcceptanceTests {
             ["module": ["name": "SwamaCore"], "symbols": [unknownFragmentKindSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [unknownAccessSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [extensionWithoutTargetSymbol], "relationships": []],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [publicExtensionSymbol],
+                "relationships": [[
+                    "kind": "extensionTo",
+                    "source": extensionIdentifier,
+                    "target": extensionIdentifier
+                ]]
+            ],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [publicExtensionSymbol, opaqueFragmentSymbol],
+                "relationships": [validExtensionTarget]
+            ],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [publicExtensionSymbol, validSymbol],
+                "relationships": [
+                    validExtensionTarget,
+                    [
+                        "kind": "conformsTo",
+                        "source": "s:9SwamaCore7PayloadV",
+                        "target": extensionIdentifier
+                    ]
+                ]
+            ],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [internalExtensionSymbol, publicMember],
+                "relationships": [
+                    validExtensionTarget,
+                    [
+                        "kind": "memberOf",
+                        "source": "s:9SwamaCore11publicMemberyyF",
+                        "target": extensionIdentifier
+                    ]
+                ]
+            ],
             [
                 "module": ["name": "SwamaCore"],
                 "symbols": [validSymbol],
