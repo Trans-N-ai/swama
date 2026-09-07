@@ -8,6 +8,10 @@ let package = Package(
     ],
     products: [
         .library(
+            name: "SwamaCore",
+            targets: ["SwamaCore"]
+        ),
+        .library(
             name: "SwamaKit",
             targets: ["SwamaKit"]
         ),
@@ -40,6 +44,10 @@ let package = Package(
         ),
     ],
     targets: [
+        .target(
+            name: "SwamaCore",
+            path: "Sources/SwamaCore"
+        ),
         .target(
             name: "SwamaKit",
             dependencies: [

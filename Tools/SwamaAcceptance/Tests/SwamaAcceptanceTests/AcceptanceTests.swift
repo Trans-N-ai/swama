@@ -995,7 +995,7 @@ struct AcceptanceTests {
         #expect(concatenatedModules == [nil])
     }
 
-    @Test func coreBoundaryReportsCompilerOracleAsUnmetWhenTargetIsAbsent() throws {
+    @Test func coreBoundaryTurnsGreenWhenTheDependencyFreeTargetExists() throws {
         let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
         let contract = try AcceptanceContract.load(from: paths.contract)
         let report = try architectureReport(
@@ -1005,10 +1005,24 @@ struct AcceptanceTests {
             paths: paths
         )
 
-        #expect(report["passed"] as? Bool == false)
+        #expect(try report.boolean("passed"))
+        #expect(try report.boolean("core_target_present"))
         let compiler = try report.object("compiler_public_api")
-        #expect(try compiler.string("status") == "unmet")
-        #expect(try compiler.boolean("passed") == false)
+        #expect(try compiler.string("status") == "ready")
+        #expect(try compiler.boolean("passed"))
+        #expect(try compiler.array("violations").isEmpty)
+        let dependencies = try report.object("core_target_dependencies")
+        #expect(try dependencies.string("status") == "ready")
+        #expect(try dependencies.boolean("passed"))
+
+        let consumerReport = try architectureReport(
+            contract: contract.architecture,
+            coreGuards: contract.coreGuards,
+            stage: .consumerBoundary,
+            paths: paths
+        )
+        #expect(try consumerReport.boolean("passed") == false)
+        #expect(try consumerReport.object("external_consumer_boundary").boolean("passed") == false)
     }
 
     @Test func consumerBoundaryNamesEveryCurrentMLXDependencyAndImport() throws {
