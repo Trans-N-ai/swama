@@ -471,6 +471,29 @@ struct AcceptanceTests {
             "Payload"
         ])
         #expect((report["manifest_sha256"] as? String)?.count == 64)
+
+        let contradictoryPrecise = "s:11MLXLMCommon14ModelContainerC"
+        let contradictoryReport = try analyzePublicAPISymbolGraphs(
+            [[
+                "module": ["name": "SwamaCore"],
+                "symbols": [
+                    symbolGraphSymbol(
+                        precise: contradictoryPrecise,
+                        path: ["ContradictoryContainer"],
+                        declaration: [
+                            typeFragment("ModelContainer", precise: contradictoryPrecise)
+                        ]
+                    )
+                ],
+                "relationships": []
+            ]],
+            target: "SwamaCore",
+            allowedModules: ["Swift", "Foundation", "SwamaCore"]
+        )
+        #expect(try contradictoryReport.boolean("passed") == false)
+        #expect(try contradictoryReport.array("violations").contains { value in
+            (value as? JSONObject)?["module"] as? String == "MLXLMCommon"
+        })
     }
 
     @Test func compilerSymbolGraphIncludesExtensionBlocks() {
@@ -596,7 +619,12 @@ struct AcceptanceTests {
         #expect(try report.boolean("passed") == false)
         #expect(try report.integer("graph_count") == 2)
         #expect(try report.array("violations").contains { value in
-            (value as? JSONObject)?["module"] as? String == "ForeignKit"
+            guard let violation = value as? JSONObject else {
+                return false
+            }
+
+            return violation["module"] as? String == "ForeignKit"
+                && violation["source"] as? String == "extensionTo"
         })
 
         let developerDirectory = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
@@ -671,6 +699,15 @@ struct AcceptanceTests {
         ]]
         var unknownAccessSymbol = validSymbol
         unknownAccessSymbol["accessLevel"] = "futurePublic"
+        var extensionWithoutTargetSymbol = validSymbol
+        extensionWithoutTargetSymbol["identifier"] = [
+            "precise": "s:e:s:10ForeignKit12ExternalTypeV9SwamaCoreE",
+            "interfaceLanguage": "swift"
+        ]
+        extensionWithoutTargetSymbol["kind"] = [
+            "identifier": "swift.extension",
+            "displayName": "Extension"
+        ]
         let malformedGraphs: [JSONObject] = [
             ["module": ["name": "SwamaCore"], "symbols": [42], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [validSymbol], "relationships": [42]],
@@ -688,6 +725,7 @@ struct AcceptanceTests {
             ["module": ["name": "SwamaCore"], "symbols": [concatenatedPreciseSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [unknownFragmentKindSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [unknownAccessSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [extensionWithoutTargetSymbol], "relationships": []],
             [
                 "module": ["name": "SwamaCore"],
                 "symbols": [validSymbol],

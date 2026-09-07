@@ -347,6 +347,17 @@ func analyzePublicAPISymbolGraphs(
 
             let identifier = try symbol.object("identifier").string("precise")
             let kind = try symbol.object("kind").string("identifier")
+            let symbolRelationships = relationshipsBySource[identifier] ?? []
+            if kind == "swift.extension" {
+                let extensionTargets = try symbolRelationships.filter {
+                    try $0.string("kind") == "extensionTo"
+                }
+                guard identifier.hasPrefix("s:e:"), extensionTargets.count == 1 else {
+                    throw AcceptanceFailure.unknown(
+                        "public extension symbol is missing its unique extensionTo relationship: \(identifier)"
+                    )
+                }
+            }
             let path = try strictStringArray(symbol, key: "pathComponents", context: "public symbol")
             let fragments = try strictObjectArray(
                 symbol,
@@ -425,7 +436,7 @@ func analyzePublicAPISymbolGraphs(
             }
 
             var conformances: [String] = []
-            for relationship in relationshipsBySource[identifier] ?? [] {
+            for relationship in symbolRelationships {
                 let relationshipKind = try relationship.string("kind")
                 let targetIdentifier = try relationship.string("target")
                 let fallback = try relationship["targetFallback"] == nil
@@ -577,7 +588,11 @@ private func localSymbolIdentifiers(
     var identifiers: Set<String> = []
     for graph in graphs where try graph.object("module").string("name") == target {
         for symbol in try strictObjectArray(graph, key: "symbols", context: "symbol graph") {
-            try identifiers.insert(symbol.object("identifier").string("precise"))
+            let precise = try symbol.object("identifier").string("precise")
+            let kind = try symbol.object("kind").string("identifier")
+            if kind == "swift.extension", precise.hasPrefix("s:e:") {
+                identifiers.insert(precise)
+            }
         }
     }
     return identifiers
