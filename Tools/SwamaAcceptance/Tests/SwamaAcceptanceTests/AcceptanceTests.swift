@@ -1213,6 +1213,63 @@ struct AcceptanceTests {
         #expect(try report.object("resolved_package_traits").array("swama") as? [String] == ["default"])
     }
 
+    @Test func runtimeAndCoreResolvedClosuresContainNoAudioProducts() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract).coreGuards
+        let developerDirectory = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
+
+        let runtime = try coreTargetDependencyReport(
+            target: "SwamaRuntime",
+            paths: paths,
+            developerDirectory: developerDirectory,
+            contract: contract
+        )
+        #expect(try runtime.boolean("library_product_present") == false)
+        #expect(try runtime.array("forbidden_products").isEmpty)
+        #expect(try runtime.array("unresolved_dependencies").isEmpty)
+        #expect(try Set(runtime.array("target_dependencies").compactMap { $0 as? String })
+            .contains("swama:SwamaRuntime")
+        )
+
+        let core = try coreTargetDependencyReport(
+            target: "SwamaCore",
+            paths: paths,
+            developerDirectory: developerDirectory,
+            contract: contract
+        )
+        #expect(try core.boolean("passed"))
+        #expect(try core.array("forbidden_products").isEmpty)
+        #expect(try core.array("unresolved_dependencies").isEmpty)
+        #expect(try core.array("direct_target_dependencies") as? [String] == ["swama:SwamaRuntime"])
+        #expect(try core.array("direct_product_dependencies").isEmpty)
+        #expect(try core.array("direct_by_name_dependencies").isEmpty)
+        #expect(try Set(core.array("target_dependencies").compactMap { $0 as? String }).isSuperset(of: [
+            "swama:SwamaCore",
+            "swama:SwamaRuntime"
+        ]))
+    }
+
+    @Test func runtimeAndCoreCompilerPublicManifestsStayEmpty() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract).coreGuards
+        let developerDirectory = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
+
+        for target in ["SwamaRuntime", "SwamaCore"] {
+            let report = try compilerPublicAPIReport(
+                target: target,
+                paths: paths,
+                developerDirectory: developerDirectory,
+                contract: contract
+            )
+            #expect(try report.boolean("passed"), "\(target) public API guard failed")
+            #expect(try report.integer("symbol_count") == 0)
+            #expect(try report.array("symbols").isEmpty)
+            #expect(try report
+                .string("manifest_sha256") == "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            )
+        }
+    }
+
     @Test func targetDependencyGraphRejectsAMissingLibraryProduct() throws {
         let missingProduct: [String: JSONObject] = [
             "swama": [
@@ -1283,6 +1340,63 @@ struct AcceptanceTests {
         #expect(try report.boolean("passed") == false)
         #expect(try report.array("unresolved_dependencies") as? [String] == [
             "unresolved product swama:HiddenProduct"
+        ])
+    }
+
+    @Test func targetDependencyGraphExcludesHostOnlyMacroDependenciesFromRuntimeClosure() throws {
+        var manifests: [String: JSONObject] = [
+            "swama": [
+                "dependencies": [],
+                "products": [[
+                    "name": "SwamaCore",
+                    "targets": ["SwamaCore"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [[
+                    "name": "SwamaCore",
+                    "dependencies": [["product": ["Macros", "tools", NSNull(), NSNull()]]]
+                ]]
+            ],
+            "tools": [
+                "dependencies": [],
+                "products": [[
+                    "name": "Macros",
+                    "targets": ["MacroImpl"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [[
+                    "name": "MacroImpl",
+                    "type": "macro",
+                    "dependencies": [[
+                        "product": ["SwiftSyntaxMacros", "swift-syntax", NSNull(), NSNull()]
+                    ]]
+                ]]
+            ]
+        ]
+        let aliases = ["swama": ["tools": "tools"]]
+        let report = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: manifests,
+            packageAliases: aliases,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+        #expect(try report.boolean("passed"))
+        #expect(try report.array("unresolved_dependencies").isEmpty)
+
+        var macroTarget = try #require((manifests["tools"]?["targets"] as? [JSONObject])?.first)
+        macroTarget["type"] = "regular"
+        manifests["tools"]?["targets"] = [macroTarget]
+        let regularReport = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: manifests,
+            packageAliases: aliases,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+        #expect(try regularReport.boolean("passed") == false)
+        #expect(try regularReport.array("unresolved_dependencies") as? [String] == [
+            "unresolved product tools:SwiftSyntaxMacros"
         ])
     }
 
