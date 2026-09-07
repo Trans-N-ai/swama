@@ -239,9 +239,25 @@ func swiftTargetTriple(_ output: String) throws -> String {
         throw AcceptanceFailure.unknown("Swift target identity is invalid JSON: \(error)")
     }
 
-    let triple = try object.object("target").string("triple")
-    guard !triple.isEmpty else {
-        throw AcceptanceFailure.unknown("Swift target identity has an empty triple")
+    let target = try object.object("target")
+    let triple = try target.string("triple")
+    let unversionedTriple = try target.string("unversionedTriple")
+    let platform = try target.string("platform")
+    let arch = try target.string("arch")
+    guard platform == "macosx",
+          ["arm64", "x86_64"].contains(arch),
+          unversionedTriple == "\(arch)-apple-macosx"
+    else {
+        throw AcceptanceFailure.unknown("Swift target identity is not a supported macOS target")
+    }
+
+    let expression = try NSRegularExpression(
+        pattern: "^\(NSRegularExpression.escapedPattern(for: unversionedTriple))"
+            + #"[0-9]+(?:\.[0-9]+){0,2}$"#
+    )
+    let range = NSRange(triple.startIndex ..< triple.endIndex, in: triple)
+    guard expression.firstMatch(in: triple, range: range)?.range == range else {
+        throw AcceptanceFailure.unknown("Swift target identity has an invalid versioned triple")
     }
 
     return triple
@@ -273,9 +289,13 @@ func analyzePublicAPISymbolGraphs(
     allowedModules: Set<String>,
     developerDirectory: URL = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
 ) throws -> JSONObject {
+    let localIdentifiers = try localSymbolIdentifiers(in: graphs, target: target)
     let moduleResolver = try PreciseIdentifierModuleResolver(
         developerDirectory: developerDirectory,
         preciseIdentifiers: preciseIdentifiersNeedingResolution(in: graphs, target: target)
+            .subtracting(localIdentifiers),
+        localIdentifiers: localIdentifiers,
+        localModule: target
     )
     let knownAccessLevels: Set<String> = ["fileprivate", "internal", "open", "package", "private", "public"]
     let knownRelationshipKinds: Set<String> = [
@@ -550,6 +570,19 @@ private func optionalStrictStringArray(_ object: JSONObject, key: String, contex
 
 // MARK: - Precise identifier discovery
 
+private func localSymbolIdentifiers(
+    in graphs: [JSONObject],
+    target: String
+) throws -> Set<String> {
+    var identifiers: Set<String> = []
+    for graph in graphs where try graph.object("module").string("name") == target {
+        for symbol in try strictObjectArray(graph, key: "symbols", context: "symbol graph") {
+            try identifiers.insert(symbol.object("identifier").string("precise"))
+        }
+    }
+    return identifiers
+}
+
 private func preciseIdentifiersNeedingResolution(
     in graphs: [JSONObject],
     target: String
@@ -593,12 +626,21 @@ private final class PreciseIdentifierModuleResolver {
     }
 
     private let demangler: URL
+    private let localIdentifiers: Set<String>
+    private let localModule: String
     private var cache: [String: Resolution] = [:]
 
-    init(developerDirectory: URL, preciseIdentifiers: Set<String>) throws {
+    init(
+        developerDirectory: URL,
+        preciseIdentifiers: Set<String>,
+        localIdentifiers: Set<String>,
+        localModule: String
+    ) throws {
         demangler = developerDirectory.appendingPathComponent(
             "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-demangle"
         )
+        self.localIdentifiers = localIdentifiers
+        self.localModule = localModule
         guard FileManager.default.isExecutableFile(atPath: demangler.path) else {
             throw AcceptanceFailure.unknown("missing Swift demangler: \(demangler.path)")
         }
@@ -636,6 +678,9 @@ private final class PreciseIdentifierModuleResolver {
     }
 
     func moduleName(in preciseIdentifier: String) throws -> String? {
+        if localIdentifiers.contains(preciseIdentifier) {
+            return localModule
+        }
         if let cached = cache[preciseIdentifier] {
             switch cached {
             case let .module(module):

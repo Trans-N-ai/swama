@@ -498,14 +498,21 @@ struct AcceptanceTests {
         #expect(extract.contains("public"))
         #expect(extract.contains("SwamaCore"))
 
-        #expect((try? swiftTargetTriple(#"{"target":{"triple":"arm64-apple-macosx15.4"}}"#))
+        let validTarget =
+            #"{"target":{"triple":"arm64-apple-macosx15.4","unversionedTriple":"arm64-apple-macosx","platform":"macosx","arch":"arm64"}}"#
+        #expect((try? swiftTargetTriple(validTarget))
             == "arm64-apple-macosx15.4"
         )
         for malformed in [
             "not-json",
             #"{"target":{}}"#,
-            #"{"target":{"triple":""}}"#,
-            #"{"target":{"triple":42}}"#
+            #"{"target":{"triple":"","unversionedTriple":"arm64-apple-macosx","platform":"macosx","arch":"arm64"}}"#,
+            #"{"target":{"triple":" arm64-apple-macosx15.4 ","unversionedTriple":"arm64-apple-macosx","platform":"macosx","arch":"arm64"}}"#,
+            #"{"target":{"triple":"arm64-apple15.4","unversionedTriple":"arm64-apple","platform":"macosx","arch":"arm64"}}"#,
+            #"{"target":{"triple":"arm64-apple-macosx15.4","unversionedTriple":"x86_64-apple-macosx","platform":"macosx","arch":"arm64"}}"#,
+            #"{"target":{"triple":"arm64-apple-ios15.4","unversionedTriple":"arm64-apple-ios","platform":"ios","arch":"arm64"}}"#,
+            #"{"target":{"triple":"mips-apple-macosx15.4","unversionedTriple":"mips-apple-macosx","platform":"macosx","arch":"mips"}}"#,
+            #"{"target":{"triple":42,"unversionedTriple":"arm64-apple-macosx","platform":"macosx","arch":"arm64"}}"#
         ] {
             #expect(throws: AcceptanceFailure.self) {
                 _ = try swiftTargetTriple(malformed)
@@ -519,6 +526,7 @@ struct AcceptanceTests {
             .appendingPathComponent("swama-target-symbol-graph-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: temporary) }
         let package = temporary.appendingPathComponent("swama")
+        let foreignPackage = temporary.appendingPathComponent("ForeignKit")
         try FileManager.default.createDirectory(
             at: package.appendingPathComponent("Sources/SwamaCore"),
             withIntermediateDirectories: true
@@ -526,6 +534,24 @@ struct AcceptanceTests {
         try FileManager.default.createDirectory(
             at: package.appendingPathComponent("Tests/BrokenTests"),
             withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: foreignPackage.appendingPathComponent("Sources/ForeignKit"),
+            withIntermediateDirectories: true
+        )
+        try Data("""
+        // swift-tools-version: 6.2
+        import PackageDescription
+
+        let package = Package(
+            name: "ForeignKit",
+            platforms: [.macOS("15.4")],
+            products: [.library(name: "ForeignKit", targets: ["ForeignKit"])],
+            targets: [.target(name: "ForeignKit")]
+        )
+        """.utf8).write(to: foreignPackage.appendingPathComponent("Package.swift"))
+        try Data("public struct ExternalType {}\n".utf8).write(
+            to: foreignPackage.appendingPathComponent("Sources/ForeignKit/ForeignKit.swift")
         )
         try Data("""
         // swift-tools-version: 6.2
@@ -535,13 +561,23 @@ struct AcceptanceTests {
             name: "TargetScopedGraph",
             platforms: [.macOS("15.4")],
             products: [.library(name: "SwamaCore", targets: ["SwamaCore"])],
+            dependencies: [.package(path: "../ForeignKit")],
             targets: [
-                .target(name: "SwamaCore"),
+                .target(
+                    name: "SwamaCore",
+                    dependencies: [.product(name: "ForeignKit", package: "ForeignKit")]
+                ),
                 .testTarget(name: "BrokenTests", dependencies: ["SwamaCore"])
             ]
         )
         """.utf8).write(to: package.appendingPathComponent("Package.swift"))
-        try Data("public struct CoreMarker: Sendable {}\n".utf8).write(
+        try Data("""
+        import ForeignKit
+
+        extension ExternalType {
+            public func leaked() {}
+        }
+        """.utf8).write(
             to: package.appendingPathComponent("Sources/SwamaCore/SwamaCore.swift")
         )
         try Data("let broken = MissingType()\n".utf8).write(
@@ -557,9 +593,11 @@ struct AcceptanceTests {
             developerDirectory: URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer"),
             contract: contract.coreGuards
         )
-        #expect(try report.boolean("passed"))
-        #expect(try report.integer("graph_count") == 1)
-        #expect(try report.array("violations").isEmpty)
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.integer("graph_count") == 2)
+        #expect(try report.array("violations").contains { value in
+            (value as? JSONObject)?["module"] as? String == "ForeignKit"
+        })
 
         let developerDirectory = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
         let swift = developerDirectory.appendingPathComponent(
