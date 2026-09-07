@@ -132,7 +132,7 @@ private let lineage: [LineageEntry] = [
     .init(
         path: "Model/ModelManager.swift",
         legacySHA256: "24b73c4993bba9f271e6ac6b991fd409a7bf13b2c619a509b0a31f3245594870",
-        runtimeSHA256: "257d7ed38bd7e7664988b98560c6af9d2ff605d502c0b25a07dc02f01c887b9f",
+        runtimeSHA256: "69352f2209b50329093c8cfc35b1d26ccdb6095f21df3c379f769286be08ac0d",
         derivedSymbols: ["enum ModelManager"]
     ),
     .init(

@@ -1240,6 +1240,9 @@ struct AcceptanceTests {
         #expect(try core.boolean("passed"))
         #expect(try core.array("forbidden_products").isEmpty)
         #expect(try core.array("unresolved_dependencies").isEmpty)
+        #expect(try core.array("direct_target_dependencies") as? [String] == ["swama:SwamaRuntime"])
+        #expect(try core.array("direct_product_dependencies").isEmpty)
+        #expect(try core.array("direct_by_name_dependencies").isEmpty)
         #expect(try Set(core.array("target_dependencies").compactMap { $0 as? String }).isSuperset(of: [
             "swama:SwamaCore",
             "swama:SwamaRuntime"

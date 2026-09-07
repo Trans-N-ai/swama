@@ -70,4 +70,32 @@ final class ModelManagerTests {
         // Note: We can't test the actual content since it depends on the file system
         // In a real test environment, you might want to mock the file system
     }
+
+    @Test func runtimeListingSkipsTheCanonicalAudioSubtree() throws {
+        let root = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-runtime-model-list-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let languageModel = root.appendingPathComponent("org/language-model", isDirectory: true)
+        let audioModel = root.appendingPathComponent("mlx-audio/org_audio-model", isDirectory: true)
+        try FileManager.default.createDirectory(at: languageModel, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: audioModel, withIntermediateDirectories: true)
+        try metadata(id: "org/language-model").write(
+            to: languageModel.appendingPathComponent(".swama-meta.json")
+        )
+        try metadata(id: "org/audio-model").write(
+            to: audioModel.appendingPathComponent(".swama-meta.json")
+        )
+
+        #expect(ModelManager.scanModelsDirectory(at: root).map(\.id) == ["org/language-model"])
+    }
+
+    private func metadata(id: String) throws -> Data {
+        try JSONSerialization.data(withJSONObject: [
+            "id": id,
+            "created": 1_703_980_800,
+            "size_in_bytes": 1024
+        ])
+    }
 }

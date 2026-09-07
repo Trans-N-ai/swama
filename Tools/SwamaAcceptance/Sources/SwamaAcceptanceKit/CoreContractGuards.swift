@@ -1191,6 +1191,29 @@ func analyzeResolvedTargetDependencyGraph(
         && libraryProductTargets == [target]
         && rootTargets[target] != nil
 
+    var directTargets: [String] = []
+    var directProducts: [String] = []
+    var directByName: [String] = []
+    if let rootTarget = rootTargets[target] {
+        let traits = activeTraits?[rootIdentity] ?? ["default"]
+        for dependency in try targetDependencyDescriptors(rootTarget) {
+            guard try dependency.isActive(platform: "macos", traits: traits) else {
+                continue
+            }
+
+            switch dependency.kind {
+            case "target":
+                directTargets.append("\(rootIdentity):\(dependency.name)")
+            case "product":
+                directProducts.append("\(dependency.package ?? "<implicit>"):\(dependency.name)")
+            case "byName":
+                directByName.append(dependency.name)
+            default:
+                throw AcceptanceFailure.unknown("resolved direct target dependency kind is unsupported")
+            }
+        }
+    }
+
     var queue = [ResolvedTarget(package: rootIdentity, name: target)]
     var visitedTargets: Set<ResolvedTarget> = []
     var visitedProducts: Set<ResolvedProduct> = []
@@ -1291,6 +1314,9 @@ func analyzeResolvedTargetDependencyGraph(
         "root_package": rootIdentity,
         "library_product_present": libraryProductPresent,
         "library_product_targets": libraryProductTargets,
+        "direct_target_dependencies": directTargets.sorted(),
+        "direct_product_dependencies": directProducts.sorted(),
+        "direct_by_name_dependencies": directByName.sorted(),
         "target_dependencies": visitedTargets.map(\.description).sorted(),
         "product_dependencies": visitedProducts.map(\.description).sorted(),
         "forbidden_products": forbidden,

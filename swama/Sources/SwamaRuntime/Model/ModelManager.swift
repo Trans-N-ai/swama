@@ -20,13 +20,18 @@ package enum ModelManager {
 
     /// Scans a models directory and returns ModelInfo array.
     ///
-    /// A model is recognised solely by a `.swama-meta.json` file in its directory —
-    /// uniform across LLM, STT and TTS. Two on-disk shapes are supported:
+    /// A model is recognised solely by a `.swama-meta.json` file in its directory.
+    /// Two on-disk shapes are supported:
     ///   • flat:   `{root}/{model}/.swama-meta.json`
     ///   • nested: `{root}/{org}/{model}/.swama-meta.json`
-    /// The nested case also covers the audio layout `{root}/mlx-audio/{repo_underscore}/`.
+    ///
+    /// Intentional lineage divergence: this no-Audio runtime must not advertise models it
+    /// cannot serve, so the legacy `{root}/mlx-audio/` subtree is excluded explicitly.
     package static func scanModelsDirectory(at modelsRootDirectory: URL) -> [ModelInfo] {
         var modelInfos: [ModelInfo] = []
+        let canonicalAudioRoot = modelsRootDirectory
+            .appendingPathComponent("mlx-audio", isDirectory: true)
+            .standardizedFileURL
 
         let topLevel: [URL]
         do {
@@ -49,6 +54,9 @@ package enum ModelManager {
 
         for entry in topLevel {
             guard entry.hasDirectoryPath else {
+                continue
+            }
+            guard entry.standardizedFileURL != canonicalAudioRoot else {
                 continue
             }
 
@@ -89,10 +97,7 @@ package enum ModelManager {
     }
 
     /// Parse a `.swama-meta.json`. The displayed model id comes from the file's `id`
-    /// field (the canonical repo, e.g. `mlx-community/Qwen3-ASR-1.7B-bf16`); the
-    /// directory-derived `fallbackID` is used only when the file omits it. This matters
-    /// for audio models whose directory name is the underscore-joined repo, which cannot
-    /// be reliably reversed back into `{org}/{model}`.
+    /// field; the directory-derived `fallbackID` is used only when the file omits it.
     private static func parseModelMetadata(metaURL: URL, fallbackID: String) -> ModelInfo? {
         do {
             let data = try Data(contentsOf: metaURL)
