@@ -471,16 +471,174 @@ struct AcceptanceTests {
             "Payload"
         ])
         #expect((report["manifest_sha256"] as? String)?.count == 64)
+
+        let contradictoryPrecise = "s:11MLXLMCommon14ModelContainerC"
+        let contradictoryReport = try analyzePublicAPISymbolGraphs(
+            [[
+                "module": ["name": "SwamaCore"],
+                "symbols": [
+                    symbolGraphSymbol(
+                        precise: contradictoryPrecise,
+                        path: ["ContradictoryContainer"],
+                        declaration: [
+                            typeFragment("ModelContainer", precise: contradictoryPrecise)
+                        ]
+                    )
+                ],
+                "relationships": []
+            ]],
+            target: "SwamaCore",
+            allowedModules: ["Swift", "Foundation", "SwamaCore"]
+        )
+        #expect(try contradictoryReport.boolean("passed") == false)
+        #expect(try contradictoryReport.array("violations").contains { value in
+            (value as? JSONObject)?["module"] as? String == "MLXLMCommon"
+        })
     }
 
     @Test func compilerSymbolGraphIncludesExtensionBlocks() {
-        let command = symbolGraphCommand(
+        let swift = URL(fileURLWithPath: "/toolchain/swift")
+        let build = symbolGraphBuildCommand(
             package: URL(fileURLWithPath: "/package"),
-            scratch: URL(fileURLWithPath: "/scratch")
+            scratch: URL(fileURLWithPath: "/scratch"),
+            target: "SwamaCore",
+            swift: swift
         )
-        #expect(command.contains("--emit-extension-block-symbols"))
-        #expect(command.contains("--skip-synthesized-members"))
-        #expect(command.contains("public"))
+        #expect(build.contains("--target"))
+        #expect(build.contains("SwamaCore"))
+        #expect(!build.contains("dump-symbol-graph"))
+
+        let extract = symbolGraphExtractCommand(
+            extractor: URL(fileURLWithPath: "/toolchain/swift-symbolgraph-extract"),
+            target: "SwamaCore",
+            targetTriple: "arm64-apple-macosx15.4",
+            sdk: URL(fileURLWithPath: "/sdk"),
+            modules: URL(fileURLWithPath: "/modules"),
+            output: URL(fileURLWithPath: "/output")
+        )
+        #expect(extract.contains("-emit-extension-block-symbols"))
+        #expect(extract.contains("-skip-synthesized-members"))
+        #expect(extract.contains("public"))
+        #expect(extract.contains("SwamaCore"))
+
+        let validTarget =
+            #"{"target":{"triple":"arm64-apple-macosx15.4","unversionedTriple":"arm64-apple-macosx","platform":"macosx","arch":"arm64"}}"#
+        #expect((try? swiftTargetTriple(validTarget))
+            == "arm64-apple-macosx15.4"
+        )
+        for malformed in [
+            "not-json",
+            #"{"target":{}}"#,
+            #"{"target":{"triple":"","unversionedTriple":"arm64-apple-macosx","platform":"macosx","arch":"arm64"}}"#,
+            #"{"target":{"triple":" arm64-apple-macosx15.4 ","unversionedTriple":"arm64-apple-macosx","platform":"macosx","arch":"arm64"}}"#,
+            #"{"target":{"triple":"arm64-apple15.4","unversionedTriple":"arm64-apple","platform":"macosx","arch":"arm64"}}"#,
+            #"{"target":{"triple":"arm64-apple-macosx15.4","unversionedTriple":"x86_64-apple-macosx","platform":"macosx","arch":"arm64"}}"#,
+            #"{"target":{"triple":"arm64-apple-ios15.4","unversionedTriple":"arm64-apple-ios","platform":"ios","arch":"arm64"}}"#,
+            #"{"target":{"triple":"mips-apple-macosx15.4","unversionedTriple":"mips-apple-macosx","platform":"macosx","arch":"mips"}}"#,
+            #"{"target":{"triple":42,"unversionedTriple":"arm64-apple-macosx","platform":"macosx","arch":"arm64"}}"#
+        ] {
+            #expect(throws: AcceptanceFailure.self) {
+                _ = try swiftTargetTriple(malformed)
+            }
+        }
+    }
+
+    @Test func compilerSymbolGraphBuildIsScopedToTheCoreTarget() throws {
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-target-symbol-graph-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let package = temporary.appendingPathComponent("swama")
+        let foreignPackage = temporary.appendingPathComponent("ForeignKit")
+        try FileManager.default.createDirectory(
+            at: package.appendingPathComponent("Sources/SwamaCore"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: package.appendingPathComponent("Tests/BrokenTests"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: foreignPackage.appendingPathComponent("Sources/ForeignKit"),
+            withIntermediateDirectories: true
+        )
+        try Data("""
+        // swift-tools-version: 6.2
+        import PackageDescription
+
+        let package = Package(
+            name: "ForeignKit",
+            platforms: [.macOS("15.4")],
+            products: [.library(name: "ForeignKit", targets: ["ForeignKit"])],
+            targets: [.target(name: "ForeignKit")]
+        )
+        """.utf8).write(to: foreignPackage.appendingPathComponent("Package.swift"))
+        try Data("public struct ExternalType {}\n".utf8).write(
+            to: foreignPackage.appendingPathComponent("Sources/ForeignKit/ForeignKit.swift")
+        )
+        try Data("""
+        // swift-tools-version: 6.2
+        import PackageDescription
+
+        let package = Package(
+            name: "TargetScopedGraph",
+            platforms: [.macOS("15.4")],
+            products: [.library(name: "SwamaCore", targets: ["SwamaCore"])],
+            dependencies: [.package(path: "../ForeignKit")],
+            targets: [
+                .target(
+                    name: "SwamaCore",
+                    dependencies: [.product(name: "ForeignKit", package: "ForeignKit")]
+                ),
+                .testTarget(name: "BrokenTests", dependencies: ["SwamaCore"])
+            ]
+        )
+        """.utf8).write(to: package.appendingPathComponent("Package.swift"))
+        try Data("""
+        import ForeignKit
+
+        extension ExternalType {
+            public func leaked() {}
+        }
+        """.utf8).write(
+            to: package.appendingPathComponent("Sources/SwamaCore/SwamaCore.swift")
+        )
+        try Data("let broken = MissingType()\n".utf8).write(
+            to: package.appendingPathComponent("Tests/BrokenTests/BrokenTests.swift")
+        )
+
+        let contract = try AcceptanceContract.load(
+            from: repositoryRoot.appendingPathComponent("Tools/SwamaAcceptance/contract.json")
+        )
+        let report = try compilerPublicAPIReport(
+            target: "SwamaCore",
+            paths: WorkspacePaths(repository: temporary),
+            developerDirectory: URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer"),
+            contract: contract.coreGuards
+        )
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.integer("graph_count") == 2)
+        #expect(try report.array("violations").contains { value in
+            guard let violation = value as? JSONObject else {
+                return false
+            }
+
+            return violation["module"] as? String == "ForeignKit"
+                && violation["source"] as? String == "extensionTo"
+        })
+
+        let developerDirectory = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
+        let swift = developerDirectory.appendingPathComponent(
+            "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
+        )
+        let brokenTestBuild = try runCommand(
+            [swift.path, "test", "--package-path", package.path],
+            currentDirectory: package,
+            environment: developerEnvironment(developerDirectory),
+            timeout: 60,
+            sampleMemory: false
+        )
+        #expect(brokenTestBuild.returnCode != 0)
     }
 
     @Test func compilerPublicAPIGateRejectsMalformedSymbolGraphEntries() throws {
@@ -541,6 +699,44 @@ struct AcceptanceTests {
         ]]
         var unknownAccessSymbol = validSymbol
         unknownAccessSymbol["accessLevel"] = "futurePublic"
+        var extensionWithoutTargetSymbol = validSymbol
+        extensionWithoutTargetSymbol["identifier"] = [
+            "precise": "s:e:s:10ForeignKit12ExternalTypeV9SwamaCoreE",
+            "interfaceLanguage": "swift"
+        ]
+        extensionWithoutTargetSymbol["kind"] = [
+            "identifier": "swift.extension",
+            "displayName": "Extension"
+        ]
+        let extensionIdentifier = "s:e:s:10ForeignKit12ExternalTypeV9SwamaCoreE"
+        var publicExtensionSymbol = extensionWithoutTargetSymbol
+        publicExtensionSymbol["identifier"] = [
+            "precise": extensionIdentifier,
+            "interfaceLanguage": "swift"
+        ]
+        publicExtensionSymbol["declarationFragments"] = [
+            ["kind": "keyword", "spelling": "extension"],
+            ["kind": "text", "spelling": " ExternalType"]
+        ]
+        var internalExtensionSymbol = publicExtensionSymbol
+        internalExtensionSymbol["accessLevel"] = "internal"
+        var opaqueFragmentSymbol = validSymbol
+        opaqueFragmentSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "ExternalType",
+            "preciseIdentifier": extensionIdentifier
+        ]]
+        let publicMember = symbolGraphSymbol(
+            precise: "s:9SwamaCore11publicMemberyyF",
+            path: ["publicMember"],
+            declaration: [["kind": "identifier", "spelling": "publicMember"]]
+        )
+        let validExtensionTarget: JSONObject = [
+            "kind": "extensionTo",
+            "source": extensionIdentifier,
+            "target": "s:10ForeignKit12ExternalTypeV",
+            "targetFallback": "ForeignKit.ExternalType"
+        ]
         let malformedGraphs: [JSONObject] = [
             ["module": ["name": "SwamaCore"], "symbols": [42], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [validSymbol], "relationships": [42]],
@@ -558,6 +754,45 @@ struct AcceptanceTests {
             ["module": ["name": "SwamaCore"], "symbols": [concatenatedPreciseSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [unknownFragmentKindSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [unknownAccessSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [extensionWithoutTargetSymbol], "relationships": []],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [publicExtensionSymbol],
+                "relationships": [[
+                    "kind": "extensionTo",
+                    "source": extensionIdentifier,
+                    "target": extensionIdentifier
+                ]]
+            ],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [publicExtensionSymbol, opaqueFragmentSymbol],
+                "relationships": [validExtensionTarget]
+            ],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [publicExtensionSymbol, validSymbol],
+                "relationships": [
+                    validExtensionTarget,
+                    [
+                        "kind": "conformsTo",
+                        "source": "s:9SwamaCore7PayloadV",
+                        "target": extensionIdentifier
+                    ]
+                ]
+            ],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [internalExtensionSymbol, publicMember],
+                "relationships": [
+                    validExtensionTarget,
+                    [
+                        "kind": "memberOf",
+                        "source": "s:9SwamaCore11publicMemberyyF",
+                        "target": extensionIdentifier
+                    ]
+                ]
+            ],
             [
                 "module": ["name": "SwamaCore"],
                 "symbols": [validSymbol],

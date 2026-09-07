@@ -9,34 +9,122 @@ func compilerPublicAPIReport(
     contract: CoreGuardContract
 ) throws -> JSONObject {
     let scratch = paths.repository.appendingPathComponent(".build/swama-core-symbol-graph")
-    if FileManager.default.fileExists(atPath: scratch.path) {
-        for file in try regularFiles(in: scratch, extensions: ["json"])
+    let symbolGraphOutput = scratch.appendingPathComponent("symbolgraph")
+    if FileManager.default.fileExists(atPath: symbolGraphOutput.path) {
+        for file in try regularFiles(in: symbolGraphOutput, extensions: ["json"])
             where file.lastPathComponent.hasSuffix(".symbols.json")
         {
             try FileManager.default.removeItem(at: file)
         }
     }
+    else {
+        try FileManager.default.createDirectory(
+            at: symbolGraphOutput,
+            withIntermediateDirectories: true
+        )
+    }
 
     var environment = try developerEnvironment(developerDirectory)
     environment["SWIFTPM_MODULECACHE_OVERRIDE"] = scratch.appendingPathComponent("module-cache").path
-    let result = try runCommand(
-        symbolGraphCommand(package: paths.package, scratch: scratch),
+    let swift = developerDirectory.appendingPathComponent(
+        "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
+    )
+    let extractor = developerDirectory.appendingPathComponent(
+        "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-symbolgraph-extract"
+    )
+    guard FileManager.default.isExecutableFile(atPath: swift.path),
+          FileManager.default.isExecutableFile(atPath: extractor.path)
+    else {
+        throw AcceptanceFailure.unknown("selected Xcode is missing Swift symbol-graph tools")
+    }
+
+    let buildResult = try runCommand(
+        symbolGraphBuildCommand(
+            package: paths.package,
+            scratch: scratch,
+            target: target,
+            swift: swift
+        ),
         currentDirectory: paths.repository,
         environment: environment,
         timeout: contract.compilerTimeoutSeconds,
         sampleMemory: false,
         timeoutFailureKind: .unknown,
-        timeoutContext: "SwamaCore symbol graph"
+        timeoutContext: "SwamaCore target build"
     )
-    guard result.returnCode == 0 else {
+    guard buildResult.returnCode == 0 else {
         throw AcceptanceFailure.failed(
-            "SwamaCore symbol graph build failed:\n\(commandFailureSummary(result))"
+            "SwamaCore target build failed:\n\(commandFailureSummary(buildResult))"
+        )
+    }
+
+    let binPathResult = try runCommand(
+        symbolGraphBinPathCommand(package: paths.package, scratch: scratch, swift: swift),
+        currentDirectory: paths.repository,
+        environment: environment,
+        timeout: 60,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "SwamaCore build path"
+    )
+    guard binPathResult.returnCode == 0 else {
+        throw AcceptanceFailure.unknown(
+            "cannot locate SwamaCore build products:\n\(commandFailureSummary(binPathResult))"
+        )
+    }
+
+    let binPath = try strictAbsolutePath(binPathResult.stdout, context: "SwamaCore build path")
+    let modules = binPath.appendingPathComponent("Modules")
+    guard FileManager.default.fileExists(
+        atPath: modules.appendingPathComponent("\(target).swiftmodule").path
+    )
+    else {
+        throw AcceptanceFailure.unknown("SwamaCore build produced no target module")
+    }
+
+    let targetInfoResult = try runCommand(
+        [swift.path, "-print-target-info"],
+        currentDirectory: paths.repository,
+        environment: environment,
+        timeout: 60,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "Swift target identity"
+    )
+    guard targetInfoResult.returnCode == 0 else {
+        throw AcceptanceFailure.unknown(
+            "cannot identify selected Swift target:\n\(commandFailureSummary(targetInfoResult))"
+        )
+    }
+
+    let targetTriple = try swiftTargetTriple(targetInfoResult.stdout)
+    let sdk = try URL(fileURLWithPath: environmentValue(environment, key: "SDKROOT"))
+
+    let extractResult = try runCommand(
+        symbolGraphExtractCommand(
+            extractor: extractor,
+            target: target,
+            targetTriple: targetTriple,
+            sdk: sdk,
+            modules: modules,
+            output: symbolGraphOutput
+        ),
+        currentDirectory: paths.repository,
+        environment: environment,
+        timeout: contract.compilerTimeoutSeconds,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "SwamaCore symbol graph extraction"
+    )
+    guard extractResult.returnCode == 0 else {
+        throw AcceptanceFailure.failed(
+            "SwamaCore symbol graph extraction failed:\n\(commandFailureSummary(extractResult))"
         )
     }
 
     var graphs: [JSONObject] = []
     var graphFiles: [JSONObject] = []
-    for file in try regularFiles(in: scratch, extensions: ["json"])
+    for file in try regularFiles(in: symbolGraphOutput, extensions: ["json"])
         .filter({ $0.lastPathComponent.hasSuffix(".symbols.json") })
         .sorted(by: { $0.path < $1.path })
     {
@@ -47,7 +135,7 @@ func compilerPublicAPIReport(
 
         graphs.append(graph)
         try graphFiles.append([
-            "file": relativePathForGuard(file, to: scratch),
+            "file": relativePathForGuard(file, to: symbolGraphOutput),
             "sha256": sha256File(file)
         ])
     }
@@ -69,26 +157,130 @@ func compilerPublicAPIReport(
     report["symbol_graph_files"] = graphFiles
     report["reachability_attribute_hits"] = reachabilityHits
     report["passed"] = report["passed"] as? Bool == true && reachabilityHits.isEmpty
-    report["duration_ms"] = result.durationMilliseconds
+    report["duration_ms"] = buildResult.durationMilliseconds
+        + binPathResult.durationMilliseconds
+        + targetInfoResult.durationMilliseconds
+        + extractResult.durationMilliseconds
     return report
 }
 
-func symbolGraphCommand(package: URL, scratch: URL) -> [String] {
+func symbolGraphBuildCommand(
+    package: URL,
+    scratch: URL,
+    target: String,
+    swift: URL
+) -> [String] {
     [
-        "xcrun",
-        "swift",
-        "package",
+        swift.path,
+        "build",
         "--package-path",
         package.path,
         "--scratch-path",
         scratch.path,
         "--force-resolved-versions",
-        "dump-symbol-graph",
-        "--minimum-access-level",
-        "public",
-        "--skip-synthesized-members",
-        "--emit-extension-block-symbols"
+        "--target",
+        target
     ]
+}
+
+func symbolGraphBinPathCommand(package: URL, scratch: URL, swift: URL) -> [String] {
+    [
+        swift.path,
+        "build",
+        "--package-path",
+        package.path,
+        "--scratch-path",
+        scratch.path,
+        "--force-resolved-versions",
+        "--show-bin-path"
+    ]
+}
+
+func symbolGraphExtractCommand(
+    extractor: URL,
+    target: String,
+    targetTriple: String,
+    sdk: URL,
+    modules: URL,
+    output: URL
+) -> [String] {
+    [
+        extractor.path,
+        "-module-name",
+        target,
+        "-target",
+        targetTriple,
+        "-sdk",
+        sdk.path,
+        "-I",
+        modules.path,
+        "-minimum-access-level",
+        "public",
+        "-skip-synthesized-members",
+        "-emit-extension-block-symbols",
+        "-output-dir",
+        output.path
+    ]
+}
+
+func swiftTargetTriple(_ output: String) throws -> String {
+    let object: JSONObject
+    do {
+        guard let decoded = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? JSONObject else {
+            throw AcceptanceFailure.unknown("Swift target identity root is not an object")
+        }
+
+        object = decoded
+    }
+    catch let error as AcceptanceFailure {
+        throw error
+    }
+    catch {
+        throw AcceptanceFailure.unknown("Swift target identity is invalid JSON: \(error)")
+    }
+
+    let target = try object.object("target")
+    let triple = try target.string("triple")
+    let unversionedTriple = try target.string("unversionedTriple")
+    let platform = try target.string("platform")
+    let arch = try target.string("arch")
+    guard platform == "macosx",
+          ["arm64", "x86_64"].contains(arch),
+          unversionedTriple == "\(arch)-apple-macosx"
+    else {
+        throw AcceptanceFailure.unknown("Swift target identity is not a supported macOS target")
+    }
+
+    let expression = try NSRegularExpression(
+        pattern: "^\(NSRegularExpression.escapedPattern(for: unversionedTriple))"
+            + #"[0-9]+(?:\.[0-9]+){0,2}$"#
+    )
+    let range = NSRange(triple.startIndex ..< triple.endIndex, in: triple)
+    guard expression.firstMatch(in: triple, range: range)?.range == range else {
+        throw AcceptanceFailure.unknown("Swift target identity has an invalid versioned triple")
+    }
+
+    return triple
+}
+
+private func strictAbsolutePath(_ output: String, context: String) throws -> URL {
+    let lines = output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    guard lines.count == 2,
+          lines[1].isEmpty,
+          lines[0].hasPrefix("/")
+    else {
+        throw AcceptanceFailure.unknown("\(context) emitted an unsupported path")
+    }
+
+    return URL(fileURLWithPath: lines[0]).standardizedFileURL
+}
+
+private func environmentValue(_ environment: [String: String], key: String) throws -> String {
+    guard let value = environment[key], !value.isEmpty else {
+        throw AcceptanceFailure.unknown("selected toolchain environment is missing \(key)")
+    }
+
+    return value
 }
 
 func analyzePublicAPISymbolGraphs(
@@ -97,6 +289,7 @@ func analyzePublicAPISymbolGraphs(
     allowedModules: Set<String>,
     developerDirectory: URL = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
 ) throws -> JSONObject {
+    let localExtensionIdentifiers = try localExtensionIdentifiers(in: graphs, target: target)
     let moduleResolver = try PreciseIdentifierModuleResolver(
         developerDirectory: developerDirectory,
         preciseIdentifiers: preciseIdentifiersNeedingResolution(in: graphs, target: target)
@@ -151,6 +344,22 @@ func analyzePublicAPISymbolGraphs(
 
             let identifier = try symbol.object("identifier").string("precise")
             let kind = try symbol.object("kind").string("identifier")
+            let symbolRelationships = relationshipsBySource[identifier] ?? []
+            if kind == "swift.extension" {
+                let extensionTargets = try symbolRelationships.filter {
+                    try $0.string("kind") == "extensionTo"
+                }
+                let extensionTarget = try extensionTargets.first?.string("target")
+                guard identifier.hasPrefix("s:e:"),
+                      extensionTargets.count == 1,
+                      extensionTarget?.hasPrefix("s:e:") == false,
+                      extensionTarget != identifier
+                else {
+                    throw AcceptanceFailure.unknown(
+                        "public extension symbol is missing its unique extensionTo relationship: \(identifier)"
+                    )
+                }
+            }
             let path = try strictStringArray(symbol, key: "pathComponents", context: "public symbol")
             let fragments = try strictObjectArray(
                 symbol,
@@ -229,16 +438,26 @@ func analyzePublicAPISymbolGraphs(
             }
 
             var conformances: [String] = []
-            for relationship in relationshipsBySource[identifier] ?? [] {
+            for relationship in symbolRelationships {
                 let relationshipKind = try relationship.string("kind")
                 let targetIdentifier = try relationship.string("target")
                 let fallback = try relationship["targetFallback"] == nil
                     ? nil
                     : relationship.string("targetFallback")
-                guard let module = try moduleResolver.moduleName(in: targetIdentifier) else {
-                    throw AcceptanceFailure.unknown(
-                        "public relationship has an unparseable target: \(targetIdentifier)"
-                    )
+                let module: String
+                if relationshipKind == "memberOf",
+                   localExtensionIdentifiers.contains(targetIdentifier)
+                {
+                    module = target
+                }
+                else {
+                    guard let resolved = try moduleResolver.moduleName(in: targetIdentifier) else {
+                        throw AcceptanceFailure.unknown(
+                            "public relationship has an unparseable target: \(targetIdentifier)"
+                        )
+                    }
+
+                    module = resolved
                 }
 
                 references.insert(module)
@@ -373,6 +592,27 @@ private func optionalStrictStringArray(_ object: JSONObject, key: String, contex
 }
 
 // MARK: - Precise identifier discovery
+
+private func localExtensionIdentifiers(
+    in graphs: [JSONObject],
+    target: String
+) throws -> Set<String> {
+    var identifiers: Set<String> = []
+    for graph in graphs where try graph.object("module").string("name") == target {
+        for symbol in try strictObjectArray(graph, key: "symbols", context: "symbol graph") {
+            let precise = try symbol.object("identifier").string("precise")
+            let kind = try symbol.object("kind").string("identifier")
+            let access = try symbol.string("accessLevel")
+            if ["public", "open"].contains(access),
+               kind == "swift.extension",
+               precise.hasPrefix("s:e:")
+            {
+                identifiers.insert(precise)
+            }
+        }
+    }
+    return identifiers
+}
 
 private func preciseIdentifiersNeedingResolution(
     in graphs: [JSONObject],
