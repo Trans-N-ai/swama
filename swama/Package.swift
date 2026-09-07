@@ -31,6 +31,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
+        .package(url: "https://github.com/huggingface/swift-transformers.git", from: "1.3.3"),
         // Last revision before FoundationModelsIntegration became a default trait;
         // newer commits require a newer Xcode 27 FoundationModels SDK.
         .package(
@@ -46,7 +47,26 @@ let package = Package(
     targets: [
         .target(
             name: "SwamaCore",
+            dependencies: [
+                .target(name: "SwamaRuntime"),
+            ],
             path: "Sources/SwamaCore"
+        ),
+        // Transitional package-only no-Audio runtime. SwamaKit remains byte-stable through v2;
+        // this derived implementation is lineage-gated and is removed with the v3 migration.
+        .target(
+            name: "SwamaRuntime",
+            dependencies: [
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXVLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
+                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
+                .product(name: "MLXRandom", package: "mlx-swift"),
+                .product(name: "MLXFast", package: "mlx-swift"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
+            ],
+            path: "Sources/SwamaRuntime"
         ),
         .target(
             name: "SwamaKit",
@@ -102,6 +122,15 @@ let package = Package(
                 "SwamaKit",
                 "SwamaServer",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
+            ]
+        ),
+        .testTarget(
+            name: "SwamaRuntimeTests",
+            dependencies: [
+                "SwamaRuntime",
+                "SwamaKit",
+                .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
+                .product(name: "MLXNN", package: "mlx-swift"),
             ]
         ),
     ]

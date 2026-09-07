@@ -99,6 +99,10 @@ func compilerPublicAPIReport(
 
     let targetTriple = try swiftTargetTriple(targetInfoResult.stdout)
     let sdk = try URL(fileURLWithPath: environmentValue(environment, key: "SDKROOT"))
+    let clangArguments = try symbolGraphClangArguments(
+        description: binPath.appendingPathComponent("description.json"),
+        target: target
+    )
 
     let extractResult = try runCommand(
         symbolGraphExtractCommand(
@@ -107,7 +111,8 @@ func compilerPublicAPIReport(
             targetTriple: targetTriple,
             sdk: sdk,
             modules: modules,
-            output: symbolGraphOutput
+            output: symbolGraphOutput,
+            clangArguments: clangArguments
         ),
         currentDirectory: paths.repository,
         environment: environment,
@@ -202,7 +207,8 @@ func symbolGraphExtractCommand(
     targetTriple: String,
     sdk: URL,
     modules: URL,
-    output: URL
+    output: URL,
+    clangArguments: [String] = []
 ) -> [String] {
     [
         extractor.path,
@@ -220,7 +226,47 @@ func symbolGraphExtractCommand(
         "-emit-extension-block-symbols",
         "-output-dir",
         output.path
-    ]
+    ] + clangArguments
+}
+
+func symbolGraphClangArguments(description: URL, target: String) throws -> [String] {
+    let root = try loadJSONObject(description)
+    let commands = try root.object("swiftCommands")
+    let matches = try commands.values.compactMap { raw -> JSONObject? in
+        guard let command = raw as? JSONObject else {
+            throw AcceptanceFailure.unknown("Swift build description command is not an object")
+        }
+
+        return try command.string("moduleName") == target ? command : nil
+    }
+    guard matches.count == 1, let command = matches.first else {
+        throw AcceptanceFailure.unknown("Swift build description has no unique command for \(target)")
+    }
+
+    let arguments = try command.array("otherArguments")
+    var result: [String] = []
+    var index = 0
+    while index < arguments.count {
+        guard let argument = arguments[index] as? String else {
+            throw AcceptanceFailure.unknown("Swift build description has a non-string argument")
+        }
+
+        if argument == "-Xcc" {
+            guard index + 1 < arguments.count,
+                  let clangArgument = arguments[index + 1] as? String,
+                  !clangArgument.isEmpty
+            else {
+                throw AcceptanceFailure.unknown("Swift build description has a truncated -Xcc argument")
+            }
+
+            result.append(contentsOf: [argument, clangArgument])
+            index += 2
+        }
+        else {
+            index += 1
+        }
+    }
+    return result
 }
 
 func swiftTargetTriple(_ output: String) throws -> String {
@@ -1162,6 +1208,22 @@ func analyzeResolvedTargetDependencyGraph(
         guard let targetDescription = targets[node.name] else {
             unresolved.insert("missing target \(node.package):\(node.name)")
             continue
+        }
+
+        // Macro and plugin targets execute in the host toolchain while building; their own
+        // dependencies do not enter the linked runtime closure being audited here. Some Swift
+        // versions consequently omit those host-only packages from `show-dependencies`, even
+        // though `dump-package` still describes their target edges.
+        if let rawType = targetDescription["type"] {
+            guard let targetType = rawType as? String, !targetType.isEmpty else {
+                throw AcceptanceFailure.unknown(
+                    "resolved target type is invalid: \(node.package):\(node.name)"
+                )
+            }
+
+            if targetType == "macro" || targetType == "plugin" {
+                continue
+            }
         }
 
         let aliases = aliasesByPackage[node.package] ?? [:]
