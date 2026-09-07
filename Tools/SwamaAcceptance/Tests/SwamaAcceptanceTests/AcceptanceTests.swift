@@ -474,13 +474,105 @@ struct AcceptanceTests {
     }
 
     @Test func compilerSymbolGraphIncludesExtensionBlocks() {
-        let command = symbolGraphCommand(
+        let swift = URL(fileURLWithPath: "/toolchain/swift")
+        let build = symbolGraphBuildCommand(
             package: URL(fileURLWithPath: "/package"),
-            scratch: URL(fileURLWithPath: "/scratch")
+            scratch: URL(fileURLWithPath: "/scratch"),
+            target: "SwamaCore",
+            swift: swift
         )
-        #expect(command.contains("--emit-extension-block-symbols"))
-        #expect(command.contains("--skip-synthesized-members"))
-        #expect(command.contains("public"))
+        #expect(build.contains("--target"))
+        #expect(build.contains("SwamaCore"))
+        #expect(!build.contains("dump-symbol-graph"))
+
+        let extract = symbolGraphExtractCommand(
+            extractor: URL(fileURLWithPath: "/toolchain/swift-symbolgraph-extract"),
+            target: "SwamaCore",
+            targetTriple: "arm64-apple-macosx15.4",
+            sdk: URL(fileURLWithPath: "/sdk"),
+            modules: URL(fileURLWithPath: "/modules"),
+            output: URL(fileURLWithPath: "/output")
+        )
+        #expect(extract.contains("-emit-extension-block-symbols"))
+        #expect(extract.contains("-skip-synthesized-members"))
+        #expect(extract.contains("public"))
+        #expect(extract.contains("SwamaCore"))
+
+        #expect((try? swiftTargetTriple(#"{"target":{"triple":"arm64-apple-macosx15.4"}}"#))
+            == "arm64-apple-macosx15.4"
+        )
+        for malformed in [
+            "not-json",
+            #"{"target":{}}"#,
+            #"{"target":{"triple":""}}"#,
+            #"{"target":{"triple":42}}"#
+        ] {
+            #expect(throws: AcceptanceFailure.self) {
+                _ = try swiftTargetTriple(malformed)
+            }
+        }
+    }
+
+    @Test func compilerSymbolGraphBuildIsScopedToTheCoreTarget() throws {
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-target-symbol-graph-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let package = temporary.appendingPathComponent("swama")
+        try FileManager.default.createDirectory(
+            at: package.appendingPathComponent("Sources/SwamaCore"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: package.appendingPathComponent("Tests/BrokenTests"),
+            withIntermediateDirectories: true
+        )
+        try Data("""
+        // swift-tools-version: 6.2
+        import PackageDescription
+
+        let package = Package(
+            name: "TargetScopedGraph",
+            platforms: [.macOS("15.4")],
+            products: [.library(name: "SwamaCore", targets: ["SwamaCore"])],
+            targets: [
+                .target(name: "SwamaCore"),
+                .testTarget(name: "BrokenTests", dependencies: ["SwamaCore"])
+            ]
+        )
+        """.utf8).write(to: package.appendingPathComponent("Package.swift"))
+        try Data("public struct CoreMarker: Sendable {}\n".utf8).write(
+            to: package.appendingPathComponent("Sources/SwamaCore/SwamaCore.swift")
+        )
+        try Data("let broken = MissingType()\n".utf8).write(
+            to: package.appendingPathComponent("Tests/BrokenTests/BrokenTests.swift")
+        )
+
+        let contract = try AcceptanceContract.load(
+            from: repositoryRoot.appendingPathComponent("Tools/SwamaAcceptance/contract.json")
+        )
+        let report = try compilerPublicAPIReport(
+            target: "SwamaCore",
+            paths: WorkspacePaths(repository: temporary),
+            developerDirectory: URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer"),
+            contract: contract.coreGuards
+        )
+        #expect(try report.boolean("passed"))
+        #expect(try report.integer("graph_count") == 1)
+        #expect(try report.array("violations").isEmpty)
+
+        let developerDirectory = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
+        let swift = developerDirectory.appendingPathComponent(
+            "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
+        )
+        let brokenTestBuild = try runCommand(
+            [swift.path, "test", "--package-path", package.path],
+            currentDirectory: package,
+            environment: developerEnvironment(developerDirectory),
+            timeout: 60,
+            sampleMemory: false
+        )
+        #expect(brokenTestBuild.returnCode != 0)
     }
 
     @Test func compilerPublicAPIGateRejectsMalformedSymbolGraphEntries() throws {

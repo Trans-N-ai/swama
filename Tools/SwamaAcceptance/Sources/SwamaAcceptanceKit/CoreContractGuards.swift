@@ -9,34 +9,122 @@ func compilerPublicAPIReport(
     contract: CoreGuardContract
 ) throws -> JSONObject {
     let scratch = paths.repository.appendingPathComponent(".build/swama-core-symbol-graph")
-    if FileManager.default.fileExists(atPath: scratch.path) {
-        for file in try regularFiles(in: scratch, extensions: ["json"])
+    let symbolGraphOutput = scratch.appendingPathComponent("symbolgraph")
+    if FileManager.default.fileExists(atPath: symbolGraphOutput.path) {
+        for file in try regularFiles(in: symbolGraphOutput, extensions: ["json"])
             where file.lastPathComponent.hasSuffix(".symbols.json")
         {
             try FileManager.default.removeItem(at: file)
         }
     }
+    else {
+        try FileManager.default.createDirectory(
+            at: symbolGraphOutput,
+            withIntermediateDirectories: true
+        )
+    }
 
     var environment = try developerEnvironment(developerDirectory)
     environment["SWIFTPM_MODULECACHE_OVERRIDE"] = scratch.appendingPathComponent("module-cache").path
-    let result = try runCommand(
-        symbolGraphCommand(package: paths.package, scratch: scratch),
+    let swift = developerDirectory.appendingPathComponent(
+        "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
+    )
+    let extractor = developerDirectory.appendingPathComponent(
+        "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-symbolgraph-extract"
+    )
+    guard FileManager.default.isExecutableFile(atPath: swift.path),
+          FileManager.default.isExecutableFile(atPath: extractor.path)
+    else {
+        throw AcceptanceFailure.unknown("selected Xcode is missing Swift symbol-graph tools")
+    }
+
+    let buildResult = try runCommand(
+        symbolGraphBuildCommand(
+            package: paths.package,
+            scratch: scratch,
+            target: target,
+            swift: swift
+        ),
         currentDirectory: paths.repository,
         environment: environment,
         timeout: contract.compilerTimeoutSeconds,
         sampleMemory: false,
         timeoutFailureKind: .unknown,
-        timeoutContext: "SwamaCore symbol graph"
+        timeoutContext: "SwamaCore target build"
     )
-    guard result.returnCode == 0 else {
+    guard buildResult.returnCode == 0 else {
         throw AcceptanceFailure.failed(
-            "SwamaCore symbol graph build failed:\n\(commandFailureSummary(result))"
+            "SwamaCore target build failed:\n\(commandFailureSummary(buildResult))"
+        )
+    }
+
+    let binPathResult = try runCommand(
+        symbolGraphBinPathCommand(package: paths.package, scratch: scratch, swift: swift),
+        currentDirectory: paths.repository,
+        environment: environment,
+        timeout: 60,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "SwamaCore build path"
+    )
+    guard binPathResult.returnCode == 0 else {
+        throw AcceptanceFailure.unknown(
+            "cannot locate SwamaCore build products:\n\(commandFailureSummary(binPathResult))"
+        )
+    }
+
+    let binPath = try strictAbsolutePath(binPathResult.stdout, context: "SwamaCore build path")
+    let modules = binPath.appendingPathComponent("Modules")
+    guard FileManager.default.fileExists(
+        atPath: modules.appendingPathComponent("\(target).swiftmodule").path
+    )
+    else {
+        throw AcceptanceFailure.unknown("SwamaCore build produced no target module")
+    }
+
+    let targetInfoResult = try runCommand(
+        [swift.path, "-print-target-info"],
+        currentDirectory: paths.repository,
+        environment: environment,
+        timeout: 60,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "Swift target identity"
+    )
+    guard targetInfoResult.returnCode == 0 else {
+        throw AcceptanceFailure.unknown(
+            "cannot identify selected Swift target:\n\(commandFailureSummary(targetInfoResult))"
+        )
+    }
+
+    let targetTriple = try swiftTargetTriple(targetInfoResult.stdout)
+    let sdk = try URL(fileURLWithPath: environmentValue(environment, key: "SDKROOT"))
+
+    let extractResult = try runCommand(
+        symbolGraphExtractCommand(
+            extractor: extractor,
+            target: target,
+            targetTriple: targetTriple,
+            sdk: sdk,
+            modules: modules,
+            output: symbolGraphOutput
+        ),
+        currentDirectory: paths.repository,
+        environment: environment,
+        timeout: contract.compilerTimeoutSeconds,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "SwamaCore symbol graph extraction"
+    )
+    guard extractResult.returnCode == 0 else {
+        throw AcceptanceFailure.failed(
+            "SwamaCore symbol graph extraction failed:\n\(commandFailureSummary(extractResult))"
         )
     }
 
     var graphs: [JSONObject] = []
     var graphFiles: [JSONObject] = []
-    for file in try regularFiles(in: scratch, extensions: ["json"])
+    for file in try regularFiles(in: symbolGraphOutput, extensions: ["json"])
         .filter({ $0.lastPathComponent.hasSuffix(".symbols.json") })
         .sorted(by: { $0.path < $1.path })
     {
@@ -47,7 +135,7 @@ func compilerPublicAPIReport(
 
         graphs.append(graph)
         try graphFiles.append([
-            "file": relativePathForGuard(file, to: scratch),
+            "file": relativePathForGuard(file, to: symbolGraphOutput),
             "sha256": sha256File(file)
         ])
     }
@@ -69,26 +157,114 @@ func compilerPublicAPIReport(
     report["symbol_graph_files"] = graphFiles
     report["reachability_attribute_hits"] = reachabilityHits
     report["passed"] = report["passed"] as? Bool == true && reachabilityHits.isEmpty
-    report["duration_ms"] = result.durationMilliseconds
+    report["duration_ms"] = buildResult.durationMilliseconds
+        + binPathResult.durationMilliseconds
+        + targetInfoResult.durationMilliseconds
+        + extractResult.durationMilliseconds
     return report
 }
 
-func symbolGraphCommand(package: URL, scratch: URL) -> [String] {
+func symbolGraphBuildCommand(
+    package: URL,
+    scratch: URL,
+    target: String,
+    swift: URL
+) -> [String] {
     [
-        "xcrun",
-        "swift",
-        "package",
+        swift.path,
+        "build",
         "--package-path",
         package.path,
         "--scratch-path",
         scratch.path,
         "--force-resolved-versions",
-        "dump-symbol-graph",
-        "--minimum-access-level",
-        "public",
-        "--skip-synthesized-members",
-        "--emit-extension-block-symbols"
+        "--target",
+        target
     ]
+}
+
+func symbolGraphBinPathCommand(package: URL, scratch: URL, swift: URL) -> [String] {
+    [
+        swift.path,
+        "build",
+        "--package-path",
+        package.path,
+        "--scratch-path",
+        scratch.path,
+        "--force-resolved-versions",
+        "--show-bin-path"
+    ]
+}
+
+func symbolGraphExtractCommand(
+    extractor: URL,
+    target: String,
+    targetTriple: String,
+    sdk: URL,
+    modules: URL,
+    output: URL
+) -> [String] {
+    [
+        extractor.path,
+        "-module-name",
+        target,
+        "-target",
+        targetTriple,
+        "-sdk",
+        sdk.path,
+        "-I",
+        modules.path,
+        "-minimum-access-level",
+        "public",
+        "-skip-synthesized-members",
+        "-emit-extension-block-symbols",
+        "-output-dir",
+        output.path
+    ]
+}
+
+func swiftTargetTriple(_ output: String) throws -> String {
+    let object: JSONObject
+    do {
+        guard let decoded = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? JSONObject else {
+            throw AcceptanceFailure.unknown("Swift target identity root is not an object")
+        }
+
+        object = decoded
+    }
+    catch let error as AcceptanceFailure {
+        throw error
+    }
+    catch {
+        throw AcceptanceFailure.unknown("Swift target identity is invalid JSON: \(error)")
+    }
+
+    let triple = try object.object("target").string("triple")
+    guard !triple.isEmpty else {
+        throw AcceptanceFailure.unknown("Swift target identity has an empty triple")
+    }
+
+    return triple
+}
+
+private func strictAbsolutePath(_ output: String, context: String) throws -> URL {
+    let lines = output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    guard lines.count == 2,
+          lines[1].isEmpty,
+          lines[0].hasPrefix("/")
+    else {
+        throw AcceptanceFailure.unknown("\(context) emitted an unsupported path")
+    }
+
+    return URL(fileURLWithPath: lines[0]).standardizedFileURL
+}
+
+private func environmentValue(_ environment: [String: String], key: String) throws -> String {
+    guard let value = environment[key], !value.isEmpty else {
+        throw AcceptanceFailure.unknown("selected toolchain environment is missing \(key)")
+    }
+
+    return value
 }
 
 func analyzePublicAPISymbolGraphs(
