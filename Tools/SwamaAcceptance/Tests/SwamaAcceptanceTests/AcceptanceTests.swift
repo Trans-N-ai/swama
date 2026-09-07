@@ -1010,7 +1010,12 @@ struct AcceptanceTests {
         let compiler = try report.object("compiler_public_api")
         #expect(try compiler.string("status") == "ready")
         #expect(try compiler.boolean("passed"))
+        #expect(try compiler.integer("symbol_count") == 0)
+        #expect(try compiler.array("symbols").isEmpty)
         #expect(try compiler.array("violations").isEmpty)
+        #expect(try compiler.string("manifest_sha256")
+            == "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        )
         let dependencies = try report.object("core_target_dependencies")
         #expect(try dependencies.string("status") == "ready")
         #expect(try dependencies.boolean("passed"))
