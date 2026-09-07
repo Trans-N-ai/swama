@@ -100,11 +100,14 @@ stage may be red while an earlier migration stage is green:
 - `core-boundary` requires the `SwamaCore` product/target. It invokes SwiftPM's
   compiler symbol-graph dump and rejects every public declaration or
   conformance that references a module outside Swift, Foundation, and
-  SwamaCore. It also walks the resolved SwiftPM product/target graph across
-  package boundaries and rejects a transitive MLX Audio product. `@inlinable`
-  and `@usableFromInline` are forbidden in the stable target so unchecked
-  implementation reachability cannot escape the compiler-derived declaration
-  boundary.
+  SwamaCore. Source imports are read from a revision-pinned SwiftParser syntax
+  tree, including every conditional-compilation branch; malformed syntax or a
+  selected Swift toolchain outside the pinned parser's 6.3 language release is
+  `UNKNOWN`. The gate also walks the resolved SwiftPM product/target graph
+  across package boundaries and rejects a transitive MLX Audio product.
+  `@inlinable` and `@usableFromInline` are forbidden in the stable target so
+  unchecked implementation reachability cannot escape the compiler-derived
+  declaration boundary.
 - `consumer-boundary` additionally requires the external fixture to depend on
   and import only `SwamaCore`, with its sole filesystem dependency resolving
   to this workspace's exact `swama` package and no remote/upstream package or

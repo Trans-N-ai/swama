@@ -1,224 +1,89 @@
 import Foundation
+import SwiftParser
+import SwiftSyntax
 
 func compilerImportedModules(
     in file: URL,
     developerDirectory: URL
 ) throws -> [(module: String, line: Int)] {
+    try validateSwiftParserToolchain(developerDirectory)
+    let source = try String(contentsOf: file, encoding: .utf8)
+    return try parsedSwiftImports(source: source, file: file)
+}
+
+private func validateSwiftParserToolchain(_ developerDirectory: URL) throws {
     let swift = developerDirectory.appendingPathComponent(
         "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
     )
     guard FileManager.default.isExecutableFile(atPath: swift.path) else {
-        throw AcceptanceFailure.unknown("missing Swift frontend: \(swift.path)")
+        throw AcceptanceFailure.unknown("missing Swift 6.3 toolchain for SwiftParser: \(swift.path)")
     }
-
-    let sentinelModule = "__SwamaAcceptanceImportSentinel"
-    let source = try String(contentsOf: file, encoding: .utf8)
-    let expandedSource = sourceRemovingConditionalCompilationDirectives(source)
-    let inputs = expandedSource == source ? [source] : [source, expandedSource]
-    var declarations: [(module: String, line: Int, offset: Int)] = []
-    var seen: Set<String> = []
-
-    for input in inputs {
-        for declaration in try compilerImportedModules(
-            in: input,
-            sourceFile: file,
-            swift: swift,
-            developerDirectory: developerDirectory,
-            sentinelModule: sentinelModule
-        ) {
-            let key = "\(declaration.offset)\u{0}\(declaration.module)"
-            if seen.insert(key).inserted {
-                declarations.append(declaration)
-            }
-        }
-    }
-
-    return declarations
-        .sorted { lhs, rhs in
-            lhs.offset == rhs.offset ? lhs.module < rhs.module : lhs.offset < rhs.offset
-        }
-        .map { ($0.module, $0.line) }
-}
-
-private func compilerImportedModules(
-    in source: String,
-    sourceFile: URL,
-    swift: URL,
-    developerDirectory: URL,
-    sentinelModule: String
-) throws -> [(module: String, line: Int, offset: Int)] {
-    let compilerSource = "\(source)\nimport \(sentinelModule)\n"
-    let compilerInput = FileManager.default
-        .temporaryDirectory
-        .appendingPathComponent("swama-imports-\(UUID().uuidString).swift")
-    defer { try? FileManager.default.removeItem(at: compilerInput) }
-    try Data(compilerSource.utf8).write(to: compilerInput, options: .atomic)
 
     let result = try runCommand(
-        [
-            swift.path,
-            "-frontend",
-            "-dump-parse",
-            "-enable-bare-slash-regex",
-            compilerInput.path
-        ],
-        currentDirectory: compilerInput.deletingLastPathComponent(),
+        [swift.path, "--version"],
+        currentDirectory: FileManager.default.temporaryDirectory,
         environment: developerEnvironment(developerDirectory),
-        timeout: 30,
+        timeout: 10,
         sampleMemory: false,
         timeoutFailureKind: .unknown,
-        timeoutContext: "Swift import parser"
+        timeoutContext: "SwiftParser toolchain identity"
     )
     guard result.returnCode == 0 else {
         throw AcceptanceFailure.unknown(
-            "cannot parse Swift imports in \(sourceFile.lastPathComponent):\n\(commandFailureSummary(result))"
+            "cannot identify selected Swift toolchain:\n\(commandFailureSummary(result))"
         )
     }
 
-    do {
-        let declarations = try parseCompilerImportAST(
-            result.stdout,
-            sentinelModule: sentinelModule
-        )
-        guard declarations.count(where: { $0.module == sentinelModule }) == 1 else {
-            throw AcceptanceFailure.unknown("Swift import parser omitted or duplicated its sentinel")
-        }
-
-        return declarations.filter { $0.module != sentinelModule }
-    }
-    catch {
+    let versionExpression = try NSRegularExpression(pattern: #"\bSwift version 6\.3(?:\.\d+)?\b"#)
+    let range = NSRange(result.stdout.startIndex ..< result.stdout.endIndex, in: result.stdout)
+    guard versionExpression.firstMatch(in: result.stdout, range: range) != nil else {
         throw AcceptanceFailure.unknown(
-            "cannot interpret Swift import AST for \(sourceFile.lastPathComponent): \(error)"
+            "SwiftParser revision requires selected Swift 6.3; got: \(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))"
         )
     }
 }
 
-func parseCompilerImportAST(
-    _ output: String,
-    sentinelModule: String
-) throws -> [(module: String, line: Int, offset: Int)] {
-    try validateCompilerImportAST(output, sentinelModule: sentinelModule)
-
-    let moduleExpression = try NSRegularExpression(pattern: #"module="([^"]+)""#)
-    let rangeExpression = try NSRegularExpression(
-        pattern: #"range=\[.*:(\d+):(\d+) - line:\d+:\d+\]"#
-    )
-    var declarations: [(module: String, line: Int, offset: Int)] = []
-    for outputLine in output.split(separator: "\n").map(String.init)
-        where outputLine.contains("(import_decl")
-    {
-        guard let module = regexCapture(moduleExpression, in: outputLine, group: 1),
-              let lineValue = regexCapture(rangeExpression, in: outputLine, group: 1),
-              let columnValue = regexCapture(rangeExpression, in: outputLine, group: 2),
-              let line = Int(lineValue),
-              let column = Int(columnValue),
-              line > 0,
-              column > 0,
-              let rootModule = module.split(separator: ".").first.map(String.init)
-        else {
-            throw AcceptanceFailure.unknown(
-                "Swift import parser emitted an unsupported import declaration: \(outputLine)"
-            )
-        }
-
-        let (lineOffset, lineOverflow) = line.multipliedReportingOverflow(by: 1_000_000)
-        let (offset, columnOverflow) = lineOffset.addingReportingOverflow(column)
-        guard !lineOverflow, !columnOverflow else {
-            throw AcceptanceFailure.unknown("Swift import parser emitted an overflowing source location")
-        }
-
-        declarations.append((rootModule, line, offset))
+func parsedSwiftImports(
+    source: String,
+    file: URL
+) throws -> [(module: String, line: Int)] {
+    let tree = Parser.parse(source: source)
+    guard !tree.hasError else {
+        throw AcceptanceFailure.unknown("cannot parse Swift imports in \(file.lastPathComponent)")
     }
-    return declarations
+
+    let collector = SwiftImportCollector(file: file, tree: tree)
+    collector.walk(tree)
+    guard !collector.encounteredInvalidImport else {
+        throw AcceptanceFailure.unknown("SwiftParser emitted an import without a module")
+    }
+
+    return collector.declarations
 }
 
-private func validateCompilerImportAST(
-    _ output: String,
-    sentinelModule: String
-) throws {
-    var lines = output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    while lines.last?.isEmpty == true {
-        lines.removeLast()
-    }
-    guard let first = lines.first, first.hasPrefix("(source_file ") else {
-        throw AcceptanceFailure.unknown("Swift import parser emitted a missing or noisy source_file root")
-    }
-    guard lines.dropFirst().allSatisfy({ !$0.hasPrefix("(") }) else {
-        throw AcceptanceFailure.unknown("Swift import parser emitted an additional top-level record")
+// MARK: - SwiftImportCollector
+
+private final class SwiftImportCollector: SyntaxVisitor {
+    private let converter: SourceLocationConverter
+    fileprivate var declarations: [(module: String, line: Int)] = []
+    fileprivate var encounteredInvalidImport = false
+
+    init(file: URL, tree: SourceFileSyntax) {
+        converter = SourceLocationConverter(fileName: file.path, tree: tree)
+        super.init(viewMode: .sourceAccurate)
     }
 
-    let sentinelField = "module=\"\(sentinelModule)\""
-    guard output.components(separatedBy: sentinelField).count == 2 else {
-        throw AcceptanceFailure.unknown("Swift import parser omitted or duplicated its sentinel")
-    }
-
-    let escapedSentinel = NSRegularExpression.escapedPattern(for: sentinelModule)
-    let sentinelExpression = try NSRegularExpression(
-        pattern: #"^\s+\(import_decl .* module=""# + escapedSentinel + #""\)\)$"#
-    )
-    guard let last = lines.last else {
-        throw AcceptanceFailure.unknown("Swift import parser emitted an empty AST")
-    }
-
-    let lastRange = NSRange(last.startIndex ..< last.endIndex, in: last)
-    guard sentinelExpression.firstMatch(in: last, range: lastRange)?.range == lastRange else {
-        throw AcceptanceFailure.unknown("Swift import parser emitted a truncated or noisy AST suffix")
-    }
-}
-
-private func regexCapture(
-    _ expression: NSRegularExpression,
-    in text: String,
-    group: Int
-) -> String? {
-    let range = NSRange(text.startIndex ..< text.endIndex, in: text)
-    guard let match = expression.firstMatch(in: text, range: range),
-          let capture = Range(match.range(at: group), in: text)
-    else {
-        return nil
-    }
-
-    return String(text[capture])
-}
-
-func sourceRemovingConditionalCompilationDirectives(_ source: String) -> String {
-    var bytes = Array(source.utf8)
-    var lineStart = 0
-    while lineStart < bytes.count {
-        var lineEnd = lineStart
-        while lineEnd < bytes.count, bytes[lineEnd] != 0x0A, bytes[lineEnd] != 0x0D {
-            lineEnd += 1
+    override func visit(_ node: ImportDeclSyntax) -> SyntaxVisitorContinueKind {
+        guard let first = node.path.first, !first.name.text.isEmpty else {
+            encounteredInvalidImport = true
+            return .skipChildren
         }
 
-        var tokenStart = lineStart
-        while tokenStart < lineEnd, bytes[tokenStart] == 0x20 || bytes[tokenStart] == 0x09 {
-            tokenStart += 1
-        }
-        let directiveTokens = ["#elseif", "#endif", "#else", "#if"]
-        let isDirective = directiveTokens.contains { token in
-            let tokenBytes = Array(token.utf8)
-            guard tokenStart + tokenBytes.count <= lineEnd,
-                  Array(bytes[tokenStart ..< tokenStart + tokenBytes.count]) == tokenBytes
-            else {
-                return false
-            }
-
-            let boundary = tokenStart + tokenBytes.count
-            return boundary == lineEnd || bytes[boundary] == 0x20 || bytes[boundary] == 0x09
-        }
-        if isDirective {
-            for index in lineStart ..< lineEnd {
-                bytes[index] = 0x20
-            }
-        }
-
-        lineStart = lineEnd
-        while lineStart < bytes.count, bytes[lineStart] == 0x0A || bytes[lineStart] == 0x0D {
-            lineStart += 1
-        }
+        let module = first.name.text
+        let location = converter.location(for: node.importKeyword.positionAfterSkippingLeadingTrivia)
+        declarations.append((module, location.line))
+        return .skipChildren
     }
-
-    return String(decoding: bytes, as: UTF8.self)
 }
 
 // MARK: - ArchitectureStage

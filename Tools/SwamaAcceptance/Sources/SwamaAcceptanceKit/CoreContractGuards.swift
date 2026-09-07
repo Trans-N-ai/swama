@@ -436,7 +436,7 @@ private final class PreciseIdentifierModuleResolver {
 
         let mangledNames = swiftIdentifiers.map { "$s\($0.dropFirst(2))" }
         let result = try runCommand(
-            [demangler.path] + mangledNames,
+            [demangler.path, "--expand", "--tree-only"] + mangledNames,
             currentDirectory: FileManager.default.temporaryDirectory,
             timeout: 30,
             sampleMemory: false,
@@ -502,55 +502,89 @@ func parseBatchDemanglerOutput(
     }
 
     let lines = output.dropLast().split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    guard lines.count == mangledNames.count else {
-        throw AcceptanceFailure.unknown(
-            "Swift demangler batch returned \(lines.count) records for \(mangledNames.count) inputs"
-        )
-    }
-
-    return try zip(zip(preciseIdentifiers, mangledNames), lines).map { pair, line in
-        let (preciseIdentifier, mangled) = pair
-        let prefix = "\(mangled) ---> "
-        guard line.hasPrefix(prefix) else {
+    var lineIndex = 0
+    var modules: [String?] = []
+    for (preciseIdentifier, mangled) in zip(preciseIdentifiers, mangledNames) {
+        guard lineIndex < lines.count,
+              lines[lineIndex] == "Demangling for \(mangled)"
+        else {
             throw AcceptanceFailure.unknown(
                 "Swift demangler batch returned a reordered or unsupported record"
             )
         }
 
-        let demangled = String(line.dropFirst(prefix.count))
-        guard !demangled.isEmpty else {
-            throw AcceptanceFailure.unknown("Swift demangler batch returned an empty record")
-        }
-        guard demangled != mangled else {
-            return nil
+        lineIndex += 1
+
+        guard lineIndex < lines.count else {
+            throw AcceptanceFailure.unknown("Swift demangler batch omitted its semantic tree")
         }
 
-        let payload = preciseIdentifier.dropFirst(2)
-        let requiresSwiftModule = payload.first?.isNumber != true
-        return try demangledModuleName(
-            demangled,
-            requiresSwiftModule: requiresSwiftModule
+        if lines[lineIndex] == "<<NULL>>" {
+            modules.append(nil)
+            lineIndex += 1
+            continue
+        }
+
+        guard lines[lineIndex] == "kind=Global" else {
+            throw AcceptanceFailure.unknown("Swift demangler batch omitted its Global root")
+        }
+
+        lineIndex += 1
+
+        var semanticLines: [String] = []
+        while lineIndex < lines.count,
+              !lines[lineIndex].hasPrefix("Demangling for ")
+        {
+            if lines[lineIndex].isEmpty {
+                lineIndex += 1
+                break
+            }
+            semanticLines.append(lines[lineIndex])
+            lineIndex += 1
+        }
+        guard !semanticLines.isEmpty else {
+            throw AcceptanceFailure.unknown("Swift demangler batch returned an empty Global root")
+        }
+
+        var topLevelNodeCount = 0
+        var discoveredModules: Set<String> = []
+        let moduleExpression = try NSRegularExpression(
+            pattern: #"^\s+kind=Module, text="([A-Za-z_][A-Za-z0-9_]*)"$"#
         )
-    }
-}
+        for semanticLine in semanticLines {
+            let indentation = semanticLine.prefix(while: { $0 == " " }).count
+            guard indentation >= 2,
+                  indentation.isMultiple(of: 2),
+                  semanticLine.dropFirst(indentation).hasPrefix("kind=")
+            else {
+                throw AcceptanceFailure.unknown(
+                    "Swift demangler batch returned a malformed semantic tree for \(preciseIdentifier)"
+                )
+            }
 
-private func demangledModuleName(
-    _ demangled: String,
-    requiresSwiftModule: Bool
-) throws -> String? {
-    let expression = try NSRegularExpression(
-        pattern: #"^([A-Za-z_][A-Za-z0-9_]*)\.[A-Za-z_][A-Za-z0-9_.]*$"#
-    )
-    let range = NSRange(demangled.startIndex ..< demangled.endIndex, in: demangled)
-    guard let match = expression.firstMatch(in: demangled, range: range),
-          match.range == range,
-          let moduleRange = Range(match.range(at: 1), in: demangled)
-    else {
-        return nil
+            if indentation == 2 {
+                topLevelNodeCount += 1
+            }
+
+            let range = NSRange(semanticLine.startIndex ..< semanticLine.endIndex, in: semanticLine)
+            if let match = moduleExpression.firstMatch(in: semanticLine, range: range),
+               let moduleRange = Range(match.range(at: 1), in: semanticLine)
+            {
+                discoveredModules.insert(String(semanticLine[moduleRange]))
+            }
+        }
+        guard topLevelNodeCount == 1, discoveredModules.count == 1 else {
+            modules.append(nil)
+            continue
+        }
+
+        modules.append(discoveredModules.first)
+    }
+    guard lineIndex == lines.count else {
+        throw AcceptanceFailure.unknown("Swift demangler batch returned trailing output")
     }
 
-    let module = String(demangled[moduleRange])
-    return requiresSwiftModule && module != "Swift" ? nil : module
+    return modules
 }
 
 // MARK: - External consumer and target dependency boundary

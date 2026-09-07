@@ -343,7 +343,7 @@ struct AcceptanceTests {
         let customPrefix = /1
         let afterPlus = 1 + /foo; import FakeAfterPlus/
         let quotient = 8 / 2
-        #if os(macOS)
+        #if(os(macOS))
         import MLXLMCommon
         #elseif os(iOS)
         import UIKit
@@ -375,45 +375,15 @@ struct AcceptanceTests {
         if declarations.count == 8 {
             #expect(declarations[6].line == declarations[7].line)
         }
-        let sentinel = "__SwamaAcceptanceImportSentinel"
-        let validAST = """
-        (source_file "/tmp/test.swift"
-          (import_decl decl_context=0x1 range=[/tmp/test.swift:1:1 - line:1:7] module="Foo")
-          (import_decl decl_context=0x1 range=[/tmp/test.swift:2:1 - line:2:8] module="\(sentinel)"))
-        """
-        #expect(try parseCompilerImportAST(validAST, sentinelModule: sentinel).map(\.module) == [
-            "Foo",
-            sentinel
-        ])
-        for malformed in [
-            validAST.dropLast().description,
-            "noise \(validAST)",
-            "(source_file \"/tmp/first.swift\")\n\(validAST)",
-            "(source_file \"/tmp/test.swift\"\n(unexpected_output)\n"
-                + "  (import_decl decl_context=0x1 range=[/tmp/test.swift:2:1 - line:2:8] "
-                + "module=\"\(sentinel)\"))",
-            validAST.replacingOccurrences(
-                of: "module=\"\(sentinel)\"))",
-                with: "module=\"\(sentinel)\")\n"
-                    + "  (import_decl decl_context=0x1 range=[/tmp/test.swift:3:1 - line:3:8] "
-                    + "module=\"\(sentinel)\"))"
-            ),
-            validAST + "\n  (unexpected_output)",
-            "\(validAST)\nnoise"
-        ] {
-            #expect(throws: AcceptanceFailure.self) {
-                _ = try parseCompilerImportAST(malformed, sentinelModule: sentinel)
-            }
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try parsedSwiftImports(source: "import", file: temporary)
         }
-
-        let stripped = sourceRemovingConditionalCompilationDirectives(source)
-        #expect(stripped.utf8.count == source.utf8.count)
-        #expect(stripped.split(separator: "\n", omittingEmptySubsequences: false).count
-            == source.split(separator: "\n", omittingEmptySubsequences: false).count
-        )
-        #expect(!stripped.contains("#if os(macOS)"))
-        #expect(stripped.contains("import MLXLMCommon"))
-        #expect(stripped.contains("import Foundation"))
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try compilerImportedModules(
+                in: temporary,
+                developerDirectory: URL(fileURLWithPath: "/nonexistent/swama-xcode")
+            )
+        }
     }
 
     @Test func compilerImportParserAcceptsTheRealDiagnosticsFile() throws {
@@ -555,6 +525,12 @@ struct AcceptanceTests {
             "spelling": "Swift",
             "preciseIdentifier": "s:5Swift?"
         ]]
+        var concatenatedPreciseSymbol = validSymbol
+        concatenatedPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Int",
+            "preciseIdentifier": "s:Si5Other4TypeV"
+        ]]
         var unknownFragmentKindSymbol = validSymbol
         unknownFragmentKindSymbol["declarationFragments"] = [[
             "kind": "futureTypeReference",
@@ -577,6 +553,7 @@ struct AcceptanceTests {
             ["module": ["name": "SwamaCore"], "symbols": [zeroLengthSwiftPreciseSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [invalidSwiftPreciseSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [invalidNumericPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [concatenatedPreciseSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [unknownFragmentKindSymbol], "relationships": []],
             ["module": ["name": "SwamaCore"], "symbols": [unknownAccessSymbol], "relationships": []],
             [
@@ -715,18 +692,36 @@ struct AcceptanceTests {
 
         let preciseIdentifiers = ["s:SN", "s:5Other4TypeV"]
         let mangledNames = ["$sSN", "$s5Other4TypeV"]
+        let validDemanglerOutput = """
+        Demangling for $sSN
+        kind=Global
+          kind=Structure
+            kind=Module, text="Swift"
+            kind=Identifier, text="ClosedRange"
+
+        Demangling for $s5Other4TypeV
+        kind=Global
+          kind=Structure
+            kind=Module, text="Other"
+            kind=Identifier, text="Type"
+
+
+        """
         let parsedModules = try parseBatchDemanglerOutput(
-            "$sSN ---> Swift.ClosedRange\n$s5Other4TypeV ---> Other.Type\n",
+            validDemanglerOutput,
             preciseIdentifiers: preciseIdentifiers,
             mangledNames: mangledNames
         )
         #expect(parsedModules[0] == "Swift")
         #expect(parsedModules[1] == "Other")
         for malformed in [
-            "$s5Other4TypeV ---> Other.Type\n$sSN ---> Swift.ClosedRange\n",
-            "\n$sSN ---> Swift.ClosedRange\n$s5Other4TypeV ---> Other.Type\n",
-            "$sSN ---> Swift.ClosedRange\n$s5Other4TypeV ---> Other.Type",
-            "$sSN ---> Swift.ClosedRange\n$s5Other4TypeV ---> Other.Type\nnoise\n"
+            validDemanglerOutput.replacingOccurrences(
+                of: "Demangling for $sSN",
+                with: "Demangling for $s5Other4TypeV"
+            ),
+            "\n" + validDemanglerOutput,
+            validDemanglerOutput.trimmingCharacters(in: .newlines),
+            validDemanglerOutput + "noise\n"
         ] {
             #expect(throws: AcceptanceFailure.self) {
                 _ = try parseBatchDemanglerOutput(
@@ -738,11 +733,29 @@ struct AcceptanceTests {
         }
 
         let invalidModules = try parseBatchDemanglerOutput(
-            "$s5Swift? ---> $s5Swift?\n$sXX ---> Other.Type\n",
+            "Demangling for $s5Swift?\n<<NULL>>\nDemangling for $sXX\n<<NULL>>\n",
             preciseIdentifiers: ["s:5Swift?", "s:XX"],
             mangledNames: ["$s5Swift?", "$sXX"]
         )
         #expect(invalidModules == [nil, nil])
+
+        let concatenatedModules = try parseBatchDemanglerOutput(
+            """
+            Demangling for $sSi5Other4TypeV
+            kind=Global
+              kind=Structure
+                kind=Module, text="Swift"
+                kind=Identifier, text="Int"
+              kind=Structure
+                kind=Module, text="Other"
+                kind=Identifier, text="Type"
+
+
+            """,
+            preciseIdentifiers: ["s:Si5Other4TypeV"],
+            mangledNames: ["$sSi5Other4TypeV"]
+        )
+        #expect(concatenatedModules == [nil])
     }
 
     @Test func coreBoundaryReportsCompilerOracleAsUnmetWhenTargetIsAbsent() throws {
