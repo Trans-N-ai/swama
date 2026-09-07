@@ -1,20 +1,91 @@
 import Foundation
+import SwiftParser
+import SwiftSyntax
 
-/// Import attributes are open-ended (`@_exported`, `@_spi(...)`, etc.), so match their
-/// grammar rather than enumerating spellings. Access modifiers and scoped-import kinds are
-/// finite parts of the Swift import declaration grammar.
-let swiftImportDeclarationPattern =
-    #"^\s*(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|package|public|open)\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func|macro)\s+)?([A-Za-z_][A-Za-z0-9_]*)\b"#
+func compilerImportedModules(
+    in file: URL,
+    developerDirectory: URL
+) throws -> [(module: String, line: Int)] {
+    try validateSwiftParserToolchain(developerDirectory)
+    let source = try String(contentsOf: file, encoding: .utf8)
+    return try parsedSwiftImports(source: source, file: file)
+}
 
-func swiftImportedModule(in line: String, matching expression: NSRegularExpression) -> String? {
-    let range = NSRange(line.startIndex ..< line.endIndex, in: line)
-    guard let match = expression.firstMatch(in: line, range: range),
-          let moduleRange = Range(match.range(at: 1), in: line)
-    else {
-        return nil
+private func validateSwiftParserToolchain(_ developerDirectory: URL) throws {
+    let swift = developerDirectory.appendingPathComponent(
+        "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
+    )
+    guard FileManager.default.isExecutableFile(atPath: swift.path) else {
+        throw AcceptanceFailure.unknown("missing Swift 6.3 toolchain for SwiftParser: \(swift.path)")
     }
 
-    return String(line[moduleRange])
+    let result = try runCommand(
+        [swift.path, "--version"],
+        currentDirectory: FileManager.default.temporaryDirectory,
+        environment: developerEnvironment(developerDirectory),
+        timeout: 10,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "SwiftParser toolchain identity"
+    )
+    guard result.returnCode == 0 else {
+        throw AcceptanceFailure.unknown(
+            "cannot identify selected Swift toolchain:\n\(commandFailureSummary(result))"
+        )
+    }
+
+    let versionExpression = try NSRegularExpression(pattern: #"\bSwift version 6\.3(?:\.\d+)?\b"#)
+    let range = NSRange(result.stdout.startIndex ..< result.stdout.endIndex, in: result.stdout)
+    guard versionExpression.firstMatch(in: result.stdout, range: range) != nil else {
+        throw AcceptanceFailure.unknown(
+            "SwiftParser revision requires selected Swift 6.3; got: \(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))"
+        )
+    }
+}
+
+func parsedSwiftImports(
+    source: String,
+    file: URL
+) throws -> [(module: String, line: Int)] {
+    let tree = Parser.parse(source: source)
+    guard !tree.hasError else {
+        throw AcceptanceFailure.unknown("cannot parse Swift imports in \(file.lastPathComponent)")
+    }
+
+    let collector = SwiftImportCollector(file: file, tree: tree)
+    collector.walk(tree)
+    guard !collector.encounteredInvalidImport else {
+        throw AcceptanceFailure.unknown("SwiftParser emitted an import without a module")
+    }
+
+    return collector.declarations
+}
+
+// MARK: - SwiftImportCollector
+
+private final class SwiftImportCollector: SyntaxVisitor {
+    private let converter: SourceLocationConverter
+    fileprivate var declarations: [(module: String, line: Int)] = []
+    fileprivate var encounteredInvalidImport = false
+
+    init(file: URL, tree: SourceFileSyntax) {
+        converter = SourceLocationConverter(fileName: file.path, tree: tree)
+        super.init(viewMode: .sourceAccurate)
+    }
+
+    override func visit(_ node: ImportDeclSyntax) -> SyntaxVisitorContinueKind {
+        guard let first = node.path.first,
+              let identifier = Identifier(first.name),
+              !identifier.name.isEmpty
+        else {
+            encounteredInvalidImport = true
+            return .skipChildren
+        }
+
+        let location = converter.location(for: node.importKeyword.positionAfterSkippingLeadingTrivia)
+        declarations.append((identifier.name, location.line))
+        return .skipChildren
+    }
 }
 
 // MARK: - ArchitectureStage
@@ -22,23 +93,40 @@ func swiftImportedModule(in line: String, matching expression: NSRegularExpressi
 enum ArchitectureStage: String, Sendable {
     case legacyRatchet = "legacy-ratchet"
     case coreBoundary = "core-boundary"
+    case consumerBoundary = "consumer-boundary"
 }
 
 func architectureReport(
     contract: ArchitectureContract,
+    coreGuards: CoreGuardContract? = nil,
     stage: ArchitectureStage,
-    paths: WorkspacePaths
+    paths: WorkspacePaths,
+    developerDirectory: URL = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
 ) throws -> JSONObject {
     let packageManifest = try String(contentsOf: paths.package.appendingPathComponent("Package.swift"), encoding: .utf8)
     let swamaKit = paths.package.appendingPathComponent("Sources/SwamaKit")
     let forbidden = Set(contract.goalForbiddenImports)
-    let legacyImports = try imports(in: swamaKit, forbidden: forbidden, repository: paths.repository)
+    let legacyImports = try imports(
+        in: swamaKit,
+        forbidden: forbidden,
+        repository: paths.repository,
+        developerDirectory: developerDirectory
+    )
     let legacyLeaks = try publicMLXLeaks(in: swamaKit, repository: paths.repository)
     var report: JSONObject = [
         "stage": stage.rawValue,
         "legacy_forbidden_imports": legacyImports,
         "legacy_public_mlx_leaks": legacyLeaks
     ]
+    if let coreGuards {
+        report["external_consumer_boundary"] = try externalConsumerBoundaryReport(
+            fixture: paths.fixture,
+            expectedPackage: paths.package,
+            contract: coreGuards,
+            developerDirectory: developerDirectory
+        )
+        report["semantic_parity_schema"] = paritySchemaReport(coreGuards.parity)
+    }
 
     switch stage {
     case .legacyRatchet:
@@ -64,16 +152,60 @@ func architectureReport(
         report["removed_public_mlx_leaks"] = removedLeaks
         report["passed"] = newImports.isEmpty && newLeaks.isEmpty
 
-    case .coreBoundary:
+    case .consumerBoundary,
+         .coreBoundary:
         let coreRoot = paths.package.appendingPathComponent("Sources/\(contract.goalCoreTarget)")
-        let coreImports = try imports(in: coreRoot, forbidden: forbidden, repository: paths.repository)
-        let coreLeaks = try publicMLXLeaks(in: coreRoot, repository: paths.repository)
+        let coreImports = try imports(
+            in: coreRoot,
+            forbidden: forbidden,
+            repository: paths.repository,
+            developerDirectory: developerDirectory
+        )
         let targetPresent = packageManifest.contains("name: \"\(contract.goalCoreTarget)\"")
             && FileManager.default.fileExists(atPath: coreRoot.path)
         report["core_target_present"] = targetPresent
         report["core_forbidden_imports"] = coreImports
-        report["core_public_mlx_leaks"] = coreLeaks
-        report["passed"] = targetPresent && coreImports.isEmpty && coreLeaks.isEmpty
+        let compiler: JSONObject
+        let dependencies: JSONObject
+        if targetPresent, let coreGuards {
+            compiler = try compilerPublicAPIReport(
+                target: contract.goalCoreTarget,
+                paths: paths,
+                developerDirectory: developerDirectory,
+                contract: coreGuards
+            )
+            dependencies = try coreTargetDependencyReport(
+                target: contract.goalCoreTarget,
+                paths: paths,
+                developerDirectory: developerDirectory,
+                contract: coreGuards
+            )
+        }
+        else {
+            compiler = [
+                "status": "unmet",
+                "reason": "target \(contract.goalCoreTarget) is absent",
+                "passed": false
+            ]
+            dependencies = [
+                "status": "unmet",
+                "reason": "target \(contract.goalCoreTarget) is absent",
+                "passed": false
+            ]
+        }
+        report["compiler_public_api"] = compiler
+        report["core_target_dependencies"] = dependencies
+        let corePassed = targetPresent
+            && coreImports.isEmpty
+            && compiler["passed"] as? Bool == true
+            && dependencies["passed"] as? Bool == true
+        if stage == .consumerBoundary {
+            let consumerPassed = (report["external_consumer_boundary"] as? JSONObject)?["passed"] as? Bool == true
+            report["passed"] = corePassed && consumerPassed
+        }
+        else {
+            report["passed"] = corePassed
+        }
     }
     return report
 }
@@ -81,28 +213,22 @@ func architectureReport(
 private func imports(
     in root: URL,
     forbidden: Set<String>,
-    repository: URL
+    repository: URL,
+    developerDirectory: URL
 ) throws -> [JSONObject] {
     guard FileManager.default.fileExists(atPath: root.path) else {
         return []
     }
 
-    let expression = try NSRegularExpression(pattern: swiftImportDeclarationPattern)
     var hits: [JSONObject] = []
 
     for file in try regularFiles(in: root, extensions: ["swift"]).sorted(by: { $0.path < $1.path }) {
-        let text = try String(contentsOf: file, encoding: .utf8)
-        for (index, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-            let value = String(line)
-            guard let module = swiftImportedModule(in: value, matching: expression) else {
-                continue
-            }
-
-            if forbidden.contains(module) {
+        for declaration in try compilerImportedModules(in: file, developerDirectory: developerDirectory) {
+            if forbidden.contains(declaration.module) {
                 hits.append([
                     "file": relativePath(file, to: repository),
-                    "line": index + 1,
-                    "module": module
+                    "line": declaration.line,
+                    "module": declaration.module
                 ])
             }
         }

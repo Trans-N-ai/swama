@@ -79,7 +79,10 @@ func currentInstrumentIdentity(paths: WorkspacePaths) throws -> JSONObject {
     let harnessSources = try regularFiles(
         in: paths.harness.appendingPathComponent("Sources"),
         extensions: ["swift"]
-    ) + [paths.harness.appendingPathComponent("Package.swift")]
+    ) + [
+        paths.harness.appendingPathComponent("Package.swift"),
+        paths.harness.appendingPathComponent("Package.resolved")
+    ]
     let harnessTests = try regularFiles(
         in: paths.harness.appendingPathComponent("Tests"),
         extensions: ["swift"]

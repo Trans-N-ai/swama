@@ -7,9 +7,19 @@ let package = Package(
     products: [
         .executable(name: "swama-acceptance", targets: ["SwamaAcceptance"])
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/swiftlang/swift-syntax.git",
+            revision: "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1"
+        )
+    ],
     targets: [
         .target(
             name: "SwamaAcceptanceKit",
+            dependencies: [
+                .product(name: "SwiftParser", package: "swift-syntax"),
+                .product(name: "SwiftSyntax", package: "swift-syntax")
+            ],
             path: "Sources/SwamaAcceptanceKit"
         ),
         .executableTarget(

@@ -9,6 +9,7 @@ struct AcceptanceContract: Codable, Sendable {
     let benchmark: BenchmarkContract
     let reliability: ReliabilityContract
     let architecture: ArchitectureContract
+    let coreGuards: CoreGuardContract
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -17,6 +18,7 @@ struct AcceptanceContract: Codable, Sendable {
         case benchmark
         case reliability
         case architecture
+        case coreGuards = "core_guards"
     }
 
     static func load(from url: URL) throws -> Self {
@@ -26,6 +28,46 @@ struct AcceptanceContract: Codable, Sendable {
         catch {
             throw AcceptanceFailure.unknown("cannot decode contract \(url.path): \(error)")
         }
+    }
+}
+
+// MARK: - CoreGuardContract
+
+struct CoreGuardContract: Codable, Sendable {
+    let schemaVersion: Int
+    let compilerTimeoutSeconds: Double
+    let allowedPublicModules: [String]
+    let fixtureProduct: String
+    let fixtureAllowedImports: [String]
+    let forbiddenTransitiveProducts: [String]
+    let parity: ParityContract
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case compilerTimeoutSeconds = "compiler_timeout_seconds"
+        case allowedPublicModules = "allowed_public_modules"
+        case fixtureProduct = "fixture_product"
+        case fixtureAllowedImports = "fixture_allowed_imports"
+        case forbiddenTransitiveProducts = "forbidden_transitive_products"
+        case parity
+    }
+}
+
+// MARK: - ParityContract
+
+struct ParityContract: Codable, Sendable {
+    let schemaVersion: Int
+    let requiredRoutes: [String]
+    let eventTypes: [String]
+    let terminalKinds: [String]
+    let finishReasons: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case requiredRoutes = "required_routes"
+        case eventTypes = "event_types"
+        case terminalKinds = "terminal_kinds"
+        case finishReasons = "finish_reasons"
     }
 }
 

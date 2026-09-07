@@ -325,24 +325,976 @@ struct AcceptanceTests {
     }
 
     @Test func architectureImportParserHandlesAttributesAccessAndScopedImports() throws {
-        let expression = try NSRegularExpression(pattern: swiftImportDeclarationPattern)
-        let imports = [
-            "import SwamaServer": "SwamaServer",
-            "@_exported import NIO": "NIO",
-            "@preconcurrency import AppKit": "AppKit",
-            "@testable import SwamaServer": "SwamaServer",
-            "@_implementationOnly import ArgumentParser": "ArgumentParser",
-            "@_spi(Testing) import NIOHTTP1": "NIOHTTP1",
-            "internal import SwamaAppSupport": "SwamaAppSupport",
-            "package import struct NIOCore.ByteBuffer": "NIOCore",
-            "@preconcurrency import MLXLMCommon": "MLXLMCommon"
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-import-parser-\(UUID().uuidString).swift")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = ####"""
+        let explanation = "ignore; import FakeString"
+        // ignore; import FakeComment
+        let raw = #"literal \#"#; import FakeRaw"#
+        let multiline = #"""
+        literal \#"""#; import FakeMultiline
+        """#
+        let extended = #/foo\/#; import FakeExtended/#
+        let bare = /foo; import FakeBare/
+        prefix operator /
+        prefix func / (value: Int) -> Int { value }
+        let customPrefix = /1
+        let afterPlus = 1 + /foo; import FakeAfterPlus/
+        let quotient = 8 / 2
+        #if(os(macOS))
+        import MLXLMCommon
+        #elseif os(iOS)
+        import UIKit
+        #else
+        import Foundation
+        #endif
+        import `MLX`
+        @_exported import NIO
+        internal import AppKit
+        package import struct NIOCore.ByteBuffer
+        import SwamaCore; import ArgumentParser
+        """####
+        try Data(source.utf8).write(to: temporary)
+
+        let declarations = try compilerImportedModules(
+            in: temporary,
+            developerDirectory: URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
+        )
+        #expect(declarations.map(\.module) == [
+            "MLXLMCommon",
+            "UIKit",
+            "Foundation",
+            "MLX",
+            "NIO",
+            "AppKit",
+            "NIOCore",
+            "SwamaCore",
+            "ArgumentParser"
+        ])
+        #expect(declarations.allSatisfy { $0.line > 0 })
+        if declarations.count == 9 {
+            #expect(declarations[7].line == declarations[8].line)
+        }
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try parsedSwiftImports(source: "import", file: temporary)
+        }
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try compilerImportedModules(
+                in: temporary,
+                developerDirectory: URL(fileURLWithPath: "/nonexistent/swama-xcode")
+            )
+        }
+    }
+
+    @Test func compilerImportParserAcceptsTheRealDiagnosticsFile() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let file = paths.package
+            .appendingPathComponent("Sources/SwamaKit/Diagnostics/SwamaDiagnostics.swift")
+        let declarations = try compilerImportedModules(
+            in: file,
+            developerDirectory: URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
+        )
+        #expect(declarations.map(\.module) == ["CryptoKit", "Darwin", "Foundation"])
+        #expect(declarations.map(\.line) == [1, 2, 3])
+    }
+
+    @Test func compilerPublicAPIGateRejectsUpstreamTypesAndConformances() throws {
+        let graph: JSONObject = [
+            "module": ["name": "SwamaCore"],
+            "symbols": [
+                symbolGraphSymbol(
+                    precise: "s:9SwamaCore6EngineC5model11MLXLMCommon14ModelContainerCvp",
+                    path: ["Engine", "model"],
+                    declaration: [
+                        typeFragment("Engine", precise: "s:9SwamaCore6EngineC"),
+                        typeFragment("ModelContainer", precise: "s:11MLXLMCommon14ModelContainerC")
+                    ]
+                ),
+                symbolGraphSymbol(
+                    precise: "s:9SwamaCore6EngineC5cacheSay11MLXLMCommon7KVCache_pGvp",
+                    path: ["Engine", "cache"],
+                    declaration: [
+                        typeFragment("KVCache", precise: "s:11MLXLMCommon7KVCacheP")
+                    ]
+                ),
+                symbolGraphSymbol(
+                    precise: "s:9SwamaCore7PayloadV4data10Foundation4DataVvp",
+                    path: ["Payload", "data"],
+                    declaration: [
+                        typeFragment("Data", precise: "s:10Foundation4DataV")
+                    ]
+                ),
+                symbolGraphSymbol(
+                    precise: "s:9SwamaCore7PayloadV",
+                    path: ["Payload"],
+                    declaration: [
+                        typeFragment("Payload", precise: "s:9SwamaCore7PayloadV")
+                    ]
+                ),
+                symbolGraphSymbol(
+                    precise: "s:9SwamaCore18externalMemberTestyyF",
+                    path: ["External", "member"],
+                    declaration: [["kind": "identifier", "spelling": "member"]]
+                )
+            ],
+            "relationships": [
+                [
+                    "kind": "conformsTo",
+                    "source": "s:9SwamaCore7PayloadV",
+                    "target": "s:12ForeignTypes15ForeignProtocolP",
+                    "targetFallback": "ForeignTypes.ForeignProtocol"
+                ],
+                [
+                    "kind": "memberOf",
+                    "source": "s:9SwamaCore18externalMemberTestyyF",
+                    "target": "s:8Upstream8ExternalV",
+                    "targetFallback": "Upstream.External"
+                ]
+            ]
         ]
 
-        for (line, module) in imports {
-            #expect(swiftImportedModule(in: line, matching: expression) == module)
+        let report = try analyzePublicAPISymbolGraphs(
+            [graph],
+            target: "SwamaCore",
+            allowedModules: ["Swift", "Foundation", "SwamaCore"]
+        )
+        #expect(report["passed"] as? Bool == false)
+        let violations = (report["violations"] as? [JSONObject]) ?? []
+        let modules = Set(violations.compactMap { $0["module"] as? String })
+        #expect(modules == ["ForeignTypes", "MLXLMCommon", "Upstream"])
+        #expect(Set(violations.compactMap { ($0["path"] as? [String])?.joined(separator: ".") }) == [
+            "Engine.cache",
+            "Engine.model",
+            "External.member",
+            "Payload"
+        ])
+        #expect((report["manifest_sha256"] as? String)?.count == 64)
+    }
+
+    @Test func compilerSymbolGraphIncludesExtensionBlocks() {
+        let command = symbolGraphCommand(
+            package: URL(fileURLWithPath: "/package"),
+            scratch: URL(fileURLWithPath: "/scratch")
+        )
+        #expect(command.contains("--emit-extension-block-symbols"))
+        #expect(command.contains("--skip-synthesized-members"))
+        #expect(command.contains("public"))
+    }
+
+    @Test func compilerPublicAPIGateRejectsMalformedSymbolGraphEntries() throws {
+        let validSymbol = symbolGraphSymbol(
+            precise: "s:9SwamaCore7PayloadV",
+            path: ["Payload"],
+            declaration: [typeFragment("Payload", precise: "s:9SwamaCore7PayloadV")]
+        )
+        var malformedFragmentSymbol = validSymbol
+        malformedFragmentSymbol["declarationFragments"] = [42]
+        var unqualifiedPreciseSymbol = validSymbol
+        unqualifiedPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "ForeignType",
+            "preciseIdentifier": "ForeignType"
+        ]]
+        var truncatedPreciseSymbol = validSymbol
+        truncatedPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Foo",
+            "preciseIdentifier": "s:99Foo"
+        ]]
+        var emptySwiftPreciseSymbol = validSymbol
+        emptySwiftPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Empty",
+            "preciseIdentifier": "s:"
+        ]]
+        var zeroLengthSwiftPreciseSymbol = validSymbol
+        zeroLengthSwiftPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Empty",
+            "preciseIdentifier": "s:0"
+        ]]
+        var invalidSwiftPreciseSymbol = validSymbol
+        invalidSwiftPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "NotReal",
+            "preciseIdentifier": "s:not-real"
+        ]]
+        var invalidNumericPreciseSymbol = validSymbol
+        invalidNumericPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Swift",
+            "preciseIdentifier": "s:5Swift?"
+        ]]
+        var concatenatedPreciseSymbol = validSymbol
+        concatenatedPreciseSymbol["declarationFragments"] = [[
+            "kind": "typeIdentifier",
+            "spelling": "Int",
+            "preciseIdentifier": "s:Si5Other4TypeV"
+        ]]
+        var unknownFragmentKindSymbol = validSymbol
+        unknownFragmentKindSymbol["declarationFragments"] = [[
+            "kind": "futureTypeReference",
+            "spelling": "ModelContainer",
+            "preciseIdentifier": "s:11MLXLMCommon14ModelContainerC"
+        ]]
+        var unknownAccessSymbol = validSymbol
+        unknownAccessSymbol["accessLevel"] = "futurePublic"
+        let malformedGraphs: [JSONObject] = [
+            ["module": ["name": "SwamaCore"], "symbols": [42], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [validSymbol], "relationships": [42]],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [malformedFragmentSymbol],
+                "relationships": []
+            ],
+            ["module": ["name": "SwamaCore"], "symbols": [unqualifiedPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [truncatedPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [emptySwiftPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [zeroLengthSwiftPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [invalidSwiftPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [invalidNumericPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [concatenatedPreciseSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [unknownFragmentKindSymbol], "relationships": []],
+            ["module": ["name": "SwamaCore"], "symbols": [unknownAccessSymbol], "relationships": []],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [validSymbol],
+                "relationships": [[
+                    "kind": "conformsTo",
+                    "source": "s:9SwamaCore7PayloadV",
+                    "target": "ForeignProtocol"
+                ]]
+            ],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [validSymbol],
+                "relationships": [[
+                    "kind": "conformsTo",
+                    "source": "s:9SwamaCore7PayloadV",
+                    "target": "s:not-real",
+                    "targetFallback": "Swift.Encodable"
+                ]]
+            ],
+            [
+                "module": ["name": "SwamaCore"],
+                "symbols": [validSymbol],
+                "relationships": [[
+                    "kind": "futureConformance",
+                    "source": "s:9SwamaCore7PayloadV",
+                    "target": "s:11MLXLMCommon14ModelContainerC"
+                ]]
+            ]
+        ]
+
+        for graph in malformedGraphs {
+            #expect(throws: AcceptanceFailure.self) {
+                _ = try analyzePublicAPISymbolGraphs(
+                    [graph],
+                    target: "SwamaCore",
+                    allowedModules: ["Swift", "Foundation", "SwamaCore"]
+                )
+            }
         }
-        #expect(swiftImportedModule(in: "// @_exported import NIO", matching: expression) == nil)
-        #expect(swiftImportedModule(in: "let example = \"import NIO\"", matching: expression) == nil)
+
+        for (spelling, precise) in [
+            ("Int", "s:Si"),
+            ("Error", "s:s5ErrorP"),
+            ("Hashable", "s:SH"),
+            ("FloatingPoint", "s:SF"),
+            ("BidirectionalCollection", "s:SK"),
+            ("Comparable", "s:SL"),
+            ("MutableCollection", "s:SM"),
+            ("ClosedRange", "s:SN"),
+            ("Sequence", "s:ST"),
+            ("Numeric", "s:Sj"),
+            ("RandomAccessCollection", "s:Sk"),
+            ("Collection", "s:Sl"),
+            ("RangeReplaceableCollection", "s:Sm"),
+            ("IteratorProtocol", "s:St"),
+            ("Strideable", "s:Sx"),
+            ("BinaryInteger", "s:Sz"),
+            ("Range", "s:Sn"),
+            ("Set", "s:Sh"),
+            ("Void", "s:s4Voida"),
+            ("TimeInterval", "c:@T@NSTimeInterval")
+        ] {
+            var validSwiftSymbol = validSymbol
+            validSwiftSymbol["declarationFragments"] = [[
+                "kind": "typeIdentifier",
+                "spelling": spelling,
+                "preciseIdentifier": precise
+            ]]
+            let report = try analyzePublicAPISymbolGraphs(
+                [["module": ["name": "SwamaCore"], "symbols": [validSwiftSymbol], "relationships": []]],
+                target: "SwamaCore",
+                allowedModules: ["Swift", "Foundation", "SwamaCore"]
+            )
+            #expect(try report.boolean("passed"))
+            #expect(try report.array("violations").isEmpty)
+        }
+
+        var validAttributeSymbol = validSymbol
+        validAttributeSymbol["declarationFragments"] = [
+            ["kind": "attribute", "spelling": "MainActor", "preciseIdentifier": "s:ScM"],
+            typeFragment("Payload", precise: "s:9SwamaCore7PayloadV")
+        ]
+        let validAttributeReport = try analyzePublicAPISymbolGraphs(
+            [["module": ["name": "SwamaCore"], "symbols": [validAttributeSymbol], "relationships": []]],
+            target: "SwamaCore",
+            allowedModules: ["Swift", "Foundation", "SwamaCore"]
+        )
+        #expect(try validAttributeReport.boolean("passed"))
+        #expect(try validAttributeReport.array("violations").isEmpty)
+
+        var externalAttributeSymbol = validSymbol
+        externalAttributeSymbol["declarationFragments"] = [
+            [
+                "kind": "attribute",
+                "spelling": "ExternalWrapper",
+                "preciseIdentifier": "s:8Upstream15ExternalWrapperV"
+            ],
+            typeFragment("Payload", precise: "s:9SwamaCore7PayloadV")
+        ]
+        let externalAttributeReport = try analyzePublicAPISymbolGraphs(
+            [["module": ["name": "SwamaCore"], "symbols": [externalAttributeSymbol], "relationships": []]],
+            target: "SwamaCore",
+            allowedModules: ["Swift", "Foundation", "SwamaCore"]
+        )
+        #expect(try externalAttributeReport.boolean("passed") == false)
+        #expect(try externalAttributeReport.array("violations").contains { value in
+            (value as? JSONObject)?["module"] as? String == "Upstream"
+        })
+
+        for (precise, fallback) in [
+            ("s:SE", "Swift.Encodable"),
+            ("s:SQ", "Swift.Equatable"),
+            ("s:SY", "Swift.RawRepresentable"),
+            ("s:ScA", "_Concurrency.Actor"),
+            ("s:Se", "Swift.Decodable")
+        ] {
+            let report = try analyzePublicAPISymbolGraphs(
+                [[
+                    "module": ["name": "SwamaCore"],
+                    "symbols": [validSymbol],
+                    "relationships": [[
+                        "kind": "conformsTo",
+                        "source": "s:9SwamaCore7PayloadV",
+                        "target": precise,
+                        "targetFallback": fallback
+                    ]]
+                ]],
+                target: "SwamaCore",
+                allowedModules: ["Swift", "Foundation", "SwamaCore"]
+            )
+            #expect(try report.boolean("passed"))
+            #expect(try report.array("violations").isEmpty)
+        }
+
+        let preciseIdentifiers = ["s:SN", "s:5Other4TypeV"]
+        let mangledNames = ["$sSN", "$s5Other4TypeV"]
+        let validDemanglerOutput = """
+        Demangling for $sSN
+        kind=Global
+          kind=Structure
+            kind=Module, text="Swift"
+            kind=Identifier, text="ClosedRange"
+
+        Demangling for $s5Other4TypeV
+        kind=Global
+          kind=Structure
+            kind=Module, text="Other"
+            kind=Identifier, text="Type"
+
+
+        """
+        let parsedModules = try parseBatchDemanglerOutput(
+            validDemanglerOutput,
+            preciseIdentifiers: preciseIdentifiers,
+            mangledNames: mangledNames
+        )
+        #expect(parsedModules[0] == "Swift")
+        #expect(parsedModules[1] == "Other")
+        for malformed in [
+            validDemanglerOutput.replacingOccurrences(
+                of: "Demangling for $sSN",
+                with: "Demangling for $s5Other4TypeV"
+            ),
+            "\n" + validDemanglerOutput,
+            validDemanglerOutput.trimmingCharacters(in: .newlines),
+            validDemanglerOutput + "noise\n"
+        ] {
+            #expect(throws: AcceptanceFailure.self) {
+                _ = try parseBatchDemanglerOutput(
+                    malformed,
+                    preciseIdentifiers: preciseIdentifiers,
+                    mangledNames: mangledNames
+                )
+            }
+        }
+
+        let invalidModules = try parseBatchDemanglerOutput(
+            "Demangling for $s5Swift?\n<<NULL>>\nDemangling for $sXX\n<<NULL>>\n",
+            preciseIdentifiers: ["s:5Swift?", "s:XX"],
+            mangledNames: ["$s5Swift?", "$sXX"]
+        )
+        #expect(invalidModules == [nil, nil])
+
+        let concatenatedModules = try parseBatchDemanglerOutput(
+            """
+            Demangling for $sSi5Other4TypeV
+            kind=Global
+              kind=Structure
+                kind=Module, text="Swift"
+                kind=Identifier, text="Int"
+              kind=Structure
+                kind=Module, text="Other"
+                kind=Identifier, text="Type"
+
+
+            """,
+            preciseIdentifiers: ["s:Si5Other4TypeV"],
+            mangledNames: ["$sSi5Other4TypeV"]
+        )
+        #expect(concatenatedModules == [nil])
+    }
+
+    @Test func coreBoundaryReportsCompilerOracleAsUnmetWhenTargetIsAbsent() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract)
+        let report = try architectureReport(
+            contract: contract.architecture,
+            coreGuards: contract.coreGuards,
+            stage: .coreBoundary,
+            paths: paths
+        )
+
+        #expect(report["passed"] as? Bool == false)
+        let compiler = try report.object("compiler_public_api")
+        #expect(try compiler.string("status") == "unmet")
+        #expect(try compiler.boolean("passed") == false)
+    }
+
+    @Test func consumerBoundaryNamesEveryCurrentMLXDependencyAndImport() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract)
+        let report = try externalConsumerBoundaryReport(
+            fixture: paths.fixture,
+            expectedPackage: paths.package,
+            contract: contract.coreGuards
+        )
+
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.array("unexpected_products").contains { ($0 as? String) == "MLXLMCommon" })
+        #expect(try report.array("unexpected_imports").contains { ($0 as? String) == "MLXLMCommon" })
+    }
+
+    @Test func consumerBoundaryRejectsExtraPathPackagesAndByNameTargets() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract).coreGuards
+        let description: JSONObject = [
+            "dependencies": [
+                ["fileSystem": [["identity": "swama", "path": "/repo/swama"]]],
+                ["fileSystem": [["identity": "helper", "path": "/repo/helper"]]]
+            ],
+            "targets": [[
+                "name": "SwamaAcceptanceProbe",
+                "dependencies": [
+                    ["product": ["SwamaCore", "swama", NSNull(), NSNull()]],
+                    ["byName": ["Helper", NSNull()]]
+                ]
+            ]]
+        ]
+
+        let report = try analyzeExternalConsumerPackage(
+            description,
+            imports: ["Foundation", "SwamaCore"],
+            expectedPackagePath: "/repo/swama",
+            contract: contract
+        )
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.array("unexpected_package_dependencies").contains { value in
+            (value as? JSONObject)?["identity"] as? String == "helper"
+        })
+        #expect(try report.array("unexpected_target_dependencies").contains { value in
+            (value as? JSONObject)?["kind"] as? String == "byName"
+        })
+
+        let wrongPath: JSONObject = [
+            "dependencies": [[
+                "fileSystem": [["identity": "swama", "path": "/tmp/unreviewed/swama"]]
+            ]],
+            "targets": [[
+                "name": "SwamaAcceptanceProbe",
+                "dependencies": [["product": ["SwamaCore", "swama", NSNull(), NSNull()]]]
+            ]]
+        ]
+        let wrongPathReport = try analyzeExternalConsumerPackage(
+            wrongPath,
+            imports: ["Foundation", "SwamaCore"],
+            expectedPackagePath: "/repo/swama",
+            contract: contract
+        )
+        #expect(try wrongPathReport.boolean("passed") == false)
+        #expect(try wrongPathReport.array("unexpected_package_dependencies").contains { value in
+            (value as? JSONObject)?["path"] as? String == "/tmp/unreviewed/swama"
+        })
+    }
+
+    @Test func consumerBoundaryRejectsMalformedManifestEntries() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract).coreGuards
+        let validDependency: JSONObject = [
+            "fileSystem": [["identity": "swama", "path": "/repo/swama"]]
+        ]
+        let validTarget: JSONObject = [
+            "name": "SwamaAcceptanceProbe",
+            "dependencies": [["product": ["SwamaCore", "swama", NSNull(), NSNull()]]]
+        ]
+        let malformed: [JSONObject] = [
+            ["dependencies": [42], "targets": [validTarget]],
+            ["dependencies": [["fileSystem": [42]]], "targets": [validTarget]],
+            ["dependencies": [validDependency], "targets": [42]],
+            [
+                "dependencies": [validDependency],
+                "targets": [["name": "SwamaAcceptanceProbe", "dependencies": [42]]]
+            ]
+        ]
+
+        for description in malformed {
+            #expect(throws: AcceptanceFailure.self) {
+                _ = try analyzeExternalConsumerPackage(
+                    description,
+                    imports: ["Foundation", "SwamaCore"],
+                    expectedPackagePath: "/repo/swama",
+                    contract: contract
+                )
+            }
+        }
+    }
+
+    @Test func targetDependencyGraphRejectsTransitiveAudioProducts() throws {
+        let manifests: [String: JSONObject] = [
+            "swama": [
+                "dependencies": [["fileSystem": [["identity": "wrapper"]]]],
+                "products": [[
+                    "name": "SwamaCore",
+                    "targets": ["SwamaCore"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [
+                    [
+                        "name": "SwamaCore",
+                        "dependencies": [["target": ["Implementation", NSNull()]]]
+                    ],
+                    [
+                        "name": "Implementation",
+                        "dependencies": [["product": ["Wrapper", "wrapper", NSNull(), NSNull()]]]
+                    ]
+                ]
+            ],
+            "wrapper": [
+                "dependencies": [["fileSystem": [["identity": "audio"]]]],
+                "products": [[
+                    "name": "Wrapper",
+                    "targets": ["Wrapper"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [[
+                    "name": "Wrapper",
+                    "dependencies": [["product": ["MLXAudioCore", "audio", NSNull(), NSNull()]]]
+                ]]
+            ],
+            "audio": [
+                "dependencies": [],
+                "products": [[
+                    "name": "MLXAudioCore",
+                    "targets": ["MLXAudioCore"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [["name": "MLXAudioCore", "dependencies": []]]
+            ]
+        ]
+        let report = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: manifests,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.array("forbidden_products") as? [String] == ["MLXAudioCore"])
+        #expect(try Set(report.array("target_dependencies").compactMap { $0 as? String }) == [
+            "audio:MLXAudioCore",
+            "swama:Implementation",
+            "swama:SwamaCore",
+            "wrapper:Wrapper"
+        ])
+        #expect(try Set(report.array("product_dependencies").compactMap { $0 as? String }) == [
+            "audio:MLXAudioCore",
+            "wrapper:Wrapper"
+        ])
+        #expect(try report.boolean("library_product_present"))
+        #expect(try report.array("unresolved_dependencies").isEmpty)
+    }
+
+    @Test func resolvedTargetDependencyOracleReadsTheRealSwiftPMPackageGraph() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract).coreGuards
+        let report = try coreTargetDependencyReport(
+            target: "SwamaKit",
+            paths: paths,
+            developerDirectory: URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer"),
+            contract: contract
+        )
+
+        #expect(try report.boolean("passed") == false)
+        #expect(try Set(report.array("forbidden_products").compactMap { $0 as? String }) == [
+            "MLXAudioCore",
+            "MLXAudioSTT",
+            "MLXAudioTTS"
+        ])
+        #expect(try report.object("manifest_sha256").keys.contains("mlx-audio-swift"))
+        #expect(try report.object("resolved_package_traits").array("swama") as? [String] == ["default"])
+    }
+
+    @Test func targetDependencyGraphRejectsAMissingLibraryProduct() throws {
+        let missingProduct: [String: JSONObject] = [
+            "swama": [
+                "dependencies": [],
+                "products": [],
+                "targets": [["name": "SwamaCore", "dependencies": []]]
+            ]
+        ]
+        let missingReport = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: missingProduct,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+
+        #expect(try missingReport.boolean("passed") == false)
+        #expect(try missingReport.boolean("library_product_present") == false)
+        #expect(try missingReport.string("status") == "unmet")
+        #expect(try missingReport.array("forbidden_products").isEmpty)
+
+        let miswiredProduct: [String: JSONObject] = [
+            "swama": [
+                "dependencies": [],
+                "products": [[
+                    "name": "SwamaCore",
+                    "targets": ["Implementation"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [["name": "SwamaCore", "dependencies": []]]
+            ]
+        ]
+        let miswiredReport = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: miswiredProduct,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+
+        #expect(try miswiredReport.boolean("passed") == false)
+        #expect(try miswiredReport.boolean("library_product_present") == false)
+        #expect(try miswiredReport.array("library_product_targets") as? [String] == ["Implementation"])
+    }
+
+    @Test func targetDependencyGraphRejectsAnUnknownExplicitPackageAlias() throws {
+        let manifests: [String: JSONObject] = [
+            "swama": [
+                "dependencies": [],
+                "products": [[
+                    "name": "SwamaCore",
+                    "targets": ["SwamaCore"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [[
+                    "name": "SwamaCore",
+                    "dependencies": [[
+                        "product": ["HiddenProduct", "undeclared-package", NSNull(), NSNull()]
+                    ]]
+                ]]
+            ]
+        ]
+        let report = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: manifests,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.array("unresolved_dependencies") as? [String] == [
+            "unresolved product swama:HiddenProduct"
+        ])
+    }
+
+    @Test func targetDependencyGraphRejectsMalformedNestedEvidence() throws {
+        let malformed: [[String: JSONObject]] = [
+            [
+                "swama": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore", NSNull()],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [["name": "SwamaCore", "dependencies": []]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [[
+                        "name": "SwamaCore",
+                        "dependencies": [["product": ["Hidden", 42, NSNull(), NSNull()]]]
+                    ]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [[
+                        "name": "SwamaCore",
+                        "dependencies": [["product": ["Hidden", NSNull(), NSNull(), "active"]]]
+                    ]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [["fileSystem": [[
+                        "identity": "dependency",
+                        "nameForTargetDependencyResolutionOnly": 42
+                    ]]]],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [["name": "SwamaCore", "dependencies": []]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["library": []]
+                    ]],
+                    "targets": [["name": "SwamaCore", "dependencies": []]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["executable": ["unexpected"]]
+                    ]],
+                    "targets": [["name": "SwamaCore", "dependencies": []]]
+                ]
+            ],
+            [
+                "swama": [
+                    "dependencies": [["fileSystem": [["identity": "dependency"]]]],
+                    "products": [[
+                        "name": "SwamaCore",
+                        "targets": ["SwamaCore"],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [[
+                        "name": "SwamaCore",
+                        "dependencies": [["product": ["Hidden", "", NSNull(), NSNull()]]]
+                    ]]
+                ],
+                "dependency": [
+                    "dependencies": [],
+                    "products": [[
+                        "name": "Hidden",
+                        "targets": ["Hidden"],
+                        "type": ["library": ["automatic"]]
+                    ]],
+                    "targets": [["name": "Hidden", "dependencies": []]]
+                ]
+            ]
+        ]
+
+        for manifests in malformed {
+            #expect(throws: AcceptanceFailure.self) {
+                _ = try analyzeResolvedTargetDependencyGraph(
+                    rootIdentity: "swama",
+                    manifests: manifests,
+                    target: "SwamaCore",
+                    forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+                )
+            }
+        }
+    }
+
+    @Test func targetDependencyGraphResolvesCustomPackageAliases() throws {
+        let manifests: [String: JSONObject] = [
+            "swama": [
+                "dependencies": [["fileSystem": [[
+                    "identity": "dependency",
+                    "nameForTargetDependencyResolutionOnly": "ChosenAlias"
+                ]]]],
+                "products": [[
+                    "name": "SwamaCore",
+                    "targets": ["SwamaCore"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [[
+                    "name": "SwamaCore",
+                    "dependencies": [[
+                        "product": ["HiddenProduct", "ChosenAlias", NSNull(), NSNull()]
+                    ]]
+                ]]
+            ],
+            "dependency": [
+                "dependencies": [["fileSystem": [["identity": "audio"]]]],
+                "products": [[
+                    "name": "HiddenProduct",
+                    "targets": ["HiddenTarget"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [[
+                    "name": "HiddenTarget",
+                    "dependencies": [[
+                        "product": ["MLXAudioCore", "audio", NSNull(), NSNull()]
+                    ]]
+                ]]
+            ],
+            "audio": [
+                "dependencies": [],
+                "products": [[
+                    "name": "MLXAudioCore",
+                    "targets": ["MLXAudioCore"],
+                    "type": ["library": ["automatic"]]
+                ]],
+                "targets": [["name": "MLXAudioCore", "dependencies": []]]
+            ]
+        ]
+        let report = try analyzeResolvedTargetDependencyGraph(
+            rootIdentity: "swama",
+            manifests: manifests,
+            target: "SwamaCore",
+            forbiddenProducts: ["MLXAudioCore", "MLXAudioSTT", "MLXAudioTTS"]
+        )
+
+        #expect(try report.boolean("passed") == false)
+        #expect(try report.array("forbidden_products") as? [String] == ["MLXAudioCore"])
+        #expect(try report.array("unresolved_dependencies").isEmpty)
+        #expect(try report.array("product_dependencies").contains { value in
+            (value as? String) == "dependency:HiddenProduct"
+        })
+    }
+
+    @Test func inlinableAndUsableFromInlineCannotOpenUncheckedReachability() throws {
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-inline-boundary-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        try Data(
+            """
+            @inlinable public func leak() {}
+            @available(macOS 15.4, *) @usableFromInline internal let hidden = 1
+            // @inlinable public func commentOnly() {}
+            let example = "@usableFromInline"
+
+            """.utf8
+        ).write(to: temporary.appendingPathComponent("Leak.swift"))
+
+        let hits = try publicReachabilityAttributeHits(in: temporary, repository: temporary)
+        #expect(hits.count == 2)
+        #expect(Set(hits.compactMap { $0["attribute"] as? String }) == ["@inlinable", "@usableFromInline"])
+    }
+
+    @Test func paritySchemaRejectsMissingRouteAndUnknownEvents() throws {
+        let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
+        let contract = try AcceptanceContract.load(from: paths.contract).coreGuards.parity
+        let valid: JSONObject = [
+            "schema_version": contract.schemaVersion,
+            "case_id": "fixed-case",
+            "route": "core",
+            "events": [["sequence": 0, "type": "text_delta", "text": "ok"]],
+            "terminal": [
+                "kind": "response",
+                "output": "ok",
+                "tool_calls": [],
+                "finish_reason": "completed",
+                "usage": ["prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2]
+            ]
+        ]
+        #expect(throws: Never.self) { _ = try validateParityRecord(valid, contract: contract) }
+
+        var missingRoute = valid
+        missingRoute.removeValue(forKey: "route")
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try validateParityRecord(missingRoute, contract: contract)
+        }
+
+        var unknownEvent = valid
+        unknownEvent["events"] = [["sequence": 0, "type": "mystery"]]
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try validateParityRecord(unknownEvent, contract: contract)
+        }
+
+        var validToolCalls = valid
+        validToolCalls["events"] = [[
+            "sequence": 0,
+            "type": "tool_call",
+            "name": "lookup",
+            "arguments": ["query": "hello"]
+        ]]
+        validToolCalls["terminal"] = [
+            "kind": "response",
+            "output": "",
+            "tool_calls": [["name": "lookup", "arguments": ["query": "hello"]]],
+            "finish_reason": "tool_call",
+            "usage": ["prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2]
+        ]
+        #expect(throws: Never.self) {
+            _ = try validateParityRecord(validToolCalls, contract: contract)
+        }
+
+        var nullEventArguments = validToolCalls
+        nullEventArguments["events"] = [[
+            "sequence": 0,
+            "type": "tool_call",
+            "name": "lookup",
+            "arguments": NSNull()
+        ]]
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try validateParityRecord(nullEventArguments, contract: contract)
+        }
+
+        var scalarTerminalArguments = validToolCalls
+        scalarTerminalArguments["terminal"] = [
+            "kind": "response",
+            "output": "",
+            "tool_calls": [["name": "lookup", "arguments": 42]],
+            "finish_reason": "tool_call",
+            "usage": ["prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2]
+        ]
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try validateParityRecord(scalarTerminalArguments, contract: contract)
+        }
     }
 
     @Test func medianUsesAllMeasuredSamples() {
@@ -550,11 +1502,13 @@ struct AcceptanceTests {
         }
         let childPIDValue = try #require(
             Int(String(contentsOf: childPIDFile, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         )
         let grandchildPIDValue = try #require(
             Int(String(contentsOf: grandchildPIDFile, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         )
         childPID = pid_t(childPIDValue)
         grandchildPID = pid_t(grandchildPIDValue)
@@ -565,10 +1519,12 @@ struct AcceptanceTests {
     @Test func contractCarriesSeparateProductAndFixtureBuildBudgets() throws {
         let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
         let contract = try AcceptanceContract.load(from: paths.contract)
-        #expect(contract.schemaVersion == 3)
+        #expect(contract.schemaVersion == 4)
         #expect(contract.build.productTimeoutSeconds == 1200)
         #expect(contract.build.externalFixtureTimeoutSeconds == 1200)
         #expect(contract.build.externalFixtureTimeoutRetryLimit == 1)
+        #expect(contract.coreGuards.schemaVersion == 1)
+        #expect(contract.coreGuards.parity.requiredRoutes == ["core", "cli", "http"])
     }
 
     @Test func cleanWorktreeCanBeBoundToHead() throws {
@@ -638,6 +1594,24 @@ struct AcceptanceTests {
             Issue.record("unexpected error: \(error)")
             return nil
         }
+    }
+
+    private func symbolGraphSymbol(
+        precise: String,
+        path: [String],
+        declaration: [JSONObject]
+    ) -> JSONObject {
+        [
+            "identifier": ["precise": precise, "interfaceLanguage": "swift"],
+            "kind": ["identifier": "swift.property", "displayName": "Instance Property"],
+            "pathComponents": path,
+            "declarationFragments": declaration,
+            "accessLevel": "public"
+        ]
+    }
+
+    private func typeFragment(_ spelling: String, precise: String) -> JSONObject {
+        ["kind": "typeIdentifier", "spelling": spelling, "preciseIdentifier": precise]
     }
 
     private func syntheticReport(paths: WorkspacePaths) throws -> JSONObject {

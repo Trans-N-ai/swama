@@ -14,8 +14,10 @@ public enum AcceptanceCLI {
             case .architecture:
                 let report = try architectureReport(
                     contract: contract.architecture,
+                    coreGuards: contract.coreGuards,
                     stage: arguments.stage,
-                    paths: paths
+                    paths: paths,
+                    developerDirectory: URL(fileURLWithPath: arguments.developerDirectory)
                 )
                 try writeStandardOutput(report)
                 return report["passed"] as? Bool == true ? 0 : 1
