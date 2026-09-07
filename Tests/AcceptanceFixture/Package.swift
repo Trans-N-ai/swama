@@ -5,18 +5,13 @@ let package = Package(
     name: "SwamaAcceptanceFixture",
     platforms: [.macOS("15.4")],
     dependencies: [
-        .package(path: "../../swama"),
-        .package(
-            url: "https://github.com/ml-explore/mlx-swift-lm",
-            revision: "10e0cb7442920d3f67a08e067d6670334e9dadef"
-        )
+        .package(path: "../../swama")
     ],
     targets: [
         .executableTarget(
             name: "SwamaAcceptanceProbe",
             dependencies: [
-                .product(name: "SwamaKit", package: "swama"),
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm")
+                .product(name: "SwamaCore", package: "swama")
             ],
             path: "Sources/SwamaAcceptanceProbe"
         )

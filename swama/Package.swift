@@ -133,5 +133,9 @@ let package = Package(
                 .product(name: "MLXNN", package: "mlx-swift"),
             ]
         ),
+        .testTarget(
+            name: "SwamaCoreTests",
+            dependencies: ["SwamaCore"]
+        ),
     ]
 )

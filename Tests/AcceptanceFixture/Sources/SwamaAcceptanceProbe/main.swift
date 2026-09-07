@@ -1,13 +1,12 @@
-import Darwin
 import Foundation
-import MLXLMCommon
-import SwamaKit
+import SwamaCore
 
 // MARK: - ProbeError
 
 private enum ProbeError: Error, LocalizedError {
     case invalidArguments(String)
     case cancellationDidNotStart
+    case cancellationReturnedResponse
 
     var errorDescription: String? {
         switch self {
@@ -15,6 +14,8 @@ private enum ProbeError: Error, LocalizedError {
             message
         case .cancellationDidNotStart:
             "generation completed before the cancellation witness observed two tokens"
+        case .cancellationReturnedResponse:
+            "cancelled generation returned a response instead of throwing CancellationError"
         }
     }
 }
@@ -67,6 +68,14 @@ private struct SwitchRecord: Codable, Sendable {
     let runs: [RunRecord]
     let residentBytesAfterClear: [UInt64]
     let peakResidentBytes: UInt64
+}
+
+// MARK: - LifecycleRecord
+
+private struct LifecycleRecord: Codable, Sendable {
+    let operation: String
+    let model: String?
+    let completed: Bool
 }
 
 // MARK: - TokenRecorder
@@ -122,21 +131,13 @@ private final class TokenRecorder: @unchecked Sendable {
     }
 }
 
-private func peakResidentBytes() -> UInt64 {
-    var usage = rusage()
-    guard getrusage(RUSAGE_SELF, &usage) == 0 else {
-        return 0
-    }
-
-    // ru_maxrss is bytes on Darwin (kilobytes on Linux).
-    return UInt64(max(0, usage.ru_maxrss))
-}
+private let engine: SwamaEngine = .init()
 
 private func currentResidentBytes() -> UInt64 {
     let process = Process()
     let pipe = Pipe()
     process.executableURL = URL(fileURLWithPath: "/bin/ps")
-    process.arguments = ["-o", "rss=", "-p", String(getpid())]
+    process.arguments = ["-o", "rss=", "-p", String(ProcessInfo.processInfo.processIdentifier)]
     process.standardOutput = pipe
     process.standardError = FileHandle.nullDevice
 
@@ -158,8 +159,8 @@ private func currentResidentBytes() -> UInt64 {
     }
 }
 
-private func parameters(maxTokens: Int) -> GenerateParameters {
-    GenerateParameters(
+private func parameters(maxTokens: Int) -> GenerationOptions {
+    GenerationOptions(
         maxTokens: maxTokens,
         temperature: 0,
         topP: 1,
@@ -175,28 +176,32 @@ private func runOnce(
 ) async throws -> RunRecord {
     let recorder = TokenRecorder()
     let start = DispatchTime.now().uptimeNanoseconds
-    let result = try await ModelPool.shared.run(modelName: model) { runner in
-        try await runner.runChat(
-            userInput: UserInput(chat: [.user(prompt)]),
-            parameters: parameters(maxTokens: maxTokens),
-            onToken: { token in recorder.append(token) }
-        )
-    }
+    let result = try await engine.generate(
+        GenerationRequest(
+            model: .init(model),
+            messages: [.init(role: .user, text: prompt)],
+            options: parameters(maxTokens: maxTokens)
+        ),
+        onEvent: { event in
+            if case let .textDelta(token) = event {
+                recorder.append(token)
+            }
+        }
+    )
     let end = DispatchTime.now().uptimeNanoseconds
     let snapshot = recorder.snapshot()
-    let info = result.completionInfo
 
     return RunRecord(
         route: "core",
         model: model,
         round: round,
-        promptTokens: result.promptTokens,
-        generatedTokens: info?.generationTokenCount ?? snapshot.count,
+        promptTokens: result.usage.promptTokens,
+        generatedTokens: result.usage.completionTokens,
         ttftMilliseconds: snapshot.firstTokenUptime.map { Double($0 - start) / 1_000_000 },
         totalMilliseconds: Double(end - start) / 1_000_000,
-        tokensPerSecond: info?.tokensPerSecond,
+        tokensPerSecond: result.metrics?.tokensPerSecond,
         output: snapshot.output.isEmpty ? result.output : snapshot.output,
-        peakResidentBytes: peakResidentBytes()
+        peakResidentBytes: currentResidentBytes()
     )
 }
 
@@ -211,13 +216,18 @@ private func runCancellation(
 
     let recorder = TokenRecorder()
     let task = Task {
-        try await ModelPool.shared.run(modelName: model) { runner in
-            try await runner.runChat(
-                userInput: UserInput(chat: [.user(prompt)]),
-                parameters: parameters(maxTokens: maxTokens),
-                onToken: { token in recorder.append(token) }
-            )
-        }
+        try await engine.generate(
+            GenerationRequest(
+                model: .init(model),
+                messages: [.init(role: .user, text: prompt)],
+                options: parameters(maxTokens: maxTokens)
+            ),
+            onEvent: { event in
+                if case let .textDelta(token) = event {
+                    recorder.append(token)
+                }
+            }
+        )
     }
 
     await recorder.wait(untilCount: 2)
@@ -227,7 +237,13 @@ private func runCancellation(
 
     let cancelStart = DispatchTime.now().uptimeNanoseconds
     task.cancel()
-    let cancelledResult = try await task.value
+    do {
+        _ = try await task.value
+        throw ProbeError.cancellationReturnedResponse
+    }
+    catch is CancellationError {
+        // The public Core contract never returns a partial terminal response on cancellation.
+    }
     let cancelEnd = DispatchTime.now().uptimeNanoseconds
     let cancelledSnapshot = recorder.snapshot()
 
@@ -243,10 +259,10 @@ private func runCancellation(
         model: model,
         observedTokensBeforeCancel: cancelledSnapshot.count,
         cancellationMilliseconds: Double(cancelEnd - cancelStart) / 1_000_000,
-        cancelledOutput: cancelledSnapshot.output.isEmpty ? cancelledResult.output : cancelledSnapshot.output,
+        cancelledOutput: cancelledSnapshot.output,
         followupOutput: followup.output,
         followupGeneratedTokens: followup.generatedTokens,
-        peakResidentBytes: peakResidentBytes()
+        peakResidentBytes: currentResidentBytes()
     )
 }
 
@@ -285,7 +301,7 @@ private func runConcurrent(
         requestCount: requestCount,
         totalMilliseconds: Double(end - start) / 1_000_000,
         outputs: outputs,
-        peakResidentBytes: peakResidentBytes()
+        peakResidentBytes: currentResidentBytes()
     )
 }
 
@@ -309,7 +325,7 @@ private func runSwitching(
                     round: cycle * models.count + index
                 )
             )
-            await ModelPool.shared.clearCache()
+            await engine.clearCache()
             try await Task.sleep(nanoseconds: UInt64(settleMilliseconds) * 1_000_000)
             residentBytesAfterClear.append(currentResidentBytes())
         }
@@ -321,7 +337,7 @@ private func runSwitching(
         cycles: cycles,
         runs: runs,
         residentBytesAfterClear: residentBytesAfterClear,
-        peakResidentBytes: peakResidentBytes()
+        peakResidentBytes: currentResidentBytes()
     )
 }
 
@@ -340,7 +356,9 @@ private struct SwamaAcceptanceProbe {
     static func main() async throws {
         let arguments = Array(CommandLine.arguments.dropFirst())
         guard let command = arguments.first else {
-            throw ProbeError.invalidArguments("expected generate, cancel, concurrent, or switch")
+            throw ProbeError.invalidArguments(
+                "expected generate, cancel, concurrent, switch, embed, models, fetch, remove, or clear"
+            )
         }
 
         switch command {
@@ -438,6 +456,52 @@ private struct SwamaAcceptanceProbe {
                     settleMilliseconds: settleMilliseconds
                 )
             )
+
+        case "embed":
+            guard arguments.count >= 3 else {
+                throw ProbeError.invalidArguments("usage: SwamaAcceptanceProbe embed MODEL INPUT...")
+            }
+
+            try await encode(engine.embed(.init(
+                model: .init(arguments[1]),
+                inputs: Array(arguments.dropFirst(2))
+            )))
+
+        case "models":
+            try await encode(engine.models())
+
+        case "fetch":
+            guard arguments.count == 2 else {
+                throw ProbeError.invalidArguments("usage: SwamaAcceptanceProbe fetch MODEL")
+            }
+
+            try await engine.fetch(.init(arguments[1]))
+            try encode(LifecycleRecord(operation: "fetch", model: arguments[1], completed: true))
+
+        case "remove":
+            guard arguments.count == 2 else {
+                throw ProbeError.invalidArguments("usage: SwamaAcceptanceProbe remove MODEL")
+            }
+
+            try await engine.remove(.init(arguments[1]))
+            try encode(LifecycleRecord(operation: "remove", model: arguments[1], completed: true))
+
+        case "clear":
+            guard arguments.count <= 2 else {
+                throw ProbeError.invalidArguments("usage: SwamaAcceptanceProbe clear [MODEL]")
+            }
+
+            if let model = arguments.dropFirst().first {
+                await engine.clearCache(for: .init(model))
+            }
+            else {
+                await engine.clearCache()
+            }
+            try encode(LifecycleRecord(
+                operation: "clear",
+                model: arguments.dropFirst().first,
+                completed: true
+            ))
 
         default:
             throw ProbeError.invalidArguments("unknown command: \(command)")

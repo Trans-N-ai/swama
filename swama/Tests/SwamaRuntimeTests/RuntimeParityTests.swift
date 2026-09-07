@@ -73,7 +73,7 @@ struct RuntimeParityTests {
 
 // MARK: - FixedEmbeddingModel
 
-private final class FixedEmbeddingModel: MLXNN.Module, EmbeddingModel {
+final class FixedEmbeddingModel: MLXNN.Module, EmbeddingModel {
     let vocabularySize = 32
     let poolingStrategy: Pooling.Strategy? = .mean
     let maxPositionEmbeddings: Int? = nil

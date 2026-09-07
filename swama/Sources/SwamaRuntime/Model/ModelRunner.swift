@@ -78,6 +78,7 @@ package actor ModelRunner {
     package nonisolated func runChat(
         userInput: MLXLMCommon.UserInput,
         parameters: GenerateParameters,
+        contextLimit: Int? = nil,
         onToken: (@Sendable (String) async throws -> Void)? = nil,
         onToolCall: (@Sendable (MLXLMCommon.ToolCall) async throws -> Void)? = nil
     ) async throws -> ChatRunResult {
@@ -124,7 +125,15 @@ package actor ModelRunner {
 
             let rawOutputStorage = RawOutputBuffer()
             let hasMediaInput = userInput.hasMediaContent
-            let configuredContextLimit = await ContextLimitConfig.shared.currentLimit()
+            // Intentional Core divergence: a request-scoped value avoids mutating the legacy
+            // process-global ContextLimitConfig when multiple SwamaEngine instances overlap.
+            let configuredContextLimit: Int =
+                if let contextLimit {
+                    contextLimit
+                }
+                else {
+                    await ContextLimitConfig.shared.currentLimit()
+                }
             let effectiveContextLimit = hasMediaInput
                 ? min(configuredContextLimit, InferenceSafetyLimits.multimodalContextLimit)
                 : configuredContextLimit
