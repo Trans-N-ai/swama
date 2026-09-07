@@ -350,6 +350,7 @@ struct AcceptanceTests {
         #else
         import Foundation
         #endif
+        import `MLX`
         @_exported import NIO
         internal import AppKit
         package import struct NIOCore.ByteBuffer
@@ -365,6 +366,7 @@ struct AcceptanceTests {
             "MLXLMCommon",
             "UIKit",
             "Foundation",
+            "MLX",
             "NIO",
             "AppKit",
             "NIOCore",
@@ -372,8 +374,8 @@ struct AcceptanceTests {
             "ArgumentParser"
         ])
         #expect(declarations.allSatisfy { $0.line > 0 })
-        if declarations.count == 8 {
-            #expect(declarations[6].line == declarations[7].line)
+        if declarations.count == 9 {
+            #expect(declarations[7].line == declarations[8].line)
         }
         #expect(throws: AcceptanceFailure.self) {
             _ = try parsedSwiftImports(source: "import", file: temporary)

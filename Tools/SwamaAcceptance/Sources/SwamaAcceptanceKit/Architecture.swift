@@ -74,14 +74,16 @@ private final class SwiftImportCollector: SyntaxVisitor {
     }
 
     override func visit(_ node: ImportDeclSyntax) -> SyntaxVisitorContinueKind {
-        guard let first = node.path.first, !first.name.text.isEmpty else {
+        guard let first = node.path.first,
+              let identifier = Identifier(first.name),
+              !identifier.name.isEmpty
+        else {
             encounteredInvalidImport = true
             return .skipChildren
         }
 
-        let module = first.name.text
         let location = converter.location(for: node.importKeyword.positionAfterSkippingLeadingTrivia)
-        declarations.append((module, location.line))
+        declarations.append((identifier.name, location.line))
         return .skipChildren
     }
 }
