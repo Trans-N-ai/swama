@@ -69,11 +69,43 @@ struct RuntimeParityTests {
         #expect(runtimeResult.usage.promptTokens == legacyResult.usage.promptTokens)
         #expect(runtimeResult.usage.totalTokens == legacyResult.usage.totalTokens)
     }
+
+    @Test func everyMaintainedAudioAliasIsExcludedWithoutRejectingLanguageAliases() {
+        let maintainedAudioIDs =
+            Array(SwamaKit.ModelAliasResolver.sttAliases.keys) +
+            Array(SwamaKit.ModelAliasResolver.sttAliases.values) +
+            Array(SwamaKit.ModelAliasResolver.ttsAliases.keys) +
+            Array(SwamaKit.ModelAliasResolver.ttsAliases.values)
+        for model in maintainedAudioIDs {
+            #expect(
+                SwamaRuntime.RuntimeCoreEngine.isUnsupportedAudioModelID(model),
+                "audio ID escaped Core: \(model)"
+            )
+        }
+
+        let maintainedLanguageIDs =
+            Array(SwamaKit.ModelAliasResolver.aliases.keys) +
+            Array(SwamaKit.ModelAliasResolver.aliases.values)
+        for model in maintainedLanguageIDs {
+            #expect(
+                SwamaRuntime.RuntimeCoreEngine.isUnsupportedAudioModelID(model) == false,
+                "language ID was rejected: \(model)"
+            )
+        }
+
+        #expect(SwamaRuntime.RuntimeCoreEngine.isUnsupportedAudioModelID(
+            "acme/nemotron-language-nemotron-3.5-asr-streaming"
+        ))
+        #expect(SwamaRuntime.RuntimeCoreEngine.isUnsupportedAudioModelID("acme/nemotron-language") == false)
+        #expect(SwamaRuntime.RuntimeCoreEngine.isUnsupportedAudioModelID(
+            "acme/nemotron-3.5-language-asr"
+        ) == false)
+    }
 }
 
 // MARK: - FixedEmbeddingModel
 
-private final class FixedEmbeddingModel: MLXNN.Module, EmbeddingModel {
+final class FixedEmbeddingModel: MLXNN.Module, EmbeddingModel {
     let vocabularySize = 32
     let poolingStrategy: Pooling.Strategy? = .mean
     let maxPositionEmbeddings: Int? = nil

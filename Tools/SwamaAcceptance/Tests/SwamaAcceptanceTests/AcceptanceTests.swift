@@ -256,7 +256,7 @@ struct AcceptanceTests {
         )
         var report = reliabilityReport()
         var gates = try reliabilityGateStatus(report, contract: contract)
-        #expect(!gates.values.contains(false))
+        #expect(gates.values.contains(false) == false)
 
         var cancel = try report.object("cancel_then_recover")
         cancel["observedTokensBeforeCancel"] = 99
@@ -506,7 +506,7 @@ struct AcceptanceTests {
         )
         #expect(build.contains("--target"))
         #expect(build.contains("SwamaCore"))
-        #expect(!build.contains("dump-symbol-graph"))
+        #expect(build.contains("dump-symbol-graph") == false)
 
         let extract = symbolGraphExtractCommand(
             extractor: URL(fileURLWithPath: "/toolchain/swift-symbolgraph-extract"),
@@ -952,8 +952,8 @@ struct AcceptanceTests {
         #expect(parsedModules[0] == "Swift")
         #expect(parsedModules[1] == "Other")
         for malformed in [
-            validDemanglerOutput.replacingOccurrences(
-                of: "Demangling for $sSN",
+            validDemanglerOutput.replacing(
+                "Demangling for $sSN",
                 with: "Demangling for $s5Other4TypeV"
             ),
             "\n" + validDemanglerOutput,
@@ -995,7 +995,7 @@ struct AcceptanceTests {
         #expect(concatenatedModules == [nil])
     }
 
-    @Test func coreBoundaryTurnsGreenWhenTheDependencyFreeTargetExists() throws {
+    @Test func coreAndConsumerBoundariesTurnGreenForThePublicCoreAPI() throws {
         let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
         let contract = try AcceptanceContract.load(from: paths.contract)
         let report = try architectureReport(
@@ -1010,11 +1010,11 @@ struct AcceptanceTests {
         let compiler = try report.object("compiler_public_api")
         #expect(try compiler.string("status") == "ready")
         #expect(try compiler.boolean("passed"))
-        #expect(try compiler.integer("symbol_count") == 0)
-        #expect(try compiler.array("symbols").isEmpty)
+        #expect(try compiler.integer("symbol_count") == 160)
+        #expect(try compiler.array("symbols").count == 160)
         #expect(try compiler.array("violations").isEmpty)
         #expect(try compiler.string("manifest_sha256")
-            == "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            == "9cc4b4759e3c104f8832a0eb9a5369d85141b1c817217e0df42aec1405c5ba39"
         )
         let dependencies = try report.object("core_target_dependencies")
         #expect(try dependencies.string("status") == "ready")
@@ -1026,11 +1026,11 @@ struct AcceptanceTests {
             stage: .consumerBoundary,
             paths: paths
         )
-        #expect(try consumerReport.boolean("passed") == false)
-        #expect(try consumerReport.object("external_consumer_boundary").boolean("passed") == false)
+        #expect(try consumerReport.boolean("passed"))
+        #expect(try consumerReport.object("external_consumer_boundary").boolean("passed"))
     }
 
-    @Test func consumerBoundaryNamesEveryCurrentMLXDependencyAndImport() throws {
+    @Test func consumerBoundaryAcceptsThePureCoreFixture() throws {
         let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
         let contract = try AcceptanceContract.load(from: paths.contract)
         let report = try externalConsumerBoundaryReport(
@@ -1038,10 +1038,9 @@ struct AcceptanceTests {
             expectedPackage: paths.package,
             contract: contract.coreGuards
         )
-
-        #expect(try report.boolean("passed") == false)
-        #expect(try report.array("unexpected_products").contains { ($0 as? String) == "MLXLMCommon" })
-        #expect(try report.array("unexpected_imports").contains { ($0 as? String) == "MLXLMCommon" })
+        #expect(try report.boolean("passed"))
+        #expect(try report.array("unexpected_products").isEmpty)
+        #expect(try report.array("unexpected_imports").isEmpty)
     }
 
     @Test func consumerBoundaryRejectsExtraPathPackagesAndByNameTargets() throws {
@@ -1249,25 +1248,37 @@ struct AcceptanceTests {
         ]))
     }
 
-    @Test func runtimeAndCoreCompilerPublicManifestsStayEmpty() throws {
+    @Test func runtimeStaysPrivateAndCoreManifestMatchesV1() throws {
         let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
         let contract = try AcceptanceContract.load(from: paths.contract).coreGuards
         let developerDirectory = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
 
-        for target in ["SwamaRuntime", "SwamaCore"] {
-            let report = try compilerPublicAPIReport(
-                target: target,
-                paths: paths,
-                developerDirectory: developerDirectory,
-                contract: contract
-            )
-            #expect(try report.boolean("passed"), "\(target) public API guard failed")
-            #expect(try report.integer("symbol_count") == 0)
-            #expect(try report.array("symbols").isEmpty)
-            #expect(try report
-                .string("manifest_sha256") == "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
-            )
-        }
+        let runtime = try compilerPublicAPIReport(
+            target: "SwamaRuntime",
+            paths: paths,
+            developerDirectory: developerDirectory,
+            contract: contract
+        )
+        #expect(try runtime.boolean("passed"))
+        #expect(try runtime.integer("symbol_count") == 0)
+        #expect(try runtime.array("symbols").isEmpty)
+        #expect(try runtime
+            .string("manifest_sha256") == "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        )
+
+        let core = try compilerPublicAPIReport(
+            target: "SwamaCore",
+            paths: paths,
+            developerDirectory: developerDirectory,
+            contract: contract
+        )
+        #expect(try core.boolean("passed"))
+        #expect(try core.integer("symbol_count") == 160)
+        #expect(try core.array("symbols").count == 160)
+        #expect(try core.array("violations").isEmpty)
+        #expect(try core.string("manifest_sha256")
+            == "9cc4b4759e3c104f8832a0eb9a5369d85141b1c817217e0df42aec1405c5ba39"
+        )
     }
 
     @Test func targetDependencyGraphRejectsAMissingLibraryProduct() throws {
@@ -1710,7 +1721,7 @@ struct AcceptanceTests {
         try Data("stale".utf8).write(to: staleArtifact)
 
         let current = try prepareAcceptanceBuildScratch(root: temporary, identity: "current")
-        #expect(!FileManager.default.fileExists(atPath: staleArtifact.path))
+        #expect(FileManager.default.fileExists(atPath: staleArtifact.path) == false)
         let partialArtifact = current.fixture.appendingPathComponent("partial-object")
         try FileManager.default.createDirectory(at: current.fixture, withIntermediateDirectories: true)
         try Data("partial".utf8).write(to: partialArtifact)

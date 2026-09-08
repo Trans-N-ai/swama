@@ -22,7 +22,7 @@ private enum InferenceSafetyLimits {
 // MARK: - ModelRunner
 
 package actor ModelRunner {
-    package struct ChatRunResult: Sendable {
+    package struct ChatRunResult {
         package let output: String
         package let analysis: String?
         package let promptTokens: Int
@@ -78,6 +78,7 @@ package actor ModelRunner {
     package nonisolated func runChat(
         userInput: MLXLMCommon.UserInput,
         parameters: GenerateParameters,
+        contextLimit: Int? = nil,
         onToken: (@Sendable (String) async throws -> Void)? = nil,
         onToolCall: (@Sendable (MLXLMCommon.ToolCall) async throws -> Void)? = nil
     ) async throws -> ChatRunResult {
@@ -119,12 +120,20 @@ package actor ModelRunner {
             var output = ""
             var promptTokens = 0
             var capturedCompletionInfo: GenerateCompletionInfo?
-            var toolCalls: [MLXLMCommon.ToolCall] = []
+            var toolCalls = [MLXLMCommon.ToolCall]()
             var didRecordFirstToken = false
 
             let rawOutputStorage = RawOutputBuffer()
             let hasMediaInput = userInput.hasMediaContent
-            let configuredContextLimit = await ContextLimitConfig.shared.currentLimit()
+            // Intentional Core divergence: a request-scoped value avoids mutating the legacy
+            // process-global ContextLimitConfig when multiple SwamaEngine instances overlap.
+            let configuredContextLimit: Int =
+                if let contextLimit {
+                    contextLimit
+                }
+                else {
+                    await ContextLimitConfig.shared.currentLimit()
+                }
             let effectiveContextLimit = hasMediaInput
                 ? min(configuredContextLimit, InferenceSafetyLimits.multimodalContextLimit)
                 : configuredContextLimit
@@ -159,6 +168,7 @@ package actor ModelRunner {
                 )
             }
 
+            let generationTools = effectiveInput.tools
             let lmInput = try await container.prepare(input: effectiveInput)
 
             promptTokens = tokenLength(lmInput.text.tokens)
@@ -231,7 +241,8 @@ package actor ModelRunner {
                     let stream = try generate(
                         input: lmInput,
                         parameters: generationParameters,
-                        context: context
+                        context: context,
+                        tools: generationTools
                     )
                     return PromptCacheGenerationRun(stream: stream, task: nil, cache: nil, prefillMs: nil)
 
@@ -245,7 +256,8 @@ package actor ModelRunner {
                         cache: reusedCache,
                         fullHistory: lmInput.text.tokens,
                         context: context,
-                        generationParameters: generationParameters
+                        generationParameters: generationParameters,
+                        tools: generationTools
                     )
 
                 case .miss:
@@ -257,7 +269,8 @@ package actor ModelRunner {
                         cache: freshCache,
                         fullHistory: nil,
                         context: context,
-                        generationParameters: generationParameters
+                        generationParameters: generationParameters,
+                        tools: generationTools
                     )
                 }
             }
@@ -277,7 +290,7 @@ package actor ModelRunner {
                 do {
                     switch generationEvent {
                     case let .chunk(chunkString):
-                        if !didRecordFirstToken, !chunkString.isEmpty {
+                        if didRecordFirstToken == false, chunkString.isEmpty == false {
                             SwamaDiagnostics.firstToken(diagnosticOperation, model: modelName)
                             didRecordFirstToken = true
                         }
@@ -299,7 +312,7 @@ package actor ModelRunner {
                         capturedCompletionInfo = info
 
                     case let .toolCall(toolCall):
-                        if !didRecordFirstToken {
+                        if didRecordFirstToken == false {
                             SwamaDiagnostics.firstToken(diagnosticOperation, model: modelName)
                             didRecordFirstToken = true
                         }
@@ -410,7 +423,7 @@ private func trimChatMessagesInternal(
     guard limit > 0 else {
         return chatMessages
     }
-    guard !chatMessages.isEmpty else {
+    guard chatMessages.isEmpty == false else {
         return chatMessages
     }
 
@@ -418,7 +431,7 @@ private func trimChatMessagesInternal(
         if message.role == .system || message.role == .tool {
             return true
         }
-        return !message.images.isEmpty || !message.videos.isEmpty
+        return message.images.isEmpty == false || message.videos.isEmpty == false
     }
 
     func buildInput(with messages: [MLXLMCommon.Chat.Message]) -> MLXLMCommon.UserInput {
@@ -431,19 +444,19 @@ private func trimChatMessagesInternal(
     }
 
     func hasMedia(_ messages: [MLXLMCommon.Chat.Message]) -> Bool {
-        messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
+        messages.contains { $0.images.isEmpty == false || $0.videos.isEmpty == false }
     }
 
     func hasNonEmptyUserMessage(_ messages: [MLXLMCommon.Chat.Message]) -> Bool {
         messages.contains {
-            $0.role == .user && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            $0.role == .user && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
     }
 
     func countTokensForTrim(_ messages: [MLXLMCommon.Chat.Message]) async throws -> Int {
         // For text-only chat, use model-accurate token counting via prepare(input:)
         // to avoid template-estimation mismatch for multimodal-capable models.
-        if !hasMedia(messages) {
+        if hasMedia(messages) == false {
             return try await tokenCount(for: buildInput(with: messages), container: container)
         }
 
@@ -458,7 +471,7 @@ private func trimChatMessagesInternal(
     var workingMessages = chatMessages
     var didTrimContent = false
     var trimmableIndices = workingMessages.enumerated()
-        .filter { !isProtected($0.element) }
+        .filter { isProtected($0.element) == false }
         .map(\.offset)
 
     var currentTokenCount = try await countTokensForTrim(workingMessages)
@@ -520,9 +533,9 @@ private func trimChatMessagesInternal(
 
     // Never collapse to an empty-user prompt. If trimming removed all user text,
     // restore the latest non-empty user message from the original request.
-    if !hasNonEmptyUserMessage(workingMessages),
+    if hasNonEmptyUserMessage(workingMessages) == false,
        let fallbackUser = chatMessages.reversed().first(where: {
-           $0.role == .user && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+           $0.role == .user && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
        })
     {
         workingMessages = [fallbackUser]
@@ -596,7 +609,7 @@ private extension MLXLMCommon.UserInput {
         case .text:
             false
         case let .chat(messages):
-            messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
+            messages.contains { $0.images.isEmpty == false || $0.videos.isEmpty == false }
         case let .messages(messages):
             messages.contains { message in
                 message.keys.contains { key in
@@ -756,7 +769,8 @@ private func buildPromptCacheGenerationRun(
     cache: [KVCache],
     fullHistory: MLXArray?,
     context: ModelContext,
-    generationParameters: GenerateParameters
+    generationParameters: GenerateParameters,
+    tools: [[String: any Sendable]]?
 ) throws -> PromptCacheGenerationRun {
     let baseProcessor: LogitProcessor? = generationParameters.processor()
     let strategy = promptCacheIteratorStrategy(
@@ -808,7 +822,8 @@ private func buildPromptCacheGenerationRun(
         promptTokenCount: iterInput.text.tokens.size,
         modelConfiguration: context.configuration,
         tokenizer: context.tokenizer,
-        iterator: iterator
+        iterator: iterator,
+        tools: tools
     )
 
     return PromptCacheGenerationRun(stream: stream, task: task, cache: cache, prefillMs: prefillMs)

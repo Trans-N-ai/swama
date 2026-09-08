@@ -37,7 +37,7 @@ struct RuntimeLineageTests {
 
 // MARK: - LineageEntry
 
-private struct LineageEntry: Sendable {
+private struct LineageEntry {
     let path: String
     let legacySHA256: String
     let runtimeSHA256: String
@@ -120,13 +120,13 @@ private let lineage: [LineageEntry] = [
     .init(
         path: "Model/ModelCreator.swift",
         legacySHA256: "5a1887f4d13f8a230c72241a4fe9e232170ded5beb1e71226db9a8cf05f7d77e",
-        runtimeSHA256: "d58301027704d95b6ca86666f469da866e1a6f202fea13128a062beb5093c919",
+        runtimeSHA256: "0c43f694704ec7595f9c084eec0788c6a360e4cdc8aefdd94186e6eaf0b0ed49",
         derivedSymbols: ["enum ModelCreator"]
     ),
     .init(
         path: "Model/ModelDownloader.swift",
         legacySHA256: "2c9d70bf028ea98e445518b62cd7306791a1d1833640fbf6c4ae6b13bbda6bd3",
-        runtimeSHA256: "38bf2a46c78a2988b3d8638159ec90ec8f68920e0cc6b4a45e5d932bf869da50",
+        runtimeSHA256: "9483e3b49da81478966c1cfee4b741db5ba744fef75d5dca094208ed5b00d682",
         derivedSymbols: ["enum ModelDownloader", "static func downloadModel", "static func fetchModel"]
     ),
     .init(
@@ -138,7 +138,7 @@ private let lineage: [LineageEntry] = [
     .init(
         path: "Model/ModelPaths.swift",
         legacySHA256: "6a9d06eccae50a263918f02d20db2c080c283bc1a39091b43aced760dd61b970",
-        runtimeSHA256: "9192dc4701507b081acbfe962f6638ea192e5cfdd212186e079cc9acc16f96ab",
+        runtimeSHA256: "98723afb43af742da669d786f916ce0846a286db79dbe2b8bc10e4a726386219",
         derivedSymbols: ["enum ModelPaths", "static func getModelDirectory", "static func removeModel"]
     ),
     .init(
@@ -158,7 +158,7 @@ private let lineage: [LineageEntry] = [
     .init(
         path: "Model/ModelRunner.swift",
         legacySHA256: "c5715822d87ff73f9ca54f8577d1f9873a45088b098575b464a1a4660903ef3e",
-        runtimeSHA256: "7b1feb15e90047e8963c045a757f85d6728e2c0967d54c7bb71e600ee116f34a",
+        runtimeSHA256: "eb60d9b94d013522be7ceb2c810d1eb9027ce9f0ca958df68b585d04747fe32c",
         derivedSymbols: ["actor ModelRunner", "struct ChatRunResult", "func runChat"]
     ),
     .init(

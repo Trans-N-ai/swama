@@ -15,7 +15,10 @@ package enum ModelDownloader {
     package static func downloadModel(resolvedModelName: String) async throws {
         printMessage("Pulling model: \(resolvedModelName)")
 
-        let modelDir = ModelPaths.getModelDirectory(for: resolvedModelName)
+        let modelDir = try ModelPaths.containedModelDirectory(
+            in: ModelPaths.activeModelsDirectory,
+            modelName: resolvedModelName
+        )
         try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
         let swamaRegistry = ProcessInfo.processInfo.environment["SWAMA_REGISTRY"] ?? "HUGGING_FACE"
 
@@ -48,7 +51,7 @@ package enum ModelDownloader {
             allowedExtensions.contains(where: { info.path.hasSuffix(".\($0)") })
         }
 
-        if filteredFileInfos.isEmpty, !fileInfos.isEmpty {
+        if filteredFileInfos.isEmpty, fileInfos.isEmpty == false {
             printMessage(
                 "Warning: No files with allowed extensions found for model \(resolvedModelName). Allowed: \(allowedExtensions.joined(separator: ", "))"
             )
@@ -68,7 +71,7 @@ package enum ModelDownloader {
         for (idx, info) in filteredFileInfos.enumerated() {
             let file = info.path
             let remoteSize = info.size
-            let dest = modelDir.appendingPathComponent(file)
+            let dest = try ModelPaths.containedURL(in: modelDir, relativePath: file)
 
             try FileManager.default.createDirectory(
                 at: dest.deletingLastPathComponent(),
