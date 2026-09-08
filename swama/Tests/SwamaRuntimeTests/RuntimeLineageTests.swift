@@ -37,7 +37,7 @@ struct RuntimeLineageTests {
 
 // MARK: - LineageEntry
 
-private struct LineageEntry: Sendable {
+private struct LineageEntry {
     let path: String
     let legacySHA256: String
     let runtimeSHA256: String
@@ -126,7 +126,7 @@ private let lineage: [LineageEntry] = [
     .init(
         path: "Model/ModelDownloader.swift",
         legacySHA256: "2c9d70bf028ea98e445518b62cd7306791a1d1833640fbf6c4ae6b13bbda6bd3",
-        runtimeSHA256: "1a398c7e9ad593701a67b268b5722e5d41990088fb576f1e6c7288de331083ae",
+        runtimeSHA256: "9483e3b49da81478966c1cfee4b741db5ba744fef75d5dca094208ed5b00d682",
         derivedSymbols: ["enum ModelDownloader", "static func downloadModel", "static func fetchModel"]
     ),
     .init(
@@ -138,7 +138,7 @@ private let lineage: [LineageEntry] = [
     .init(
         path: "Model/ModelPaths.swift",
         legacySHA256: "6a9d06eccae50a263918f02d20db2c080c283bc1a39091b43aced760dd61b970",
-        runtimeSHA256: "02fd17c31c6876b2e8cb89ca5b6f814191e35fafe9147d40e6cd8b33576819ad",
+        runtimeSHA256: "98723afb43af742da669d786f916ce0846a286db79dbe2b8bc10e4a726386219",
         derivedSymbols: ["enum ModelPaths", "static func getModelDirectory", "static func removeModel"]
     ),
     .init(
@@ -158,7 +158,7 @@ private let lineage: [LineageEntry] = [
     .init(
         path: "Model/ModelRunner.swift",
         legacySHA256: "c5715822d87ff73f9ca54f8577d1f9873a45088b098575b464a1a4660903ef3e",
-        runtimeSHA256: "a0bf76f97db07edc815c296c281f27948c42de8a85e29d2c80bd7b5028bd63f0",
+        runtimeSHA256: "eb60d9b94d013522be7ceb2c810d1eb9027ce9f0ca958df68b585d04747fe32c",
         derivedSymbols: ["actor ModelRunner", "struct ChatRunResult", "func runChat"]
     ),
     .init(

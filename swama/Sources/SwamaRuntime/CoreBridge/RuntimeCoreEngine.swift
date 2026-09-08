@@ -4,7 +4,7 @@ import MLXLMCommon
 
 // MARK: - RuntimeMessageRole
 
-package enum RuntimeMessageRole: String, Sendable {
+package enum RuntimeMessageRole: String {
     case system
     case user
     case assistant
@@ -13,7 +13,7 @@ package enum RuntimeMessageRole: String, Sendable {
 
 // MARK: - RuntimeContentPart
 
-package enum RuntimeContentPart: Sendable {
+package enum RuntimeContentPart {
     case text(String)
     case imageURL(URL)
     case imageData(Data, mediaType: String)
@@ -21,7 +21,7 @@ package enum RuntimeContentPart: Sendable {
 
 // MARK: - RuntimeJSONValue
 
-package enum RuntimeJSONValue: Hashable, Sendable {
+package enum RuntimeJSONValue: Hashable {
     case null
     case bool(Bool)
     case int(Int)
@@ -72,7 +72,7 @@ package enum RuntimeJSONValue: Hashable, Sendable {
 
 // MARK: - RuntimeToolCall
 
-package struct RuntimeToolCall: Hashable, Sendable {
+package struct RuntimeToolCall: Hashable {
     package init(id: String?, name: String, arguments: [String: RuntimeJSONValue]) {
         self.id = id
         self.name = name
@@ -104,7 +104,7 @@ package struct RuntimeToolCall: Hashable, Sendable {
 
 // MARK: - RuntimeToolDefinition
 
-package struct RuntimeToolDefinition: Hashable, Sendable {
+package struct RuntimeToolDefinition: Hashable {
     package init(name: String, description: String?, parameters: RuntimeJSONValue) {
         self.name = name
         self.description = description
@@ -132,7 +132,7 @@ package struct RuntimeToolDefinition: Hashable, Sendable {
 
 // MARK: - RuntimeMessage
 
-package struct RuntimeMessage: Sendable {
+package struct RuntimeMessage {
     package init(
         role: RuntimeMessageRole,
         content: [RuntimeContentPart],
@@ -153,7 +153,7 @@ package struct RuntimeMessage: Sendable {
 
 // MARK: - RuntimeGenerationOptions
 
-package struct RuntimeGenerationOptions: Sendable {
+package struct RuntimeGenerationOptions {
     package init(
         maxTokens: Int?,
         temperature: Float,
@@ -201,7 +201,7 @@ package struct RuntimeGenerationOptions: Sendable {
 
 // MARK: - RuntimeGenerationRequest
 
-package struct RuntimeGenerationRequest: Sendable {
+package struct RuntimeGenerationRequest {
     package init(
         model: String,
         messages: [RuntimeMessage],
@@ -222,14 +222,14 @@ package struct RuntimeGenerationRequest: Sendable {
 
 // MARK: - RuntimeGenerationEvent
 
-package enum RuntimeGenerationEvent: Sendable {
+package enum RuntimeGenerationEvent {
     case textDelta(String)
     case toolCall(RuntimeToolCall)
 }
 
 // MARK: - RuntimeFinishReason
 
-package enum RuntimeFinishReason: String, Sendable {
+package enum RuntimeFinishReason: String {
     case completed
     case length
     case toolCall
@@ -237,7 +237,7 @@ package enum RuntimeFinishReason: String, Sendable {
 
 // MARK: - RuntimeUsage
 
-package struct RuntimeUsage: Hashable, Sendable {
+package struct RuntimeUsage: Hashable {
     package init(promptTokens: Int, completionTokens: Int) {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
@@ -246,12 +246,14 @@ package struct RuntimeUsage: Hashable, Sendable {
     package let promptTokens: Int
     package let completionTokens: Int
 
-    package var totalTokens: Int { promptTokens + completionTokens }
+    package var totalTokens: Int {
+        promptTokens + completionTokens
+    }
 }
 
 // MARK: - RuntimeGenerationMetrics
 
-package struct RuntimeGenerationMetrics: Hashable, Sendable {
+package struct RuntimeGenerationMetrics: Hashable {
     package init(promptSeconds: Double, generationSeconds: Double, tokensPerSecond: Double) {
         self.promptSeconds = promptSeconds
         self.generationSeconds = generationSeconds
@@ -265,7 +267,7 @@ package struct RuntimeGenerationMetrics: Hashable, Sendable {
 
 // MARK: - RuntimeGenerationResult
 
-package struct RuntimeGenerationResult: Sendable {
+package struct RuntimeGenerationResult {
     package let output: String
     package let toolCalls: [RuntimeToolCall]
     package let usage: RuntimeUsage
@@ -275,7 +277,7 @@ package struct RuntimeGenerationResult: Sendable {
 
 // MARK: - RuntimeEmbeddingRequest
 
-package struct RuntimeEmbeddingRequest: Sendable {
+package struct RuntimeEmbeddingRequest {
     package init(model: String, inputs: [String]) {
         self.model = model
         self.inputs = inputs
@@ -287,14 +289,14 @@ package struct RuntimeEmbeddingRequest: Sendable {
 
 // MARK: - RuntimeEmbeddingResult
 
-package struct RuntimeEmbeddingResult: Sendable {
+package struct RuntimeEmbeddingResult {
     package let embeddings: [[Float]]
     package let usage: RuntimeUsage
 }
 
 // MARK: - RuntimeModelCapabilities
 
-package struct RuntimeModelCapabilities: Hashable, Sendable {
+package struct RuntimeModelCapabilities: Hashable {
     package init(textGeneration: Bool, vision: Bool, tools: Bool, embeddings: Bool) {
         self.textGeneration = textGeneration
         self.vision = vision
@@ -310,7 +312,7 @@ package struct RuntimeModelCapabilities: Hashable, Sendable {
 
 // MARK: - RuntimeModelInfo
 
-package struct RuntimeModelInfo: Sendable {
+package struct RuntimeModelInfo {
     package let id: String
     package let created: Int
     package let sizeInBytes: Int64
@@ -319,7 +321,7 @@ package struct RuntimeModelInfo: Sendable {
 
 // MARK: - RuntimeCoreErrorCode
 
-package enum RuntimeCoreErrorCode: String, Sendable {
+package enum RuntimeCoreErrorCode: String {
     case invalidRequest
     case invalidImage
     case modelNotFound
@@ -333,7 +335,7 @@ package enum RuntimeCoreErrorCode: String, Sendable {
 
 // MARK: - RuntimeCoreError
 
-package struct RuntimeCoreError: Error, Sendable {
+package struct RuntimeCoreError: Error {
     package let code: RuntimeCoreErrorCode
     package let model: String?
 }
@@ -393,7 +395,7 @@ package actor RuntimeCoreEngine {
                 ),
                 finishReason: finishReason(
                     result.completionInfo?.stopReason,
-                    hasToolCalls: !toolCalls.isEmpty
+                    hasToolCalls: toolCalls.isEmpty == false
                 ),
                 metrics: result.completionInfo.map {
                     .init(
@@ -435,7 +437,7 @@ package actor RuntimeCoreEngine {
 
     package func models() -> [RuntimeModelInfo] {
         ModelManager.models()
-            .filter { !Self.isUnsupportedAudioModelID($0.id) }
+            .filter { Self.isUnsupportedAudioModelID($0.id) == false }
             .map { model in
                 RuntimeModelInfo(
                     id: model.id,
@@ -476,7 +478,7 @@ package actor RuntimeCoreEngine {
     }
 
     package func clearCache(for model: String) async {
-        guard Self.isValidModelID(model), !Self.isUnsupportedAudioModelID(model) else {
+        guard Self.isValidModelID(model), Self.isUnsupportedAudioModelID(model) == false else {
             return
         }
 
@@ -496,7 +498,14 @@ package actor RuntimeCoreEngine {
 
     static func isUnsupportedAudioModelID(_ model: String) -> Bool {
         let repositoryName = model.split(separator: "/").last.map(String.init) ?? model
-        let components = repositoryName.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        let components = repositoryName.lowercased()
+            .split(whereSeparator: { $0.isLetter == false && $0.isNumber == false })
+        let fusedFamilyPrefixes = ["sensevoice", "cosyvoice", "vyvotts"]
+        if components.contains(where: { component in
+            fusedFamilyPrefixes.contains(where: { component.hasPrefix($0) })
+        }) {
+            return true
+        }
         let families = [
             ["whisper"], ["funasr"], ["qwen3", "asr"], ["glm", "asr"], ["glmasr"],
             ["sensevoice"], ["voxtral"], ["cohere", "transcribe"], ["parakeet"],
@@ -505,7 +514,7 @@ package actor RuntimeCoreEngine {
             ["canary"], ["moonshine"], ["wav2vec"], ["wav2vec2"], ["mms"], ["lasr"],
             ["granite", "speech"], ["tts"], ["orpheus"], ["marvis"], ["chatterbox"],
             ["vyvo"], ["fish", "speech"], ["fish", "audio"], ["soprano"], ["kokoro"],
-            ["cosyvoice"], ["omnivoice"], ["pocket", "tts"], ["moss", "tts"],
+            ["cosyvoice"], ["omnivoice"], ["ttsd"], ["pocket", "tts"], ["moss", "tts"],
             ["echo", "tts"], ["kitten", "tts"], ["irodori", "tts"], ["outetts"]
         ]
         return families.contains { family in
@@ -536,7 +545,7 @@ package actor RuntimeCoreEngine {
     }
 
     private func rejectUnsupportedAudioModel(_ model: String) throws {
-        guard !Self.isUnsupportedAudioModelID(model) else {
+        guard Self.isUnsupportedAudioModelID(model) == false else {
             throw RuntimeCoreError(code: .invalidRequest, model: model)
         }
     }
@@ -553,8 +562,8 @@ package actor RuntimeCoreEngine {
     }
 
     private nonisolated func makeChatMessage(_ message: RuntimeMessage) throws -> MLXLMCommon.Chat.Message {
-        var textParts: [String] = []
-        var images: [MLXLMCommon.UserInput.Image] = []
+        var textParts = [String]()
+        var images = [MLXLMCommon.UserInput.Image]()
         for part in message.content {
             switch part {
             case let .text(text):
@@ -624,12 +633,12 @@ package actor RuntimeCoreEngine {
     static func capabilities(for model: String, modelType: String?) -> RuntimeModelCapabilities {
         let normalized = model.lowercased()
         let embeddingHint = ["embed", "bge", "e5-", "gte-"].contains(where: normalized.contains)
-        let supportedEmbeddingTypes: Set<String> = [
+        let supportedEmbeddingTypes: Set = [
             "bert", "roberta", "xlm-roberta", "distilbert", "nomic_bert", "qwen3",
             "lfm2", "gemma3", "gemma3_text", "gemma3n"
         ]
         let embedding = embeddingHint && modelType.map(supportedEmbeddingTypes.contains) == true
-        let textGeneration = !embeddingHint
+        let textGeneration = embeddingHint == false
         let vision = textGeneration && ModelTypeDetector.isVLMModelName(model)
         return .init(
             textGeneration: textGeneration,

@@ -256,7 +256,7 @@ struct AcceptanceTests {
         )
         var report = reliabilityReport()
         var gates = try reliabilityGateStatus(report, contract: contract)
-        #expect(!gates.values.contains(false))
+        #expect(gates.values.contains(false) == false)
 
         var cancel = try report.object("cancel_then_recover")
         cancel["observedTokensBeforeCancel"] = 99
@@ -506,7 +506,7 @@ struct AcceptanceTests {
         )
         #expect(build.contains("--target"))
         #expect(build.contains("SwamaCore"))
-        #expect(!build.contains("dump-symbol-graph"))
+        #expect(build.contains("dump-symbol-graph") == false)
 
         let extract = symbolGraphExtractCommand(
             extractor: URL(fileURLWithPath: "/toolchain/swift-symbolgraph-extract"),
@@ -952,8 +952,8 @@ struct AcceptanceTests {
         #expect(parsedModules[0] == "Swift")
         #expect(parsedModules[1] == "Other")
         for malformed in [
-            validDemanglerOutput.replacingOccurrences(
-                of: "Demangling for $sSN",
+            validDemanglerOutput.replacing(
+                "Demangling for $sSN",
                 with: "Demangling for $s5Other4TypeV"
             ),
             "\n" + validDemanglerOutput,
@@ -1721,7 +1721,7 @@ struct AcceptanceTests {
         try Data("stale".utf8).write(to: staleArtifact)
 
         let current = try prepareAcceptanceBuildScratch(root: temporary, identity: "current")
-        #expect(!FileManager.default.fileExists(atPath: staleArtifact.path))
+        #expect(FileManager.default.fileExists(atPath: staleArtifact.path) == false)
         let partialArtifact = current.fixture.appendingPathComponent("partial-object")
         try FileManager.default.createDirectory(at: current.fixture, withIntermediateDirectories: true)
         try Data("partial".utf8).write(to: partialArtifact)

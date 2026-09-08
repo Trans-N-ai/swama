@@ -18,7 +18,7 @@ struct RuntimeCoreEngineTests {
             await events.append(event)
         }
 
-        #expect(!result.output.isEmpty)
+        #expect(result.output.isEmpty == false)
         #expect(result.usage.promptTokens > 0)
         #expect(result.usage.completionTokens == 4)
         #expect(result.finishReason == .length)
@@ -119,6 +119,12 @@ struct RuntimeCoreEngineTests {
             "beshkenadze/cohere-transcribe-03-2026-mlx-fp16",
             "FireRedTeam/FireRedASR-AED-L-MLX",
             "mlx-community/LASR-CTC-Large",
+            "moss-ttsd",
+            "cosyvoice2",
+            "cosyvoice3",
+            "mlx-community/SenseVoiceSmall",
+            "mlx-community/VyvoTTS-EN-Beta-4bit",
+            "OpenMOSS-Team/MOSS-TTSD-v1.0",
             "mlx-community/Qwen3-ASR-0.6B-4bit",
             "mlx-community/Qwen3-TTS-0.6B",
             "mlx-community/Kokoro-82M"
@@ -131,7 +137,7 @@ struct RuntimeCoreEngineTests {
             "mlx-community/gemma-3-4b-it-4bit",
             "acme/watts-language-model"
         ] {
-            #expect(!RuntimeCoreEngine.isUnsupportedAudioModelID(model))
+            #expect(RuntimeCoreEngine.isUnsupportedAudioModelID(model) == false)
         }
     }
 
@@ -158,7 +164,7 @@ struct RuntimeCoreEngineTests {
         }
 
         let invalid = "../outside-model-root"
-        #expect(!RuntimeCoreEngine.isValidModelID(invalid))
+        #expect(RuntimeCoreEngine.isValidModelID(invalid) == false)
         do {
             try await RuntimeCoreEngine(pool: makePool()).remove(invalid)
             Issue.record("runtime accepted a traversing model ID")
@@ -210,17 +216,17 @@ struct RuntimeCoreEngineTests {
             modelType: "gemma3"
         )
         #expect(supported.embeddings)
-        #expect(!supported.textGeneration)
-        #expect(!supported.vision)
+        #expect(supported.textGeneration == false)
+        #expect(supported.vision == false)
 
         let unsupported = RuntimeCoreEngine.capabilities(
             for: "mlx-community/nomicai-modernbert-embed-base-4bit",
             modelType: "modernbert"
         )
-        #expect(!unsupported.embeddings)
-        #expect(!unsupported.textGeneration)
-        #expect(!unsupported.vision)
-        #expect(!unsupported.tools)
+        #expect(unsupported.embeddings == false)
+        #expect(unsupported.textGeneration == false)
+        #expect(unsupported.vision == false)
+        #expect(unsupported.tools == false)
     }
 
     @Test func audioIdentifiersCannotEnterTheCoreRuntime() async throws {
@@ -379,11 +385,21 @@ private func makeToolSchemaContainer() -> MLXLMCommon.ModelContainer {
 // MARK: - ToolScriptTokenizer
 
 private struct ToolScriptTokenizer: MLXLMCommon.Tokenizer {
-    var bosToken: String? { nil }
-    var eosToken: String? { nil }
-    var unknownToken: String? { nil }
+    var bosToken: String? {
+        nil
+    }
 
-    func encode(text _: String, addSpecialTokens _: Bool) -> [Int] { [0] }
+    var eosToken: String? {
+        nil
+    }
+
+    var unknownToken: String? {
+        nil
+    }
+
+    func encode(text _: String, addSpecialTokens _: Bool) -> [Int] {
+        [0]
+    }
 
     func decode(tokenIds: [Int], skipSpecialTokens _: Bool) -> String {
         tokenIds.map { token in
@@ -395,7 +411,12 @@ private struct ToolScriptTokenizer: MLXLMCommon.Tokenizer {
     }
 
     func convertTokenToId(_ token: String) -> Int? {
-        token.isEmpty ? 0 : 1
+        if token.isEmpty {
+            0
+        }
+        else {
+            1
+        }
     }
 
     func convertIdToToken(_ id: Int) -> String? {
@@ -426,7 +447,9 @@ private struct ToolScriptProcessor: UserInputProcessor {
 
 private final class ToolScriptModel: MLXNN.Module, LLMModel, KVCacheDimensionProvider {
     let kvHeads = [1]
-    var loraLayers: [MLXNN.Module] { [] }
+    var loraLayers: [MLXNN.Module] {
+        []
+    }
 
     func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
         let sequenceLength = inputs.dim(1)

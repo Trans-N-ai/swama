@@ -89,7 +89,7 @@ public actor SwamaEngine {
 
     private func validate(_ request: GenerationRequest) throws {
         try validate(request.model)
-        guard !request.messages.isEmpty else {
+        guard request.messages.isEmpty == false else {
             throw invalidRequest("Generation requires at least one message.", model: request.model)
         }
 
@@ -104,7 +104,7 @@ public actor SwamaEngine {
             }
         }
         for tool in request.tools {
-            guard !tool.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            guard tool.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
                   case .object = tool.parameters
             else {
                 throw invalidRequest("Tools require a name and an object parameter schema.", model: request.model)
@@ -133,8 +133,8 @@ public actor SwamaEngine {
 
     private func validate(_ request: EmbeddingRequest) throws {
         try validate(request.model)
-        guard !request.inputs.isEmpty,
-              request.inputs.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+        guard request.inputs.isEmpty == false,
+              request.inputs.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false })
         else {
             throw invalidRequest("Embedding inputs must be non-empty.", model: request.model)
         }
@@ -152,11 +152,14 @@ public actor SwamaEngine {
             switch message.role {
             case .system,
                  .user:
-                !message.content.isEmpty && message.toolCalls.isEmpty && message.toolCallID == nil
+                message.content.isEmpty == false && message.toolCalls.isEmpty && message.toolCallID == nil
             case .assistant:
-                (!message.content.isEmpty || !message.toolCalls.isEmpty) && message.toolCallID == nil
+                (message.content.isEmpty == false || message.toolCalls.isEmpty == false) && message.toolCallID == nil
             case .tool:
-                !message.content.isEmpty && message.toolCalls.isEmpty && toolCallID?.isEmpty == false
+                message.content.isEmpty == false &&
+                    message.content.allSatisfy(\.isText) &&
+                    message.toolCalls.isEmpty &&
+                    toolCallID?.isEmpty == false
             }
         guard isValid else {
             throw invalidRequest("Message fields are invalid for its role.", model: model)
@@ -165,6 +168,15 @@ public actor SwamaEngine {
 
     private func invalidRequest(_ message: String, model: ModelID?) -> SwamaError {
         .init(code: .invalidRequest, message: message, model: model)
+    }
+}
+
+private extension ContentPart {
+    var isText: Bool {
+        if case .text = self {
+            return true
+        }
+        return false
     }
 }
 
@@ -285,10 +297,14 @@ private extension Message {
 private extension Message.Role {
     var runtimeValue: RuntimeMessageRole {
         switch self {
-        case .system: .system
-        case .user: .user
-        case .assistant: .assistant
-        case .tool: .tool
+        case .system:
+            .system
+        case .user:
+            .user
+        case .assistant:
+            .assistant
+        case .tool:
+            .tool
         }
     }
 }
@@ -296,9 +312,12 @@ private extension Message.Role {
 private extension ContentPart {
     var runtimeValue: RuntimeContentPart {
         switch self {
-        case let .text(value): .text(value)
-        case let .imageURL(value): .imageURL(value)
-        case let .imageData(data, mediaType): .imageData(data, mediaType: mediaType)
+        case let .text(value):
+            .text(value)
+        case let .imageURL(value):
+            .imageURL(value)
+        case let .imageData(data, mediaType):
+            .imageData(data, mediaType: mediaType)
         }
     }
 }
@@ -306,13 +325,20 @@ private extension ContentPart {
 private extension JSONValue {
     var runtimeValue: RuntimeJSONValue {
         switch self {
-        case .null: .null
-        case let .bool(value): .bool(value)
-        case let .int(value): .int(value)
-        case let .double(value): .double(value)
-        case let .string(value): .string(value)
-        case let .array(value): .array(value.map(\.runtimeValue))
-        case let .object(value): .object(value.mapValues(\.runtimeValue))
+        case .null:
+            .null
+        case let .bool(value):
+            .bool(value)
+        case let .int(value):
+            .int(value)
+        case let .double(value):
+            .double(value)
+        case let .string(value):
+            .string(value)
+        case let .array(value):
+            .array(value.map(\.runtimeValue))
+        case let .object(value):
+            .object(value.mapValues(\.runtimeValue))
         }
     }
 }
@@ -320,13 +346,20 @@ private extension JSONValue {
 private extension RuntimeJSONValue {
     var coreValue: JSONValue {
         switch self {
-        case .null: .null
-        case let .bool(value): .bool(value)
-        case let .int(value): .int(value)
-        case let .double(value): .double(value)
-        case let .string(value): .string(value)
-        case let .array(value): .array(value.map(\.coreValue))
-        case let .object(value): .object(value.mapValues(\.coreValue))
+        case .null:
+            .null
+        case let .bool(value):
+            .bool(value)
+        case let .int(value):
+            .int(value)
+        case let .double(value):
+            .double(value)
+        case let .string(value):
+            .string(value)
+        case let .array(value):
+            .array(value.map(\.coreValue))
+        case let .object(value):
+            .object(value.mapValues(\.coreValue))
         }
     }
 }
@@ -372,8 +405,10 @@ private extension GenerationOptions {
 private extension RuntimeGenerationEvent {
     var coreValue: GenerationEvent {
         switch self {
-        case let .textDelta(value): .textDelta(value)
-        case let .toolCall(value): .toolCall(value.coreValue)
+        case let .textDelta(value):
+            .textDelta(value)
+        case let .toolCall(value):
+            .toolCall(value.coreValue)
         }
     }
 }
@@ -399,9 +434,12 @@ private extension RuntimeUsage {
 private extension RuntimeFinishReason {
     var coreValue: FinishReason {
         switch self {
-        case .completed: .completed
-        case .length: .length
-        case .toolCall: .toolCall
+        case .completed:
+            .completed
+        case .length:
+            .length
+        case .toolCall:
+            .toolCall
         }
     }
 }
@@ -448,15 +486,24 @@ private extension RuntimeCoreError {
     var coreValue: SwamaError {
         let coreCode: SwamaError.Code =
             switch code {
-            case .invalidRequest: .invalidRequest
-            case .invalidImage: .invalidImage
-            case .modelNotFound: .modelNotFound
-            case .modelLoadFailed: .modelLoadFailed
-            case .contextLimitExceeded: .contextLimitExceeded
-            case .embeddingFailed: .embeddingFailed
-            case .downloadFailed: .downloadFailed
-            case .removalFailed: .removalFailed
-            case .backendFailure: .backendFailure
+            case .invalidRequest:
+                .invalidRequest
+            case .invalidImage:
+                .invalidImage
+            case .modelNotFound:
+                .modelNotFound
+            case .modelLoadFailed:
+                .modelLoadFailed
+            case .contextLimitExceeded:
+                .contextLimitExceeded
+            case .embeddingFailed:
+                .embeddingFailed
+            case .downloadFailed:
+                .downloadFailed
+            case .removalFailed:
+                .removalFailed
+            case .backendFailure:
+                .backendFailure
             }
         return .init(
             code: coreCode,
@@ -469,15 +516,24 @@ private extension RuntimeCoreError {
 private extension SwamaError.Code {
     var safeMessage: String {
         switch self {
-        case .invalidRequest: "The request is invalid."
-        case .invalidImage: "An image could not be decoded."
-        case .modelNotFound: "The requested model is not available locally."
-        case .modelLoadFailed: "The requested model could not be loaded."
-        case .contextLimitExceeded: "The request exceeds the configured context limit."
-        case .embeddingFailed: "The embedding request failed."
-        case .downloadFailed: "The model could not be downloaded."
-        case .removalFailed: "The model could not be removed."
-        case .backendFailure: "The local model backend failed."
+        case .invalidRequest:
+            "The request is invalid."
+        case .invalidImage:
+            "An image could not be decoded."
+        case .modelNotFound:
+            "The requested model is not available locally."
+        case .modelLoadFailed:
+            "The requested model could not be loaded."
+        case .contextLimitExceeded:
+            "The request exceeds the configured context limit."
+        case .embeddingFailed:
+            "The embedding request failed."
+        case .downloadFailed:
+            "The model could not be downloaded."
+        case .removalFailed:
+            "The model could not be removed."
+        case .backendFailure:
+            "The local model backend failed."
         }
     }
 }

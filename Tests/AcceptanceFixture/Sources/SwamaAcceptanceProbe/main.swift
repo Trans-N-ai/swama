@@ -22,7 +22,7 @@ private enum ProbeError: Error, LocalizedError {
 
 // MARK: - RunRecord
 
-private struct RunRecord: Codable, Sendable {
+private struct RunRecord: Codable {
     let route: String
     let model: String
     let round: Int
@@ -37,7 +37,7 @@ private struct RunRecord: Codable, Sendable {
 
 // MARK: - CancelRecord
 
-private struct CancelRecord: Codable, Sendable {
+private struct CancelRecord: Codable {
     let route: String
     let model: String
     let observedTokensBeforeCancel: Int
@@ -50,7 +50,7 @@ private struct CancelRecord: Codable, Sendable {
 
 // MARK: - ConcurrentRecord
 
-private struct ConcurrentRecord: Codable, Sendable {
+private struct ConcurrentRecord: Codable {
     let route: String
     let model: String
     let requestCount: Int
@@ -61,7 +61,7 @@ private struct ConcurrentRecord: Codable, Sendable {
 
 // MARK: - SwitchRecord
 
-private struct SwitchRecord: Codable, Sendable {
+private struct SwitchRecord: Codable {
     let route: String
     let models: [String]
     let cycles: Int
@@ -72,7 +72,7 @@ private struct SwitchRecord: Codable, Sendable {
 
 // MARK: - LifecycleRecord
 
-private struct LifecycleRecord: Codable, Sendable {
+private struct LifecycleRecord: Codable {
     let operation: String
     let model: String?
     let completed: Bool
@@ -88,7 +88,7 @@ private final class TokenRecorder: @unchecked Sendable {
 
     func append(_ token: String) {
         let now = DispatchTime.now().uptimeNanoseconds
-        var ready: [CheckedContinuation<Void, Never>] = []
+        var ready = [CheckedContinuation<Void, Never>]()
 
         lock.lock()
         if firstTokenUptime == nil {
@@ -231,7 +231,7 @@ private func runCancellation(
     }
 
     await recorder.wait(untilCount: 2)
-    guard !task.isCancelled else {
+    guard task.isCancelled == false else {
         throw ProbeError.cancellationDidNotStart
     }
 
@@ -287,7 +287,7 @@ private func runConcurrent(
             }
         }
 
-        var values: [String] = []
+        var values = [String]()
         for try await value in group {
             values.append(value)
         }
@@ -312,8 +312,8 @@ private func runSwitching(
     cycles: Int,
     settleMilliseconds: Int
 ) async throws -> SwitchRecord {
-    var runs: [RunRecord] = []
-    var residentBytesAfterClear: [UInt64] = []
+    var runs = [RunRecord]()
+    var residentBytesAfterClear = [UInt64]()
 
     for cycle in 0 ..< cycles {
         for (index, model) in models.enumerated() {
@@ -376,7 +376,7 @@ private struct SwamaAcceptanceProbe {
 
             let model = arguments[1]
             let prompt = arguments.dropFirst(4).joined(separator: " ")
-            var records: [RunRecord] = []
+            var records = [RunRecord]()
             for round in 0 ..< rounds {
                 try await records.append(
                     runOnce(

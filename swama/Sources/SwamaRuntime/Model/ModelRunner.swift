@@ -22,7 +22,7 @@ private enum InferenceSafetyLimits {
 // MARK: - ModelRunner
 
 package actor ModelRunner {
-    package struct ChatRunResult: Sendable {
+    package struct ChatRunResult {
         package let output: String
         package let analysis: String?
         package let promptTokens: Int
@@ -120,7 +120,7 @@ package actor ModelRunner {
             var output = ""
             var promptTokens = 0
             var capturedCompletionInfo: GenerateCompletionInfo?
-            var toolCalls: [MLXLMCommon.ToolCall] = []
+            var toolCalls = [MLXLMCommon.ToolCall]()
             var didRecordFirstToken = false
 
             let rawOutputStorage = RawOutputBuffer()
@@ -290,7 +290,7 @@ package actor ModelRunner {
                 do {
                     switch generationEvent {
                     case let .chunk(chunkString):
-                        if !didRecordFirstToken, !chunkString.isEmpty {
+                        if didRecordFirstToken == false, chunkString.isEmpty == false {
                             SwamaDiagnostics.firstToken(diagnosticOperation, model: modelName)
                             didRecordFirstToken = true
                         }
@@ -312,7 +312,7 @@ package actor ModelRunner {
                         capturedCompletionInfo = info
 
                     case let .toolCall(toolCall):
-                        if !didRecordFirstToken {
+                        if didRecordFirstToken == false {
                             SwamaDiagnostics.firstToken(diagnosticOperation, model: modelName)
                             didRecordFirstToken = true
                         }
@@ -423,7 +423,7 @@ private func trimChatMessagesInternal(
     guard limit > 0 else {
         return chatMessages
     }
-    guard !chatMessages.isEmpty else {
+    guard chatMessages.isEmpty == false else {
         return chatMessages
     }
 
@@ -431,7 +431,7 @@ private func trimChatMessagesInternal(
         if message.role == .system || message.role == .tool {
             return true
         }
-        return !message.images.isEmpty || !message.videos.isEmpty
+        return message.images.isEmpty == false || message.videos.isEmpty == false
     }
 
     func buildInput(with messages: [MLXLMCommon.Chat.Message]) -> MLXLMCommon.UserInput {
@@ -444,19 +444,19 @@ private func trimChatMessagesInternal(
     }
 
     func hasMedia(_ messages: [MLXLMCommon.Chat.Message]) -> Bool {
-        messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
+        messages.contains { $0.images.isEmpty == false || $0.videos.isEmpty == false }
     }
 
     func hasNonEmptyUserMessage(_ messages: [MLXLMCommon.Chat.Message]) -> Bool {
         messages.contains {
-            $0.role == .user && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            $0.role == .user && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
     }
 
     func countTokensForTrim(_ messages: [MLXLMCommon.Chat.Message]) async throws -> Int {
         // For text-only chat, use model-accurate token counting via prepare(input:)
         // to avoid template-estimation mismatch for multimodal-capable models.
-        if !hasMedia(messages) {
+        if hasMedia(messages) == false {
             return try await tokenCount(for: buildInput(with: messages), container: container)
         }
 
@@ -471,7 +471,7 @@ private func trimChatMessagesInternal(
     var workingMessages = chatMessages
     var didTrimContent = false
     var trimmableIndices = workingMessages.enumerated()
-        .filter { !isProtected($0.element) }
+        .filter { isProtected($0.element) == false }
         .map(\.offset)
 
     var currentTokenCount = try await countTokensForTrim(workingMessages)
@@ -533,9 +533,9 @@ private func trimChatMessagesInternal(
 
     // Never collapse to an empty-user prompt. If trimming removed all user text,
     // restore the latest non-empty user message from the original request.
-    if !hasNonEmptyUserMessage(workingMessages),
+    if hasNonEmptyUserMessage(workingMessages) == false,
        let fallbackUser = chatMessages.reversed().first(where: {
-           $0.role == .user && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+           $0.role == .user && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
        })
     {
         workingMessages = [fallbackUser]
@@ -609,7 +609,7 @@ private extension MLXLMCommon.UserInput {
         case .text:
             false
         case let .chat(messages):
-            messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
+            messages.contains { $0.images.isEmpty == false || $0.videos.isEmpty == false }
         case let .messages(messages):
             messages.contains { message in
                 message.keys.contains { key in

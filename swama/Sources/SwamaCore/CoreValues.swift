@@ -21,7 +21,9 @@ public struct ModelID: RawRepresentable, Hashable, Codable, Sendable, CustomStri
     }
 
     public let rawValue: String
-    public var description: String { rawValue }
+    public var description: String {
+        rawValue
+    }
 }
 
 // MARK: - SwamaConfiguration
@@ -351,7 +353,9 @@ public struct Usage: Hashable, Codable, Sendable {
 
     public var promptTokens: Int
     public var completionTokens: Int
-    public var totalTokens: Int { promptTokens + completionTokens }
+    public var totalTokens: Int {
+        promptTokens + completionTokens
+    }
 }
 
 // MARK: - GenerationMetrics
@@ -482,5 +486,7 @@ public struct SwamaError: Error, Hashable, Codable, Sendable, LocalizedError {
     public var code: Code
     public var message: String
     public var model: ModelID?
-    public var errorDescription: String? { message }
+    public var errorDescription: String? {
+        message
+    }
 }

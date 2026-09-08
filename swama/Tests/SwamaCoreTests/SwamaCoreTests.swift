@@ -176,12 +176,14 @@ struct SwamaCoreTests {
         let engine = SwamaEngine(backend: backend)
         let model = ModelID("org/model")
         let toolCall = ToolCall(name: "lookup", arguments: [:])
+        let imageURL = try #require(URL(string: "https://example.invalid/tool-result.png"))
         let invalidMessages: [Message] = [
             .init(role: .user, content: [.text("hi")], toolCalls: [toolCall]),
             .init(role: .system, content: [.text("hi")], toolCallID: "call-1"),
             .init(role: .assistant, content: [.text("hi")], toolCallID: "call-1"),
             .init(role: .tool, content: [.text("result")]),
-            .init(role: .tool, content: [.text("result")], toolCalls: [toolCall], toolCallID: "call-1")
+            .init(role: .tool, content: [.text("result")], toolCalls: [toolCall], toolCallID: "call-1"),
+            .init(role: .tool, content: [.imageURL(imageURL)], toolCallID: "call-1")
         ]
         let invalidOptions: [GenerationOptions] = [
             .init(temperature: .infinity),
@@ -267,10 +269,22 @@ private actor StubBackend: SwamaEngineBackend {
         return .init(embeddings: [[1]], usage: .init(promptTokens: 1, completionTokens: 0))
     }
 
-    func models() async throws -> [ModelInfo] { [] }
-    func fetch(_: ModelID) async throws { fetchCalls += 1 }
-    func remove(_: ModelID) async throws { removeCalls += 1 }
-    func clearCache(for _: ModelID) async { modelCacheClearCalls += 1 }
+    func models() async throws -> [ModelInfo] {
+        []
+    }
+
+    func fetch(_: ModelID) async throws {
+        fetchCalls += 1
+    }
+
+    func remove(_: ModelID) async throws {
+        removeCalls += 1
+    }
+
+    func clearCache(for _: ModelID) async {
+        modelCacheClearCalls += 1
+    }
+
     func clearCache() async {}
 
     private let generationResponse: GenerationResponse

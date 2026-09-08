@@ -18,7 +18,7 @@ package enum ModelPaths {
     /// The custom path for storing models (dynamically read from environment).
     package static var customModelsDirectory: URL? {
         if let customPath = ProcessInfo.processInfo.environment["SWAMA_MODELS"],
-           !customPath.isEmpty
+           customPath.isEmpty == false
         {
             return URL(fileURLWithPath: customPath)
         }
@@ -49,11 +49,11 @@ package enum ModelPaths {
     /// filesystem-backed operation share the same traversal boundary.
     package static func isValidModelIdentifier(_ modelName: String) -> Bool {
         guard modelName == modelName.trimmingCharacters(in: .whitespacesAndNewlines),
-              !modelName.isEmpty,
+              modelName.isEmpty == false,
               modelName.utf8.count <= 192,
-              !modelName.hasPrefix("/"),
-              !modelName.contains("\\"),
-              !modelName.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+              modelName.hasPrefix("/") == false,
+              modelName.contains("\\") == false,
+              modelName.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) == false
         else {
             return false
         }
@@ -67,23 +67,23 @@ package enum ModelPaths {
         return components.allSatisfy { component in
             component != "." &&
                 component != ".." &&
-                !component.isEmpty &&
+                component.isEmpty == false &&
                 component.unicodeScalars.allSatisfy(allowed.contains)
         }
     }
 
     /// Resolve a relative path below `root`, rejecting traversal before any filesystem access.
     static func containedURL(in root: URL, relativePath: String) throws -> URL {
-        guard !relativePath.isEmpty,
-              !relativePath.hasPrefix("/"),
-              !relativePath.contains("\\"),
-              !relativePath.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+        guard relativePath.isEmpty == false,
+              relativePath.hasPrefix("/") == false,
+              relativePath.contains("\\") == false,
+              relativePath.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) == false
         else {
             throw ModelPathError.invalidRelativePath
         }
 
         let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
-        guard components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+        guard components.allSatisfy({ $0.isEmpty == false && $0 != "." && $0 != ".." }) else {
             throw ModelPathError.invalidRelativePath
         }
 

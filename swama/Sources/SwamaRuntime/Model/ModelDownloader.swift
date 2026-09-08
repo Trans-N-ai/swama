@@ -51,7 +51,7 @@ package enum ModelDownloader {
             allowedExtensions.contains(where: { info.path.hasSuffix(".\($0)") })
         }
 
-        if filteredFileInfos.isEmpty, !fileInfos.isEmpty {
+        if filteredFileInfos.isEmpty, fileInfos.isEmpty == false {
             printMessage(
                 "Warning: No files with allowed extensions found for model \(resolvedModelName). Allowed: \(allowedExtensions.joined(separator: ", "))"
             )
