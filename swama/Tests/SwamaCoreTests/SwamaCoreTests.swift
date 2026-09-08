@@ -171,6 +171,19 @@ struct SwamaCoreTests {
         #expect(await backend.modelCacheClearCalls == 0)
     }
 
+    @Test func packageConsumerCanReuseTheResolvedFetchedModel() async throws {
+        let resolvedModel = ModelID("org/resolved-model")
+        let backend = StubBackend(
+            generationResponse: emptyResponse,
+            resolvedModel: resolvedModel
+        )
+        let engine = SwamaEngine(backend: backend)
+
+        #expect(try await engine.fetchResolved(.init("alias")) == resolvedModel)
+        try await engine.fetch(.init("alias"))
+        #expect(await backend.fetchCalls == 2)
+    }
+
     @Test func invalidRoleFieldsAndSamplingValuesFailBeforeBackendExecution() async throws {
         let backend = StubBackend(generationResponse: emptyResponse)
         let engine = SwamaEngine(backend: backend)
@@ -247,9 +260,14 @@ private actor EventCollector {
 // MARK: - StubBackend
 
 private actor StubBackend: SwamaEngineBackend {
-    init(generationResponse: GenerationResponse, cancelGeneration: Bool = false) {
+    init(
+        generationResponse: GenerationResponse,
+        cancelGeneration: Bool = false,
+        resolvedModel: ModelID? = nil
+    ) {
         self.generationResponse = generationResponse
         self.cancelGeneration = cancelGeneration
+        self.resolvedModel = resolvedModel
     }
 
     func generate(
@@ -273,8 +291,9 @@ private actor StubBackend: SwamaEngineBackend {
         []
     }
 
-    func fetch(_: ModelID) async throws {
+    func fetch(_ model: ModelID) async throws -> ModelID {
         fetchCalls += 1
+        return resolvedModel ?? model
     }
 
     func remove(_: ModelID) async throws {
@@ -289,6 +308,7 @@ private actor StubBackend: SwamaEngineBackend {
 
     private let generationResponse: GenerationResponse
     private let cancelGeneration: Bool
+    private let resolvedModel: ModelID?
     private(set) var generationCalls = 0
     private(set) var embeddingCalls = 0
     private(set) var fetchCalls = 0

@@ -400,6 +400,15 @@ struct AcceptanceTests {
         #expect(declarations.map(\.line) == [1, 2, 3])
     }
 
+    @Test func cliRunSourceUsesCoreWithoutLegacyRuntimeImports() throws {
+        let file = repositoryRoot.appendingPathComponent("swama/Sources/Swama/CLI/Run.swift")
+        let source = try String(contentsOf: file, encoding: .utf8)
+        let imports = try Set(parsedSwiftImports(source: source, file: file).map(\.module))
+
+        #expect(imports.contains("SwamaCore"))
+        #expect(imports.isDisjoint(with: ["MLX", "MLXLLM", "MLXLMCommon", "SwamaKit"]))
+    }
+
     @Test func compilerPublicAPIGateRejectsUpstreamTypesAndConformances() throws {
         let graph: JSONObject = [
             "module": ["name": "SwamaCore"],
