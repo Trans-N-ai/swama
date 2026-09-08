@@ -355,6 +355,7 @@ package actor RuntimeCoreEngine {
         _ request: RuntimeGenerationRequest,
         onEvent: (@Sendable (RuntimeGenerationEvent) async throws -> Void)? = nil
     ) async throws -> RuntimeGenerationResult {
+        try validateModelID(request.model)
         try rejectUnsupportedAudioModel(request.model)
         do {
             let parameters = makeParameters(request.options)
@@ -412,6 +413,7 @@ package actor RuntimeCoreEngine {
     }
 
     package func embed(_ request: RuntimeEmbeddingRequest) async throws -> RuntimeEmbeddingResult {
+        try validateModelID(request.model)
         try rejectUnsupportedAudioModel(request.model)
         do {
             let result = try await pool.runEmbeddingWithConcurrencyControl(modelName: request.model) { runner in
@@ -446,6 +448,7 @@ package actor RuntimeCoreEngine {
     }
 
     package func fetch(_ model: String) async throws {
+        try validateModelID(model)
         try rejectUnsupportedAudioModel(model)
         do {
             _ = try await ModelDownloader.fetchModel(modelName: model)
@@ -456,6 +459,7 @@ package actor RuntimeCoreEngine {
     }
 
     package func remove(_ model: String) async throws {
+        try validateModelID(model)
         try rejectUnsupportedAudioModel(model)
         await pool.remove(modelName: model)
         do {
@@ -472,7 +476,7 @@ package actor RuntimeCoreEngine {
     }
 
     package func clearCache(for model: String) async {
-        guard !Self.isUnsupportedAudioModelID(model) else {
+        guard Self.isValidModelID(model), !Self.isUnsupportedAudioModelID(model) else {
             return
         }
 
@@ -486,15 +490,49 @@ package actor RuntimeCoreEngine {
     private let pool: ModelPool
     private let defaultContextLimit: Int?
 
+    package nonisolated static func isValidModelID(_ model: String) -> Bool {
+        ModelPaths.isValidModelIdentifier(model)
+    }
+
     static func isUnsupportedAudioModelID(_ model: String) -> Bool {
-        let value = model.lowercased()
-        let markers = [
-            "whisper", "qwen3-asr", "glm-asr", "glmasr", "sensevoice", "voxtral",
-            "parakeet", "moss-transcribe", "nemotron", "canary", "moonshine", "wav2vec",
-            "mms-", "granite-speech", "tts", "orpheus", "marvis", "chatterbox", "vyvo",
-            "fish-speech", "soprano", "kokoro", "cosyvoice", "omnivoice"
+        let repositoryName = model.split(separator: "/").last.map(String.init) ?? model
+        let components = repositoryName.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        let families = [
+            ["whisper"], ["funasr"], ["qwen3", "asr"], ["glm", "asr"], ["glmasr"],
+            ["sensevoice"], ["voxtral"], ["cohere", "transcribe"], ["parakeet"],
+            ["fireredasr"], ["firered", "asr"], ["fire", "red", "asr"],
+            ["moss", "transcribe"], ["nemotron", "asr"], ["nemotron", "speech"],
+            ["canary"], ["moonshine"], ["wav2vec"], ["wav2vec2"], ["mms"], ["lasr"],
+            ["granite", "speech"], ["tts"], ["orpheus"], ["marvis"], ["chatterbox"],
+            ["vyvo"], ["fish", "speech"], ["fish", "audio"], ["soprano"], ["kokoro"],
+            ["cosyvoice"], ["omnivoice"], ["pocket", "tts"], ["moss", "tts"],
+            ["echo", "tts"], ["kitten", "tts"], ["irodori", "tts"], ["outetts"]
         ]
-        return markers.contains(where: value.contains)
+        return families.contains { family in
+            containsComponentSequence(family, in: components)
+        }
+    }
+
+    private nonisolated static func containsComponentSequence(
+        _ sequence: [String],
+        in components: [Substring]
+    ) -> Bool {
+        guard components.count >= sequence.count else {
+            return false
+        }
+
+        for start in 0 ... (components.count - sequence.count) {
+            if sequence.indices.allSatisfy({ components[start + $0] == sequence[$0] }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func validateModelID(_ model: String) throws {
+        guard Self.isValidModelID(model) else {
+            throw RuntimeCoreError(code: .invalidRequest, model: model)
+        }
     }
 
     private func rejectUnsupportedAudioModel(_ model: String) throws {

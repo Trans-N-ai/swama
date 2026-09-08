@@ -4,7 +4,10 @@ package enum ModelCreator {
     package static func run(from path: String, name: String) async throws {
         ModelDownloader.printMessage("Creating model from path: \(path) with name: \(name)")
 
-        let modelDir = ModelPaths.activeModelsDirectory.appendingPathComponent(name)
+        let modelDir = try ModelPaths.containedModelDirectory(
+            in: ModelPaths.activeModelsDirectory,
+            modelName: name
+        )
         let sourceURL = URL(fileURLWithPath: path)
 
         // Check if the model directory already exists

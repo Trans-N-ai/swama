@@ -329,6 +329,16 @@ public enum FinishReason: String, Hashable, Codable, Sendable {
     case length
     case toolCall = "tool_call"
     case unknown
+
+    public init(from decoder: Decoder) throws {
+        let rawValue = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: rawValue) ?? .unknown
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 // MARK: - Usage

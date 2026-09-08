@@ -44,6 +44,11 @@ struct SwamaCoreTests {
             GenerationResponse.self,
             from: JSONEncoder().encode(response)
         ) == response)
+        #expect(try JSONDecoder().decode(
+            FinishReason.self,
+            from: Data("\"future_backend_reason\"".utf8)
+        ) == .unknown)
+        #expect(try String(decoding: JSONEncoder().encode(FinishReason.unknown), as: UTF8.self) == "\"unknown\"")
     }
 
     @Test func engineForwardsAwaitedEventsAndResult() async throws {
@@ -110,6 +115,121 @@ struct SwamaCoreTests {
         }
         #expect(await backend.generationCalls == 0)
     }
+
+    @Test func invalidModelIdentifiersNeverReachLifecycleBackends() async throws {
+        let backend = StubBackend(generationResponse: emptyResponse)
+        let engine = SwamaEngine(backend: backend)
+        let invalidIDs = [
+            "../outside", "/absolute", "org//model", "org/./model", "org/../model",
+            "org\\model", "org/model/extra", " org/model", "org/model\n"
+        ]
+
+        for rawValue in invalidIDs {
+            let model = ModelID(rawValue)
+            do {
+                _ = try await engine.generate(.init(
+                    model: model,
+                    messages: [.init(role: .user, text: "hi")]
+                ))
+                Issue.record("invalid model ID reached generation: \(rawValue)")
+            }
+            catch let error as SwamaError {
+                #expect(error.code == .invalidRequest)
+            }
+
+            do {
+                _ = try await engine.embed(.init(model: model, inputs: ["hi"]))
+                Issue.record("invalid model ID reached embedding: \(rawValue)")
+            }
+            catch let error as SwamaError {
+                #expect(error.code == .invalidRequest)
+            }
+
+            do {
+                try await engine.fetch(model)
+                Issue.record("invalid model ID reached fetch: \(rawValue)")
+            }
+            catch let error as SwamaError {
+                #expect(error.code == .invalidRequest)
+            }
+
+            do {
+                try await engine.remove(model)
+                Issue.record("invalid model ID reached removal: \(rawValue)")
+            }
+            catch let error as SwamaError {
+                #expect(error.code == .invalidRequest)
+            }
+
+            await engine.clearCache(for: model)
+        }
+
+        #expect(await backend.generationCalls == 0)
+        #expect(await backend.embeddingCalls == 0)
+        #expect(await backend.fetchCalls == 0)
+        #expect(await backend.removeCalls == 0)
+        #expect(await backend.modelCacheClearCalls == 0)
+    }
+
+    @Test func invalidRoleFieldsAndSamplingValuesFailBeforeBackendExecution() async throws {
+        let backend = StubBackend(generationResponse: emptyResponse)
+        let engine = SwamaEngine(backend: backend)
+        let model = ModelID("org/model")
+        let toolCall = ToolCall(name: "lookup", arguments: [:])
+        let invalidMessages: [Message] = [
+            .init(role: .user, content: [.text("hi")], toolCalls: [toolCall]),
+            .init(role: .system, content: [.text("hi")], toolCallID: "call-1"),
+            .init(role: .assistant, content: [.text("hi")], toolCallID: "call-1"),
+            .init(role: .tool, content: [.text("result")]),
+            .init(role: .tool, content: [.text("result")], toolCalls: [toolCall], toolCallID: "call-1")
+        ]
+        let invalidOptions: [GenerationOptions] = [
+            .init(temperature: .infinity),
+            .init(temperature: .nan),
+            .init(topP: .infinity),
+            .init(minP: .nan),
+            .init(repetitionPenalty: -0.1),
+            .init(repetitionPenalty: .infinity),
+            .init(presencePenalty: 2.1),
+            .init(presencePenalty: .nan),
+            .init(frequencyPenalty: -2.1),
+            .init(frequencyPenalty: .infinity)
+        ]
+
+        for message in invalidMessages {
+            do {
+                _ = try await engine.generate(.init(model: model, messages: [message]))
+                Issue.record("role-inapplicable message fields reached the backend")
+            }
+            catch let error as SwamaError {
+                #expect(error.code == .invalidRequest)
+            }
+        }
+        for options in invalidOptions {
+            do {
+                _ = try await engine.generate(.init(
+                    model: model,
+                    messages: [.init(role: .user, text: "hi")],
+                    options: options
+                ))
+                Issue.record("invalid sampling value reached the backend")
+            }
+            catch let error as SwamaError {
+                #expect(error.code == .invalidRequest)
+            }
+        }
+
+        #expect(await backend.generationCalls == 0)
+    }
+
+    private var emptyResponse: GenerationResponse {
+        .init(
+            output: "",
+            toolCalls: [],
+            usage: .init(promptTokens: 0, completionTokens: 0),
+            finishReason: .completed
+        )
+    }
 }
 
 // MARK: - EventCollector
@@ -143,16 +263,21 @@ private actor StubBackend: SwamaEngineBackend {
     }
 
     func embed(_: EmbeddingRequest) async throws -> EmbeddingResponse {
-        .init(embeddings: [[1]], usage: .init(promptTokens: 1, completionTokens: 0))
+        embeddingCalls += 1
+        return .init(embeddings: [[1]], usage: .init(promptTokens: 1, completionTokens: 0))
     }
 
     func models() async throws -> [ModelInfo] { [] }
-    func fetch(_: ModelID) async throws {}
-    func remove(_: ModelID) async throws {}
-    func clearCache(for _: ModelID) async {}
+    func fetch(_: ModelID) async throws { fetchCalls += 1 }
+    func remove(_: ModelID) async throws { removeCalls += 1 }
+    func clearCache(for _: ModelID) async { modelCacheClearCalls += 1 }
     func clearCache() async {}
 
     private let generationResponse: GenerationResponse
     private let cancelGeneration: Bool
     private(set) var generationCalls = 0
+    private(set) var embeddingCalls = 0
+    private(set) var fetchCalls = 0
+    private(set) var removeCalls = 0
+    private(set) var modelCacheClearCalls = 0
 }

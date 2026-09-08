@@ -168,6 +168,7 @@ package actor ModelRunner {
                 )
             }
 
+            let generationTools = effectiveInput.tools
             let lmInput = try await container.prepare(input: effectiveInput)
 
             promptTokens = tokenLength(lmInput.text.tokens)
@@ -240,7 +241,8 @@ package actor ModelRunner {
                     let stream = try generate(
                         input: lmInput,
                         parameters: generationParameters,
-                        context: context
+                        context: context,
+                        tools: generationTools
                     )
                     return PromptCacheGenerationRun(stream: stream, task: nil, cache: nil, prefillMs: nil)
 
@@ -254,7 +256,8 @@ package actor ModelRunner {
                         cache: reusedCache,
                         fullHistory: lmInput.text.tokens,
                         context: context,
-                        generationParameters: generationParameters
+                        generationParameters: generationParameters,
+                        tools: generationTools
                     )
 
                 case .miss:
@@ -266,7 +269,8 @@ package actor ModelRunner {
                         cache: freshCache,
                         fullHistory: nil,
                         context: context,
-                        generationParameters: generationParameters
+                        generationParameters: generationParameters,
+                        tools: generationTools
                     )
                 }
             }
@@ -765,7 +769,8 @@ private func buildPromptCacheGenerationRun(
     cache: [KVCache],
     fullHistory: MLXArray?,
     context: ModelContext,
-    generationParameters: GenerateParameters
+    generationParameters: GenerateParameters,
+    tools: [[String: any Sendable]]?
 ) throws -> PromptCacheGenerationRun {
     let baseProcessor: LogitProcessor? = generationParameters.processor()
     let strategy = promptCacheIteratorStrategy(
@@ -817,7 +822,8 @@ private func buildPromptCacheGenerationRun(
         promptTokenCount: iterInput.text.tokens.size,
         modelConfiguration: context.configuration,
         tokenizer: context.tokenizer,
-        iterator: iterator
+        iterator: iterator,
+        tools: tools
     )
 
     return PromptCacheGenerationRun(stream: stream, task: task, cache: cache, prefillMs: prefillMs)

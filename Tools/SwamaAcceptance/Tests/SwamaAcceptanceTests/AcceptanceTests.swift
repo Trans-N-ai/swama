@@ -1010,11 +1010,11 @@ struct AcceptanceTests {
         let compiler = try report.object("compiler_public_api")
         #expect(try compiler.string("status") == "ready")
         #expect(try compiler.boolean("passed"))
-        #expect(try compiler.integer("symbol_count") > 0)
-        #expect(try !compiler.array("symbols").isEmpty)
+        #expect(try compiler.integer("symbol_count") == 160)
+        #expect(try compiler.array("symbols").count == 160)
         #expect(try compiler.array("violations").isEmpty)
         #expect(try compiler.string("manifest_sha256")
-            == "21a39b984973a71da521dce19820c0796b425001e5ef9e0c213bbec8952f6c40"
+            == "9cc4b4759e3c104f8832a0eb9a5369d85141b1c817217e0df42aec1405c5ba39"
         )
         let dependencies = try report.object("core_target_dependencies")
         #expect(try dependencies.string("status") == "ready")
@@ -1273,11 +1273,11 @@ struct AcceptanceTests {
             contract: contract
         )
         #expect(try core.boolean("passed"))
-        #expect(try core.integer("symbol_count") > 0)
-        #expect(try !core.array("symbols").isEmpty)
+        #expect(try core.integer("symbol_count") == 160)
+        #expect(try core.array("symbols").count == 160)
         #expect(try core.array("violations").isEmpty)
         #expect(try core.string("manifest_sha256")
-            == "21a39b984973a71da521dce19820c0796b425001e5ef9e0c213bbec8952f6c40"
+            == "9cc4b4759e3c104f8832a0eb9a5369d85141b1c817217e0df42aec1405c5ba39"
         )
     }
 

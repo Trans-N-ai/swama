@@ -120,13 +120,13 @@ private let lineage: [LineageEntry] = [
     .init(
         path: "Model/ModelCreator.swift",
         legacySHA256: "5a1887f4d13f8a230c72241a4fe9e232170ded5beb1e71226db9a8cf05f7d77e",
-        runtimeSHA256: "d58301027704d95b6ca86666f469da866e1a6f202fea13128a062beb5093c919",
+        runtimeSHA256: "0c43f694704ec7595f9c084eec0788c6a360e4cdc8aefdd94186e6eaf0b0ed49",
         derivedSymbols: ["enum ModelCreator"]
     ),
     .init(
         path: "Model/ModelDownloader.swift",
         legacySHA256: "2c9d70bf028ea98e445518b62cd7306791a1d1833640fbf6c4ae6b13bbda6bd3",
-        runtimeSHA256: "38bf2a46c78a2988b3d8638159ec90ec8f68920e0cc6b4a45e5d932bf869da50",
+        runtimeSHA256: "1a398c7e9ad593701a67b268b5722e5d41990088fb576f1e6c7288de331083ae",
         derivedSymbols: ["enum ModelDownloader", "static func downloadModel", "static func fetchModel"]
     ),
     .init(
@@ -138,7 +138,7 @@ private let lineage: [LineageEntry] = [
     .init(
         path: "Model/ModelPaths.swift",
         legacySHA256: "6a9d06eccae50a263918f02d20db2c080c283bc1a39091b43aced760dd61b970",
-        runtimeSHA256: "9192dc4701507b081acbfe962f6638ea192e5cfdd212186e079cc9acc16f96ab",
+        runtimeSHA256: "02fd17c31c6876b2e8cb89ca5b6f814191e35fafe9147d40e6cd8b33576819ad",
         derivedSymbols: ["enum ModelPaths", "static func getModelDirectory", "static func removeModel"]
     ),
     .init(
@@ -158,7 +158,7 @@ private let lineage: [LineageEntry] = [
     .init(
         path: "Model/ModelRunner.swift",
         legacySHA256: "c5715822d87ff73f9ca54f8577d1f9873a45088b098575b464a1a4660903ef3e",
-        runtimeSHA256: "51bfa63e4a30504fcb06f12473c673d31663a7bdf18090c11b00cd2c2016e3e0",
+        runtimeSHA256: "a0bf76f97db07edc815c296c281f27948c42de8a85e29d2c80bd7b5028bd63f0",
         derivedSymbols: ["actor ModelRunner", "struct ChatRunResult", "func runChat"]
     ),
     .init(

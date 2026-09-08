@@ -74,7 +74,7 @@ public actor SwamaEngine {
     }
 
     public func clearCache(for model: ModelID) async {
-        guard !model.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard RuntimeCoreEngine.isValidModelID(model.rawValue) else {
             return
         }
 
@@ -92,11 +92,9 @@ public actor SwamaEngine {
         guard !request.messages.isEmpty else {
             throw invalidRequest("Generation requires at least one message.", model: request.model)
         }
-        guard request.messages.allSatisfy({ !$0.content.isEmpty || !$0.toolCalls.isEmpty }) else {
-            throw invalidRequest("Every message must contain content or tool calls.", model: request.model)
-        }
 
         for message in request.messages {
+            try validate(message, model: request.model)
             for part in message.content {
                 if case let .imageData(data, mediaType) = part,
                    data.isEmpty || mediaType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -114,12 +112,18 @@ public actor SwamaEngine {
         }
         let options = request.options
         guard options.maxTokens.map({ $0 > 0 }) ?? true,
+              options.temperature.isFinite,
               options.temperature >= 0,
+              options.topP.isFinite,
               (0 ... 1).contains(options.topP),
               options.topK >= 0,
+              options.minP.isFinite,
               (0 ... 1).contains(options.minP),
+              options.repetitionPenalty.map({ $0.isFinite && $0 >= 0 }) ?? true,
               options.repetitionContextSize > 0,
+              options.presencePenalty.map({ $0.isFinite && (-2 ... 2).contains($0) }) ?? true,
               options.presenceContextSize > 0,
+              options.frequencyPenalty.map({ $0.isFinite && (-2 ... 2).contains($0) }) ?? true,
               options.frequencyContextSize > 0,
               options.contextLimit.map({ $0 > 0 }) ?? true
         else {
@@ -137,8 +141,25 @@ public actor SwamaEngine {
     }
 
     private func validate(_ model: ModelID) throws {
-        guard !model.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw invalidRequest("Model identifier must be non-empty.", model: nil)
+        guard RuntimeCoreEngine.isValidModelID(model.rawValue) else {
+            throw invalidRequest("Model identifier is invalid.", model: nil)
+        }
+    }
+
+    private func validate(_ message: Message, model: ModelID) throws {
+        let toolCallID = message.toolCallID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isValid =
+            switch message.role {
+            case .system,
+                 .user:
+                !message.content.isEmpty && message.toolCalls.isEmpty && message.toolCallID == nil
+            case .assistant:
+                (!message.content.isEmpty || !message.toolCalls.isEmpty) && message.toolCallID == nil
+            case .tool:
+                !message.content.isEmpty && message.toolCalls.isEmpty && toolCallID?.isEmpty == false
+            }
+        guard isValid else {
+            throw invalidRequest("Message fields are invalid for its role.", model: model)
         }
     }
 
