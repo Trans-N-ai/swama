@@ -69,6 +69,30 @@ struct RuntimeParityTests {
         #expect(runtimeResult.usage.promptTokens == legacyResult.usage.promptTokens)
         #expect(runtimeResult.usage.totalTokens == legacyResult.usage.totalTokens)
     }
+
+    @Test func everyMaintainedAudioAliasIsExcludedWithoutRejectingLanguageAliases() {
+        let maintainedAudioIDs =
+            Array(SwamaKit.ModelAliasResolver.sttAliases.keys) +
+            Array(SwamaKit.ModelAliasResolver.sttAliases.values) +
+            Array(SwamaKit.ModelAliasResolver.ttsAliases.keys) +
+            Array(SwamaKit.ModelAliasResolver.ttsAliases.values)
+        for model in maintainedAudioIDs {
+            #expect(
+                SwamaRuntime.RuntimeCoreEngine.isUnsupportedAudioModelID(model),
+                "audio ID escaped Core: \(model)"
+            )
+        }
+
+        let maintainedLanguageIDs =
+            Array(SwamaKit.ModelAliasResolver.aliases.keys) +
+            Array(SwamaKit.ModelAliasResolver.aliases.values)
+        for model in maintainedLanguageIDs {
+            #expect(
+                SwamaRuntime.RuntimeCoreEngine.isUnsupportedAudioModelID(model) == false,
+                "language ID was rejected: \(model)"
+            )
+        }
+    }
 }
 
 // MARK: - FixedEmbeddingModel
