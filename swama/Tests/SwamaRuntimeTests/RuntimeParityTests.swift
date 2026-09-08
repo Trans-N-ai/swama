@@ -92,6 +92,14 @@ struct RuntimeParityTests {
                 "language ID was rejected: \(model)"
             )
         }
+
+        #expect(SwamaRuntime.RuntimeCoreEngine.isUnsupportedAudioModelID(
+            "acme/nemotron-language-nemotron-3.5-asr-streaming"
+        ))
+        #expect(SwamaRuntime.RuntimeCoreEngine.isUnsupportedAudioModelID("acme/nemotron-language") == false)
+        #expect(SwamaRuntime.RuntimeCoreEngine.isUnsupportedAudioModelID(
+            "acme/nemotron-3.5-language-asr"
+        ) == false)
     }
 }
 

@@ -526,15 +526,16 @@ package actor RuntimeCoreEngine {
     }
 
     private nonisolated static func isVersionSeparatedNemotronAudio(_ components: [Substring]) -> Bool {
-        guard let familyIndex = components.firstIndex(of: "nemotron") else {
-            return false
+        for familyIndex in components.indices where components[familyIndex] == "nemotron" {
+            let nextFamily = components
+                .dropFirst(familyIndex + 1)
+                .drop(while: { $0.allSatisfy(\.isNumber) })
+                .first
+            if nextFamily == "asr" || nextFamily == "speech" {
+                return true
+            }
         }
-
-        let nextFamily = components
-            .dropFirst(familyIndex + 1)
-            .drop(while: { $0.allSatisfy(\.isNumber) })
-            .first
-        return nextFamily == "asr" || nextFamily == "speech"
+        return false
     }
 
     private nonisolated static func containsComponentSequence(
