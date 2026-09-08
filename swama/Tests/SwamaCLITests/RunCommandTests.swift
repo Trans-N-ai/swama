@@ -2,9 +2,12 @@ import ArgumentParser
 import Foundation
 @testable import Swama
 import SwamaCore
+@testable import SwamaRuntime
 import Testing
 
-@Suite("swama run Core adapter")
+// MARK: - RunCommandTests
+
+@Suite("swama run Core adapter", .serialized)
 struct RunCommandTests {
     @Test func inProcessCoreIsTheDefaultAndDirectRemainsCompatible() throws {
         let defaultCommand = try Run.parse(["org/model", "hello"])
@@ -44,6 +47,121 @@ struct RunCommandTests {
         ])
     }
 
+    @Test func executionFetchesOnceAndRoutesTheResolvedModel() async throws {
+        let resolved = ModelID("org/resolved")
+        let coreRecorder = RunExecutionRecorder()
+        let coreCommand = try Run.parse(["alias", "hello"])
+        try await coreCommand.execute(using: .init(
+            fetch: {
+                await coreRecorder.recordFetch($0)
+                return resolved
+            },
+            core: { await coreRecorder.recordCore($0) },
+            server: { await coreRecorder.recordServer($0) }
+        ))
+        #expect(await coreRecorder.snapshot() == .init(
+            fetched: [ModelID("alias")],
+            core: [resolved],
+            server: []
+        ))
+
+        let serverRecorder = RunExecutionRecorder()
+        let serverCommand = try Run.parse(["alias", "hello", "--server"])
+        try await serverCommand.execute(using: .init(
+            fetch: {
+                await serverRecorder.recordFetch($0)
+                return resolved
+            },
+            core: { await serverRecorder.recordCore($0) },
+            server: { await serverRecorder.recordServer($0) }
+        ))
+        #expect(await serverRecorder.snapshot() == .init(
+            fetched: [ModelID("alias")],
+            core: [],
+            server: [resolved]
+        ))
+    }
+
+    @Test func serverFailureNeverFallsBackToCore() async throws {
+        let recorder = RunExecutionRecorder()
+        let command = try Run.parse(["alias", "hello", "--server"])
+        await #expect(throws: RunExecutionTestError.self) {
+            try await command.execute(using: .init(
+                fetch: {
+                    await recorder.recordFetch($0)
+                    return .init("org/resolved")
+                },
+                core: { await recorder.recordCore($0) },
+                server: {
+                    await recorder.recordServer($0)
+                    throw RunExecutionTestError.serverFailed
+                }
+            ))
+        }
+        #expect(await recorder.snapshot() == .init(
+            fetched: [ModelID("alias")],
+            core: [],
+            server: [ModelID("org/resolved")]
+        ))
+    }
+
+    @Test func readinessCancellationReturnsPromptly() async throws {
+        let command = try Run.parse(["org/model", "hello", "--server"])
+        let clock = ContinuousClock()
+        let start = clock.now
+        let task = Task {
+            try await command.waitForServerReady(
+                timeout: .seconds(1),
+                checkInterval: .milliseconds(500),
+                readiness: { false }
+            )
+        }
+
+        try await Task.sleep(for: .milliseconds(20))
+        task.cancel()
+        await #expect(throws: CancellationError.self) {
+            _ = try await task.value
+        }
+        #expect(start.duration(to: clock.now) < .milliseconds(200))
+    }
+
+    @Test func cliDiagnosticSessionEndsCancelled() async throws {
+        let primary = LockedData()
+        let recorder = SwamaDiagnosticRecorder(
+            enabled: true,
+            sessionID: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
+            primaryWrite: { primary.append($0) },
+            fallbackWrite: { _ in },
+            now: { Date(timeIntervalSince1970: 0) }
+        )
+        let previous = SwamaDiagnostics.installRecorderForTesting(recorder)
+        defer { SwamaDiagnostics.restoreRecorderForTesting(previous) }
+
+        await #expect(throws: CancellationError.self) {
+            try await SwamaEngine.withCLIDiagnostics {
+                throw CancellationError()
+            }
+        }
+        recorder.flush()
+
+        let events: [SwamaDiagnosticEvent]
+        switch SwamaDiagnosticTimeline.parse(primary.data) {
+        case let .valid(value):
+            events = value
+        case .degraded,
+             .unknown:
+            throw RunExecutionTestError.invalidDiagnostics
+        }
+        #expect(events.map(\.event) == [.sessionStarted, .sessionStopped])
+        guard case let .string(mode)? = events.first?.data?["mode"] else {
+            Issue.record("CLI diagnostic session is missing its mode")
+            return
+        }
+
+        #expect(mode == "cli")
+        #expect(events.last?.outcome == .cancelled)
+    }
+
     @Test func explicitServerModeMapsSupportedOptionsAndRejectsContextLimit() throws {
         let command = try Run.parse([
             "org/model", "hello", "--server", "--temperature", "0.2", "--top-p", "0.8",
@@ -69,4 +187,60 @@ struct RunCommandTests {
             try unsupported.validateServerOptions()
         }
     }
+}
+
+// MARK: - RunExecutionRecorder
+
+private actor RunExecutionRecorder {
+    func recordFetch(_ model: ModelID) {
+        fetched.append(model)
+    }
+
+    func recordCore(_ model: ModelID) {
+        core.append(model)
+    }
+
+    func recordServer(_ model: ModelID) {
+        server.append(model)
+    }
+
+    func snapshot() -> Snapshot {
+        .init(fetched: fetched, core: core, server: server)
+    }
+
+    private var fetched: [ModelID] = []
+    private var core: [ModelID] = []
+    private var server: [ModelID] = []
+}
+
+// MARK: - Snapshot
+
+private struct Snapshot: Equatable {
+    let fetched: [ModelID]
+    let core: [ModelID]
+    let server: [ModelID]
+}
+
+// MARK: - RunExecutionTestError
+
+private enum RunExecutionTestError: Error {
+    case serverFailed
+    case invalidDiagnostics
+}
+
+// MARK: - LockedData
+
+private final class LockedData: @unchecked Sendable {
+    var data: Data {
+        lock.withLock { storage }
+    }
+
+    func append(_ data: Data) {
+        lock.withLock {
+            storage.append(data)
+        }
+    }
+
+    private let lock: NSLock = .init()
+    private var storage: Data = .init()
 }

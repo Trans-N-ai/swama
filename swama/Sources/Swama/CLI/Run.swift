@@ -121,6 +121,14 @@ enum RunRoute: Equatable {
     case server
 }
 
+// MARK: - RunExecutionOperations
+
+struct RunExecutionOperations {
+    let fetch: (ModelID) async throws -> ModelID
+    let core: (ModelID) async throws -> Void
+    let server: (ModelID) async throws -> Void
+}
+
 // MARK: - Run
 
 struct Run: AsyncParsableCommand {
@@ -186,75 +194,77 @@ struct Run: AsyncParsableCommand {
 
     func run() async throws {
         try await SwamaEngine.withCLIDiagnostics {
-            let route = try executionRoute()
-            if route == .server {
-                try validateServerOptions()
-            }
-
             let engine = SwamaEngine()
-            let resolvedModel = try await engine.fetchResolved(ModelID(modelName))
+            try await execute(using: .init(
+                fetch: { try await engine.fetchResolved($0) },
+                core: { try await runWithCore(engine: engine, model: $0) },
+                server: { try await runWithServer(model: $0) }
+            ))
+        }
+    }
 
-            switch route {
-            case .core:
-                try await runWithCore(engine: engine, model: resolvedModel)
+    func execute(using operations: RunExecutionOperations) async throws {
+        let route = try executionRoute()
+        if route == .server {
+            try validateServerOptions()
+        }
 
-            case .server:
-                if await isServerRunning() == false,
-                   await startServerAndWait() == false
-                {
-                    throw RunError.serverError("local server is unavailable")
-                }
-                try await runViaServer(modelName: resolvedModel.rawValue)
+        let resolvedModel = try await operations.fetch(ModelID(modelName))
+        switch route {
+        case .core:
+            try await operations.core(resolvedModel)
+        case .server:
+            try await operations.server(resolvedModel)
+        }
+    }
+
+    func waitForServerReady(
+        timeout: Duration,
+        checkInterval: Duration,
+        readiness: () async throws -> Bool
+    ) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            try Task.checkCancellation()
+            if try await readiness() {
+                return true
             }
+            try await Task.sleep(for: checkInterval)
+        }
+
+        try Task.checkCancellation()
+        return false
+    }
+
+    private func runWithServer(model: ModelID) async throws {
+        if try await isServerRunning() == false,
+           try await startServerAndWait() == false
+        {
+            throw RunError.serverError("local server is unavailable")
+        }
+        try await runViaServer(modelName: model.rawValue)
+    }
+
+    private func waitForServerReady(
+        timeout: Duration = .seconds(30),
+        checkInterval: Duration = .seconds(1)
+    ) async throws -> Bool {
+        try await waitForServerReady(timeout: timeout, checkInterval: checkInterval) {
+            try await isServerRunning()
         }
     }
 
-    func executionRoute() throws -> RunRoute {
-        guard direct == false || server == false else {
-            throw ValidationError("--direct and --server cannot be used together")
-        }
-
-        return server ? .server : .core
-    }
-
-    func validateServerOptions() throws {
-        guard commonOptions.resolvedContextLimit == nil else {
-            throw ValidationError("--context-limit/--num-ctx is not supported with --server")
-        }
-    }
-
-    func makeCoreRequest(modelName: String) -> GenerationRequest {
-        let images = imagePaths.map { path in
-            ContentPart.imageURL(URL(fileURLWithPath: path))
-        }
-        return GenerationRequest(
-            model: ModelID(modelName),
-            messages: [.init(role: .user, content: [.text(prompt)] + images)],
-            options: .init(
-                maxTokens: maxTokens,
-                temperature: temperature,
-                topP: topP,
-                repetitionPenalty: repetitionPenalty,
-                contextLimit: commonOptions.resolvedContextLimit
-            )
-        )
-    }
-
-    func encodedServerRequest(modelName: String) throws -> Data {
-        try JSONEncoder().encode(makeServerRequest(modelName: modelName))
-    }
-
-    // MARK: - Server Detection and Management
-
-    private func isServerRunning() async -> Bool {
+    private func isServerRunning() async throws -> Bool {
         do {
+            try Task.checkCancellation()
             let url = URL(string: "http://\(serverHost):\(serverPort)/v1/models")!
             var request = URLRequest(url: url)
             request.timeoutInterval = 2.0
 
             let (data, response) = try await URLSession.shared.data(for: request)
+            try Task.checkCancellation()
 
-            // Check both status code and that we got valid JSON response
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200
             else {
@@ -265,19 +275,21 @@ struct Run: AsyncParsableCommand {
             return true
         }
         catch {
+            try Task.checkCancellation()
             return false
         }
     }
 
-    private func startServerAndWait() async -> Bool {
+    private func startServerAndWait() async throws -> Bool {
         let success = launchSwamaApp()
         if !success {
             return false
         }
 
-        // Wait for server to be ready
-        return await waitForServerReady()
+        return try await waitForServerReady()
     }
+
+    // MARK: - Server Detection and Management
 
     private func launchSwamaApp() -> Bool {
         let appPath = "/Applications/Swama.app"
@@ -299,20 +311,6 @@ struct Run: AsyncParsableCommand {
             }
         }
         return true
-    }
-
-    private func waitForServerReady(timeout: TimeInterval = 30) async -> Bool {
-        let startTime = Date()
-        let checkInterval: TimeInterval = 1.0
-
-        while Date().timeIntervalSince(startTime) < timeout {
-            if await isServerRunning() {
-                return true
-            }
-            try? await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
-        }
-
-        return false
     }
 
     // MARK: - Common Processing
@@ -437,6 +435,41 @@ struct Run: AsyncParsableCommand {
                 }
             }
         }
+    }
+
+    func executionRoute() throws -> RunRoute {
+        guard direct == false || server == false else {
+            throw ValidationError("--direct and --server cannot be used together")
+        }
+
+        return server ? .server : .core
+    }
+
+    func validateServerOptions() throws {
+        guard commonOptions.resolvedContextLimit == nil else {
+            throw ValidationError("--context-limit/--num-ctx is not supported with --server")
+        }
+    }
+
+    func makeCoreRequest(modelName: String) -> GenerationRequest {
+        let images = imagePaths.map { path in
+            ContentPart.imageURL(URL(fileURLWithPath: path))
+        }
+        return GenerationRequest(
+            model: ModelID(modelName),
+            messages: [.init(role: .user, content: [.text(prompt)] + images)],
+            options: .init(
+                maxTokens: maxTokens,
+                temperature: temperature,
+                topP: topP,
+                repetitionPenalty: repetitionPenalty,
+                contextLimit: commonOptions.resolvedContextLimit
+            )
+        )
+    }
+
+    func encodedServerRequest(modelName: String) throws -> Data {
+        try JSONEncoder().encode(makeServerRequest(modelName: modelName))
     }
 
     private func sendNonStreamingRequest(_ request: CompletionRequest) async throws {

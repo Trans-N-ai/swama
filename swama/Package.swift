@@ -140,7 +140,7 @@ let package = Package(
         ),
         .testTarget(
             name: "SwamaCLITests",
-            dependencies: ["Swama", "SwamaCore"]
+            dependencies: ["Swama", "SwamaCore", "SwamaRuntime"]
         ),
     ]
 )
