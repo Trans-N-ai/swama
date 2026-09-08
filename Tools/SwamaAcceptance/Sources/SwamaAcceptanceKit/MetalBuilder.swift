@@ -143,7 +143,8 @@ func buildMetallib(
             throw AcceptanceFailure.unknown("metallib link failed: \(linkResult.stderr)")
         }
 
-        let normalizedMetalVersion = toolchain.metalVersion.split(separator: "\n")
+        let normalizedMetalVersion = toolchain.metalVersion
+            .split(separator: "\n")
             .filter { !$0.hasPrefix("InstalledDir:") }
             .joined(separator: "\n")
         return try .init(
