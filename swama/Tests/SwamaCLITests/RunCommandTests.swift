@@ -105,6 +105,29 @@ struct RunCommandTests {
         ))
     }
 
+    @Test func serverCancellationKeepsItsTypeAndNeverFallsBackToCore() async throws {
+        let recorder = RunExecutionRecorder()
+        let command = try Run.parse(["alias", "hello", "--server"])
+        await #expect(throws: CancellationError.self) {
+            try await command.execute(using: .init(
+                fetch: {
+                    await recorder.recordFetch($0)
+                    return .init("org/resolved")
+                },
+                core: { await recorder.recordCore($0) },
+                server: {
+                    await recorder.recordServer($0)
+                    throw CancellationError()
+                }
+            ))
+        }
+        #expect(await recorder.snapshot() == .init(
+            fetched: [ModelID("alias")],
+            core: [],
+            server: [ModelID("org/resolved")]
+        ))
+    }
+
     @Test func readinessCancellationReturnsPromptly() async throws {
         let command = try Run.parse(["org/model", "hello", "--server"])
         let clock = ContinuousClock()
