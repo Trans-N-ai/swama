@@ -214,10 +214,10 @@ func buildProducts(
 
     let testCount = firstCapture(#"Test run with (\d+) tests"#, in: tests.stdout).flatMap(Int.init) ?? -1
 
-    return .init(
+    return try .init(
         swama: swama,
         probe: probe,
-        report: try [
+        report: [
             "duration_ms": releaseBuild.durationMilliseconds
                 + fixtureBuild.durationMilliseconds
                 + testBuild.durationMilliseconds,

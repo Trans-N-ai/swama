@@ -179,8 +179,8 @@ public enum TTSModelResolver {
              "irodori-tts",
              "mlx-community/irodori-tts-600m-v3-voicedesign-8bit":
             return resolution(.irodoriTTS)
-        case "omnivoice",
-             "mlx-community/omnivoice-bf16":
+        case "mlx-community/omnivoice-bf16",
+             "omnivoice":
             return resolution(.omniVoice)
         case "mlx-community/omnivoice":
             return resolution(.omniVoice, repository: requested)

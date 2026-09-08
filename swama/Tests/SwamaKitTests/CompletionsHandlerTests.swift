@@ -502,7 +502,8 @@ final class CompletionsHandlerTests {
             weakSentinel == nil,
             Comment(rawValue: "operation result should be released once the request completes, even though " +
                 "the keep-alive channel stays open -- it is retained today via " +
-                "channel.closeFuture.whenComplete's strong capture of the completed Task")
+                "channel.closeFuture.whenComplete's strong capture of the completed Task"
+            )
         )
 
         // Clean up the testing channel so it doesn't leak past the test. This close happens
@@ -540,6 +541,8 @@ final class CompletionsHandlerTests {
         #expect(weakSentinel == nil)
     }
 }
+
+// MARK: - CancellationFlag
 
 /// Thread-safe boolean box used to coordinate assertions with work happening inside a
 /// separately-scheduled `Task` in the tests above.

@@ -592,27 +592,29 @@ public enum CompletionsHandler {
         let completionTokens = result.completionInfo?.generationTokenCount ?? 0
 
         // Convert MLX ToolCalls to OpenAI format
-        let toolCalls: [ResponseToolCall]? = result.toolCalls.isEmpty ? nil : result.toolCalls.enumerated().compactMap { index, toolCall in
-            let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
-            let argumentsJSON: String =
-                if let jsonData = try? JSONSerialization.data(withJSONObject: argumentsDict),
-                let jsonString = String(data: jsonData, encoding: .utf8) {
-                    jsonString
-                }
-                else {
-                    "{}"
-                }
+        let toolCalls: [ResponseToolCall]? = result.toolCalls.isEmpty ? nil : result.toolCalls
+            .enumerated()
+            .compactMap { index, toolCall in
+                let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
+                let argumentsJSON: String =
+                    if let jsonData = try? JSONSerialization.data(withJSONObject: argumentsDict),
+                    let jsonString = String(data: jsonData, encoding: .utf8) {
+                        jsonString
+                    }
+                    else {
+                        "{}"
+                    }
 
-            return ResponseToolCall(
-                index: index,
-                id: "call_\(UUID().uuidString)",
-                type: "function",
-                function: ResponseFunction(
-                    name: toolCall.function.name,
-                    arguments: argumentsJSON
+                return ResponseToolCall(
+                    index: index,
+                    id: "call_\(UUID().uuidString)",
+                    type: "function",
+                    function: ResponseFunction(
+                        name: toolCall.function.name,
+                        arguments: argumentsJSON
+                    )
                 )
-            )
-        }
+            }
 
         // Construct the message content for the response
         let responseMessageContent = MessageContent.text(result.output)
@@ -878,7 +880,7 @@ public enum CompletionsHandler {
     /// in-flight task without keeping a completed task (and its result) alive for the life of a
     /// keep-alive connection. See `runCancellingOnClose` for why this exists.
     private final class CancellableTaskBox<T: Sendable>: @unchecked Sendable {
-        private let lock = NSLock()
+        private let lock: NSLock = .init()
         private var task: Task<T, Error>?
 
         init(_ task: Task<T, Error>) {

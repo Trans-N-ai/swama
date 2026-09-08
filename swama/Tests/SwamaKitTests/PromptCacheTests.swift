@@ -1166,10 +1166,10 @@ struct PromptCacheEndToEndTests {
         let runner = ModelRunner(container: container, promptCacheStore: store)
         let parameters = GenerateParameters(maxTokens: 40, maxKVSize: 4096, temperature: 0)
 
-        /// Rebuilt at each call site (rather than shared via one `let`) so the non-Sendable
-        /// `[Chat.Message]` value doesn't get flagged as sent into the cancellable Task below
-        /// while still "in use" by the follow-up calls afterward -- each call site owns its own
-        /// independent value.
+        // Rebuilt at each call site (rather than shared via one `let`) so the non-Sendable
+        // `[Chat.Message]` value doesn't get flagged as sent into the cancellable Task below
+        // while still "in use" by the follow-up calls afterward -- each call site owns its own
+        // independent value.
         func buildMessages() -> [MLXLMCommon.Chat.Message] {
             [.system(words([0])), .user(words([1, 2, 3]))]
         }

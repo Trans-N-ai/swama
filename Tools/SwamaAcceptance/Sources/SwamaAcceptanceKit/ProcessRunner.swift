@@ -14,6 +14,8 @@ struct CommandResult: Sendable {
     let timeoutCount: Int
 }
 
+// MARK: - CommandTimeout
+
 private struct CommandTimeout: Error {
     let durationMilliseconds: Double
 }
@@ -108,7 +110,6 @@ private func runCommandAttempt(
     timeout: TimeInterval,
     sampleMemory: Bool
 ) throws -> CommandResult {
-
     let temporary = FileManager.default
         .temporaryDirectory
         .appendingPathComponent("swama-acceptance-command-\(UUID().uuidString)")
