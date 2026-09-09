@@ -198,9 +198,43 @@ swama serve --host 0.0.0.0 --port 28100
 
 #### 🔌 OpenAI Compatible API
 
-Swama provides a fully OpenAI-compatible API endpoint, allowing you to use it with existing tools and integrations:
+Swama serves OpenAI-compatible endpoints (`/v1/models`, `/v1/chat/completions`,
+`/v1/responses`, `/v1/embeddings`, `/v1/audio/transcriptions`,
+`/v1/audio/speech`), allowing you to use it with existing tools and
+integrations. Compatibility is scoped to what a local runtime can honestly
+provide — see the endpoint notes below.
 
 Note: `/v1/audio/speech` is experimental.
+
+##### `/v1/responses` support matrix
+
+`POST /v1/responses` implements an honest, stateless subset of the OpenAI
+Responses API:
+
+- **Supported**: string or message-item `input`, `instructions`, `input_text`
+  and `input_image` parts, custom `function` tools including multi-turn
+  `function_call` / `function_call_output` items, `tool_choice` `"auto"`/`"none"`,
+  basic sampling (`temperature`, `top_p`, `max_output_tokens`), non-streaming
+  `Response` objects, and typed SSE streaming with monotonic `sequence_number`.
+- **Rejected with an explicit 400 (never silently ignored)**: server-side state
+  (`store: true`, `previous_response_id`, `conversation`, `prompt`,
+  `prompt_cache_key`), `background: true`, hosted/built-in and MCP tools,
+  Structured Outputs (`text.format` other than plain text, `response_format`),
+  `truncation: "auto"`, `include`, forced `tool_choice`, `reasoning`,
+  `max_tool_calls`, `parallel_tool_calls: false`, `service_tier`,
+  `text.verbosity`, `tools[].strict: true`, and wrong-typed known fields.
+- Responses are not stored: there is no retrieve/cancel/delete by response id.
+
+```bash
+# Responses API (honest subset)
+curl -X POST http://localhost:28100/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3",
+    "input": "Hello!",
+    "max_output_tokens": 200
+  }'
+```
 
 ```bash
 # Get available models

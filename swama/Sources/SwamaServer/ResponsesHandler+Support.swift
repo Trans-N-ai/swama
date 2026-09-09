@@ -41,6 +41,19 @@ enum RejectionReason: Error, LocalizedError, Equatable {
         default: "invalid_request_error"
         }
     }
+
+    /// Bounded string error code (official `code` is string-or-null).
+    var wireCode: String {
+        switch self {
+        case .malformed: "invalid_value"
+        case .missingModel: "missing_required_parameter"
+        case .emptyInput: "missing_required_parameter"
+        case .unsupportedField: "unsupported_parameter"
+        case .unsupportedToolType: "unsupported_parameter"
+        case .unforceableToolChoice: "unsupported_parameter"
+        case let .core(error): error.code.rawValue
+        }
+    }
 }
 
 // MARK: - Parsing
@@ -49,6 +62,13 @@ extension ResponsesHandler {
     struct ParsedRequest: Sendable {
         var request: GenerationRequest
         var stream: Bool
+        /// Effective tool_choice ("auto" or "none"), echoed into Response objects:
+        /// the official schema requires `tool_choice` and `tools` on every response.
+        var toolChoice: String
+        var maxOutputTokens: Int?
+        var temperature: Float
+        var topP: Float
+        var instructions: String?
     }
 
     /// Fields that carry server-side state or hosted capabilities this runtime does
@@ -92,9 +112,14 @@ extension ResponsesHandler {
             throw RejectionReason.emptyInput
         }
 
-        let options = buildOptions(root)
-        let tools = try buildTools(root)
-        let stream = (root["stream"] as? Bool) ?? false
+        let options = try buildOptions(root)
+        var tools = try buildTools(root)
+        // `tool_choice: "none"` must actually prevent tool use, not merely parse:
+        // the local runtime enforces it by never offering the tools to the model.
+        if (root["tool_choice"] as? String) == "none" {
+            tools = []
+        }
+        let stream = try requireBool(root, "stream") ?? false
 
         return ParsedRequest(
             request: GenerationRequest(
@@ -103,7 +128,12 @@ extension ResponsesHandler {
                 options: options,
                 tools: tools
             ),
-            stream: stream
+            stream: stream,
+            toolChoice: (root["tool_choice"] as? String) ?? "auto",
+            maxOutputTokens: options.maxTokens,
+            temperature: options.temperature,
+            topP: options.topP,
+            instructions: root["instructions"] as? String
         )
     }
 
@@ -112,26 +142,65 @@ extension ResponsesHandler {
         for field in unsupportedStatefulFields where root[field] != nil {
             throw RejectionReason.unsupportedField(field)
         }
-        if let store = root["store"] as? Bool, store {
+        if let store = try requireBool(root, "store"), store {
             throw RejectionReason.unsupportedField("store:true")
         }
-        if let background = root["background"] as? Bool, background {
+        if let background = try requireBool(root, "background"), background {
             throw RejectionReason.unsupportedField("background:true")
         }
-        // Structured output.
-        if root["text"] is [String: Any], (root["text"] as? [String: Any])?["format"] != nil {
-            throw RejectionReason.unsupportedField("text.format")
+        // Unimplemented meaningful request fields: accepting them would silently
+        // change what the caller asked for.
+        for field in ["reasoning", "max_tool_calls", "service_tier"] where root[field] != nil {
+            throw RejectionReason.unsupportedField(field)
+        }
+        if let parallel = try requireBool(root, "parallel_tool_calls"), !parallel {
+            throw RejectionReason.unsupportedField("parallel_tool_calls:false")
+        }
+        // Structured output. Plain `text.format.type == "text"` is the default
+        // behaviour, not Structured Outputs, and must remain accepted.
+        if let text = root["text"] {
+            guard let object = text as? [String: Any] else {
+                throw RejectionReason.malformed("`text` must be a JSON object")
+            }
+
+            if object["verbosity"] != nil {
+                throw RejectionReason.unsupportedField("text.verbosity")
+            }
+            if let format = object["format"] {
+                guard let formatObject = format as? [String: Any] else {
+                    throw RejectionReason.malformed("`text.format` must be a JSON object")
+                }
+
+                if (formatObject["type"] as? String) != "text" {
+                    throw RejectionReason.unsupportedField("text.format")
+                }
+            }
         }
         if root["response_format"] != nil {
             throw RejectionReason.unsupportedField("response_format")
         }
         // Auto truncation cannot be honoured without server-side context management.
-        if let truncation = root["truncation"] as? String, truncation == "auto" {
-            throw RejectionReason.unsupportedField("truncation:auto")
+        if let truncation = root["truncation"] {
+            guard let mode = truncation as? String else {
+                throw RejectionReason.malformed("`truncation` must be a JSON string")
+            }
+
+            if mode == "auto" {
+                throw RejectionReason.unsupportedField("truncation:auto")
+            }
         }
         // include[] pulls hosted-only artifacts (logprobs, file search results, ...).
-        if let include = root["include"] as? [Any], !include.isEmpty {
-            throw RejectionReason.unsupportedField("include")
+        if let include = root["include"] {
+            guard let items = include as? [Any] else {
+                throw RejectionReason.malformed("`include` must be a JSON array")
+            }
+
+            if !items.isEmpty {
+                throw RejectionReason.unsupportedField("include")
+            }
+        }
+        if let instructions = root["instructions"], !(instructions is String) {
+            throw RejectionReason.malformed("`instructions` must be a JSON string")
         }
         // tool_choice: only "auto"/"none" (and the default) are honourable locally.
         if let choice = root["tool_choice"] {
@@ -187,9 +256,10 @@ extension ResponsesHandler {
             switch type {
             case "message":
                 try messages.append(buildMessageItem(object))
-            case "function_call",
-                 "function_call_output":
-                throw RejectionReason.unsupportedField("input item type `\(type)`")
+            case "function_call":
+                try messages.append(buildFunctionCallItem(object))
+            case "function_call_output":
+                try messages.append(buildFunctionCallOutputItem(object))
             default:
                 throw RejectionReason.unsupportedField("input item type `\(type)`")
             }
@@ -243,6 +313,52 @@ extension ResponsesHandler {
         return Message(role: role, content: content)
     }
 
+    /// A prior model turn's tool call, replayed by the client as conversation
+    /// context for the follow-up turn of the local tool loop.
+    private static func buildFunctionCallItem(_ object: [String: Any]) throws -> Message {
+        guard let callID = object["call_id"] as? String, !callID.isEmpty,
+              let name = object["name"] as? String, !name.isEmpty
+        else {
+            throw RejectionReason.malformed("function_call item requires `call_id` and `name`")
+        }
+
+        let arguments: [String: JSONValue]
+        switch object["arguments"] {
+        case nil:
+            arguments = [:]
+
+        case let text as String where text.isEmpty:
+            arguments = [:]
+
+        case let text as String:
+            guard let parsed = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+                throw RejectionReason.malformed("function_call `arguments` must be a JSON object string")
+            }
+
+            arguments = parsed.mapValues(jsonValue)
+
+        default:
+            throw RejectionReason.malformed("function_call `arguments` must be a JSON object string")
+        }
+        return Message(
+            role: .assistant,
+            content: [],
+            toolCalls: [ToolCall(id: callID, name: name, arguments: arguments)]
+        )
+    }
+
+    /// The client-executed tool result for a prior `function_call`.
+    private static func buildFunctionCallOutputItem(_ object: [String: Any]) throws -> Message {
+        guard let callID = object["call_id"] as? String, !callID.isEmpty else {
+            throw RejectionReason.malformed("function_call_output item requires `call_id`")
+        }
+        guard let output = object["output"] as? String else {
+            throw RejectionReason.malformed("function_call_output item requires a string `output`")
+        }
+
+        return Message(role: .tool, content: [.text(output)], toolCallID: callID)
+    }
+
     private static func mapRole(_ raw: String?) throws -> Message.Role {
         switch raw ?? "user" {
         case "user": .user
@@ -254,22 +370,65 @@ extension ResponsesHandler {
         }
     }
 
+    // MARK: Strict field typing
+
+    // JSONSerialization coerces aggressively (bools are NSNumbers, "1.5" stays a
+    // string, ...). A known field of the wrong JSON type must be a 400, never a
+    // silent default or truncation — that would change request meaning.
+
+    private static func requireBool(_ root: [String: Any], _ key: String) throws -> Bool? {
+        guard let value = root[key] else {
+            return nil
+        }
+        guard let number = value as? NSNumber, CFGetTypeID(number as CFTypeRef) == CFBooleanGetTypeID() else {
+            throw RejectionReason.malformed("`\(key)` must be a JSON boolean")
+        }
+
+        return number.boolValue
+    }
+
+    private static func requireNumber(_ root: [String: Any], _ key: String) throws -> Float? {
+        guard let value = root[key] else {
+            return nil
+        }
+        guard let number = value as? NSNumber, CFGetTypeID(number as CFTypeRef) != CFBooleanGetTypeID() else {
+            throw RejectionReason.malformed("`\(key)` must be a JSON number")
+        }
+
+        return number.floatValue
+    }
+
+    private static func requireInt(_ root: [String: Any], _ key: String) throws -> Int? {
+        guard let value = root[key] else {
+            return nil
+        }
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number as CFTypeRef) != CFBooleanGetTypeID(),
+              number.doubleValue == number.doubleValue.rounded()
+        else {
+            throw RejectionReason.malformed("`\(key)` must be a JSON integer")
+        }
+
+        return number.intValue
+    }
+
     // MARK: sampling -> GenerationOptions
 
-    private static func buildOptions(_ root: [String: Any]) -> GenerationOptions {
-        func float(_ key: String) -> Float? { (root[key] as? NSNumber)?.floatValue }
-        func int(_ key: String) -> Int? { (root[key] as? NSNumber)?.intValue }
-        return GenerationOptions(
-            maxTokens: int("max_output_tokens"),
-            temperature: float("temperature") ?? 0.6,
-            topP: float("top_p") ?? 1
+    private static func buildOptions(_ root: [String: Any]) throws -> GenerationOptions {
+        try GenerationOptions(
+            maxTokens: requireInt(root, "max_output_tokens"),
+            temperature: requireNumber(root, "temperature") ?? 0.6,
+            topP: requireNumber(root, "top_p") ?? 1
         )
     }
 
     // MARK: tools -> [ToolDefinition]
 
     private static func buildTools(_ root: [String: Any]) throws -> [ToolDefinition] {
-        guard let rawTools = root["tools"] as? [Any] else { return [] }
+        guard let value = root["tools"] else { return [] }
+        guard let rawTools = value as? [Any] else {
+            throw RejectionReason.malformed("`tools` must be a JSON array")
+        }
 
         var tools: [ToolDefinition] = []
         for raw in rawTools {
@@ -283,6 +442,12 @@ extension ResponsesHandler {
             }
             guard let name = object["name"] as? String, !name.isEmpty else {
                 throw RejectionReason.malformed("function tool requires a name")
+            }
+
+            // The local runtime does not enforce strict JSON-schema adherence,
+            // so accepting `strict: true` would promise validation it can't do.
+            if let strict = try requireBool(object, "strict"), strict {
+                throw RejectionReason.unsupportedField("tools[].strict:true")
             }
 
             let description = object["description"] as? String

@@ -198,7 +198,7 @@ swama serve --host 0.0.0.0 --port 28100
 
 #### 🔌 OpenAI互換API
 
-SwamaはOpenAI完全互換のAPIエンドポイントを提供し、既存のツールや統合と一緒に使用できます：
+SwamaはOpenAI互換のAPIエンドポイント（`/v1/responses` の対応範囲は英語READMEのサポートマトリクスを参照）を提供し、既存のツールや統合と一緒に使用できます：
 
 注：`/v1/audio/speech` は experimental です。
 

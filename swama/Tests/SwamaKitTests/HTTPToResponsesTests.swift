@@ -86,6 +86,100 @@ struct HTTPToResponsesTests {
         }
     }
 
+    @Test func functionCallRoundTripItemsMapToCoreToolMessages() throws {
+        let parsed = try ResponsesHandler.parse(bytes(#"""
+        {"model":"m","input":[
+           {"type":"message","role":"user","content":"look it up"},
+           {"type":"function_call","call_id":"call-9","name":"lookup",
+            "arguments":"{\"k\":\"v\",\"n\":3}"},
+           {"type":"function_call_output","call_id":"call-9","output":"{\"answer\":42}"}]}
+        """#))
+        #expect(parsed.request.messages.count == 3)
+        let callTurn = parsed.request.messages[1]
+        #expect(callTurn.role == .assistant)
+        #expect(callTurn.toolCalls == [
+            ToolCall(id: "call-9", name: "lookup", arguments: ["k": .string("v"), "n": .int(3)]),
+        ])
+        let resultTurn = parsed.request.messages[2]
+        #expect(resultTurn.role == .tool)
+        #expect(resultTurn.toolCallID == "call-9")
+        #expect(resultTurn.content == [.text(#"{"answer":42}"#)])
+        // Malformed round-trip items stay hard 400s.
+        #expect(throws: RejectionReason.self) {
+            _ = try ResponsesHandler.parse(bytes(#"""
+            {"model":"m","input":[{"type":"function_call","name":"lookup"}]}
+            """#))
+        }
+        #expect(throws: RejectionReason.self) {
+            _ = try ResponsesHandler.parse(bytes(#"""
+            {"model":"m","input":[{"type":"function_call_output","call_id":"c"}]}
+            """#))
+        }
+    }
+
+    @Test func toolChoiceNoneActuallyWithholdsToolsFromTheCore() async throws {
+        let backend = ResponsesStubBackend(response: .init(
+            output: "plain answer", toolCalls: [],
+            usage: .init(promptTokens: 1, completionTokens: 1), finishReason: .completed
+        ))
+        _ = try await run(backend: backend, body: #"""
+        {"model":"m","input":"hi","tool_choice":"none",
+         "tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}
+        """#)
+        let requests = await backend.requests
+        #expect(requests.count == 1)
+        #expect(requests[0].tools.isEmpty)
+    }
+
+    @Test func knownFieldsOfTheWrongTypeAreRejectedNotCoerced() {
+        let rejected: [String] = [
+            #"{"model":"m","input":"x","stream":"true"}"#,
+            #"{"model":"m","input":"x","max_output_tokens":1.5}"#,
+            #"{"model":"m","input":"x","max_output_tokens":true}"#,
+            #"{"model":"m","input":"x","temperature":"hot"}"#,
+            #"{"model":"m","input":"x","top_p":false}"#,
+            #"{"model":"m","input":"x","tools":{"type":"function"}}"#,
+            #"{"model":"m","input":"x","store":"false"}"#,
+            #"{"model":"m","input":"x","background":"no"}"#,
+            #"{"model":"m","input":"x","instructions":42}"#,
+            #"{"model":"m","input":"x","truncation":true}"#,
+            #"{"model":"m","input":"x","include":"logprobs"}"#,
+        ]
+        for payload in rejected {
+            #expect(throws: RejectionReason.self, "must reject wrong type: \(payload)") {
+                _ = try ResponsesHandler.parse(bytes(payload))
+            }
+        }
+    }
+
+    @Test func unimplementedMeaningfulFieldsAreRejectedAndPlainTextFormatIsNot() {
+        let rejected: [String] = [
+            #"{"model":"m","input":"x","reasoning":{"effort":"low"}}"#,
+            #"{"model":"m","input":"x","max_tool_calls":2}"#,
+            #"{"model":"m","input":"x","parallel_tool_calls":false}"#,
+            #"{"model":"m","input":"x","service_tier":"flex"}"#,
+            #"{"model":"m","input":"x","text":{"verbosity":"low"}}"#,
+            #"{"model":"m","input":"x","text":{"format":{"type":"json_object"}}}"#,
+            #"{"model":"m","input":"x","tools":[{"type":"function","name":"f","strict":true,"parameters":{}}]}"#,
+        ]
+        for payload in rejected {
+            #expect(throws: RejectionReason.self, "must reject: \(payload)") {
+                _ = try ResponsesHandler.parse(bytes(payload))
+            }
+        }
+        // Plain text format is the default behaviour, not Structured Outputs.
+        #expect(throws: Never.self) {
+            _ = try ResponsesHandler.parse(bytes(#"""
+            {"model":"m","input":"x","text":{"format":{"type":"text"}}}
+            """#))
+        }
+        #expect(throws: Never.self) {
+            _ = try ResponsesHandler.parse(bytes(#"""
+            {"model":"m","input":"x","tools":[{"type":"function","name":"f","strict":false,"parameters":{}}]}
+            """#))
+        }
+    }
+
     // MARK: Non-streaming response object
 
     @Test func nonStreamingBuildsResponseObjectFromInjectedCore() async throws {
@@ -143,6 +237,148 @@ struct HTTPToResponsesTests {
         #expect(types.contains("response.output_text.delta"))
         #expect(types.contains("response.output_text.done"))
         #expect(types.last == "response.completed")
+        // Terminal response reuses the streamed item id at the streamed index.
+        let streamedID = try #require(
+            events.first { $0["type"] as? String == "response.output_text.delta" }?["item_id"] as? String
+        )
+        let terminal = try #require(events.last { $0["type"] as? String == "response.completed" })
+        let response = try #require(terminal["response"] as? [String: Any])
+        let output = try #require(response["output"] as? [[String: Any]])
+        #expect(output.count == 1)
+        #expect(output[0]["id"] as? String == streamedID)
+        let addedIndex = try #require(
+            events.first { $0["type"] as? String == "response.output_item.added" }?["output_index"] as? Int
+        )
+        #expect(addedIndex == 0)
+    }
+
+    @Test func functionOnlyStreamStartsAtIndexZeroAndClosesWithSameIdentity() async throws {
+        let call = ToolCall(id: "call-1", name: "lookup", arguments: ["k": .string("v")])
+        let backend = ResponsesStubBackend(
+            response: .init(
+                output: "", toolCalls: [call],
+                usage: .init(promptTokens: 2, completionTokens: 2), finishReason: .toolCall
+            ),
+            events: [.toolCall(call)]
+        )
+        let events = try await runStream(backend: backend, body: #"""
+        {"model":"m","input":"hi","stream":true,
+         "tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}
+        """#)
+        let added = try #require(events.first { $0["type"] as? String == "response.output_item.added" })
+        // No text item precedes it: the function item owns output_index 0.
+        #expect(added["output_index"] as? Int == 0)
+        let streamedID = try #require((added["item"] as? [String: Any])?["id"] as? String)
+        for event in events where event["type"] as? String == "response.function_call_arguments.done" {
+            #expect(event["item_id"] as? String == streamedID)
+            #expect(event["output_index"] as? Int == 0)
+        }
+        let terminal = try #require(events.last { $0["type"] as? String == "response.completed" })
+        let output = try #require((terminal["response"] as? [String: Any])?["output"] as? [[String: Any]])
+        #expect(output.count == 1)
+        #expect(output[0]["id"] as? String == streamedID)
+        #expect(output[0]["type"] as? String == "function_call")
+        #expect(output[0]["call_id"] as? String == "call-1")
+    }
+
+    @Test func responseObjectCarriesRequiredSchemaFieldsAndUsageDetails() async throws {
+        let backend = ResponsesStubBackend(response: .init(
+            output: "hi", toolCalls: [],
+            usage: .init(promptTokens: 3, completionTokens: 4), finishReason: .completed
+        ))
+        let json = try await run(backend: backend, body: #"""
+        {"model":"m","input":"x","tool_choice":"auto",
+         "tools":[{"type":"function","name":"f","parameters":{"type":"object"}}]}
+        """#)
+        #expect(json.body["tool_choice"] as? String == "auto")
+        let tools = try #require(json.body["tools"] as? [[String: Any]])
+        #expect(tools.count == 1)
+        #expect(tools[0]["name"] as? String == "f")
+        let usage = try #require(json.body["usage"] as? [String: Any])
+        #expect((usage["input_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int == 0)
+        #expect((usage["output_tokens_details"] as? [String: Any])?["reasoning_tokens"] as? Int == 0)
+        #expect(json.body["error"] is NSNull)
+    }
+
+    @Test func errorEnvelopeUsesStringCode() async throws {
+        let backend = ResponsesStubBackend(response: .init(
+            output: "", toolCalls: [],
+            usage: .init(promptTokens: 0, completionTokens: 0), finishReason: .completed
+        ))
+        let json = try await run(backend: backend, body: #"{"model":"m","input":"x","store":true}"#)
+        #expect(json.status == .badRequest)
+        let error = try #require(json.body["error"] as? [String: Any])
+        #expect(error["code"] is String)
+        #expect(error["type"] as? String == "invalid_request_error")
+    }
+
+    @Test func streamCarriesLogprobsAndEndsWithTypedTerminalNotDone() async throws {
+        let backend = ResponsesStubBackend(
+            response: .init(
+                output: "hello", toolCalls: [],
+                usage: .init(promptTokens: 1, completionTokens: 1), finishReason: .completed
+            ),
+            events: [.textDelta("hello")]
+        )
+        let (_, raw) = try await drive(backend: backend, body: #"{"model":"m","input":"x","stream":true}"#)
+        #expect(!raw.contains("data: [DONE]"))
+        let events = parseSSE(raw)
+        let delta = try #require(events.first { $0["type"] as? String == "response.output_text.delta" })
+        #expect(delta["logprobs"] as? [Any] != nil)
+        let done = try #require(events.first { $0["type"] as? String == "response.output_text.done" })
+        #expect(done["logprobs"] as? [Any] != nil)
+        #expect(events.last?["type"] as? String == "response.completed")
+    }
+
+    @Test func lengthStreamMarksItemAndResponseIncomplete() async throws {
+        let backend = ResponsesStubBackend(
+            response: .init(
+                output: "partial", toolCalls: [],
+                usage: .init(promptTokens: 1, completionTokens: 1), finishReason: .length
+            ),
+            events: [.textDelta("partial")]
+        )
+        let events = try await runStream(backend: backend, body: #"{"model":"m","input":"x","stream":true}"#)
+        #expect(events.last?["type"] as? String == "response.incomplete")
+        let itemDone = try #require(events.last { $0["type"] as? String == "response.output_item.done" })
+        #expect((itemDone["item"] as? [String: Any])?["status"] as? String == "incomplete")
+        let terminal = try #require(events.last?["response"] as? [String: Any])
+        let output = try #require(terminal["output"] as? [[String: Any]])
+        #expect(output.first?["status"] as? String == "incomplete")
+    }
+
+    @Test func finalTextWithoutDeltasSynthesizesLifecycleAndFinalTextIsAuthoritative() async throws {
+        // No deltas at all: the lifecycle must still be emitted.
+        let silent = ResponsesStubBackend(
+            response: .init(
+                output: "final only", toolCalls: [],
+                usage: .init(promptTokens: 1, completionTokens: 1), finishReason: .completed
+            ),
+            events: []
+        )
+        let quietEvents = try await runStream(backend: silent, body: #"{"model":"m","input":"x","stream":true}"#)
+        let quietTypes = quietEvents.compactMap { $0["type"] as? String }
+        #expect(quietTypes.contains("response.output_item.added"))
+        #expect(quietTypes.contains("response.content_part.added"))
+        #expect(quietTypes.contains("response.output_text.done"))
+        let quietDone = try #require(quietEvents.first { $0["type"] as? String == "response.output_text.done" })
+        #expect(quietDone["text"] as? String == "final only")
+
+        // Deltas diverge from the final output: Core's final output wins everywhere.
+        let divergent = ResponsesStubBackend(
+            response: .init(
+                output: "hello world", toolCalls: [],
+                usage: .init(promptTokens: 1, completionTokens: 1), finishReason: .completed
+            ),
+            events: [.textDelta("hel")]
+        )
+        let events = try await runStream(backend: divergent, body: #"{"model":"m","input":"x","stream":true}"#)
+        let done = try #require(events.first { $0["type"] as? String == "response.output_text.done" })
+        #expect(done["text"] as? String == "hello world")
+        let terminal = try #require(events.last?["response"] as? [String: Any])
+        let output = try #require(terminal["output"] as? [[String: Any]])
+        let content = try #require(output.first?["content"] as? [[String: Any]])
+        #expect(content.first?["text"] as? String == "hello world")
     }
 
     // MARK: - Harness
@@ -160,6 +396,10 @@ struct HTTPToResponsesTests {
 
     private func runStream(backend: ResponsesStubBackend, body: String) async throws -> [[String: Any]] {
         let (_, raw) = try await drive(backend: backend, body: body)
+        return parseSSE(raw)
+    }
+
+    private func parseSSE(_ raw: String) -> [[String: Any]] {
         var events: [[String: Any]] = []
         for line in raw.split(separator: "\n") {
             guard line.hasPrefix("data: ") else { continue }

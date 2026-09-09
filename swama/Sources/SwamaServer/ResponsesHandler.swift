@@ -94,6 +94,7 @@ public enum ResponsesHandler {
             id: responseID,
             createdAt: createdAt,
             model: parsed.request.model.rawValue,
+            parsed: parsed,
             result: result
         )
         try await writeJSON(channel: channel, status: .ok, payload: object)
@@ -115,97 +116,125 @@ public enum ResponsesHandler {
 
         // response.created + response.in_progress
         try await emit(channel, sequence, "response.created", [
-            "response": inProgressResponse(id: responseID, createdAt: createdAt, model: model)
+            "response": inProgressResponse(id: responseID, createdAt: createdAt, model: model, parsed: parsed)
         ])
         try await emit(channel, sequence, "response.in_progress", [
-            "response": inProgressResponse(id: responseID, createdAt: createdAt, model: model)
+            "response": inProgressResponse(id: responseID, createdAt: createdAt, model: model, parsed: parsed)
         ])
 
-        let messageItemID = Self.newItemID(prefix: "msg")
-        let outputIndex = 0
         let contentIndex = 0
-        let assembledText = TextAccumulator()
-        let toolItems = ToolCallItemState()
+        let outputs = OutputAssembler()
 
         do {
             let result = try await CompletionsHandler.runCancellingOnClose(channel: channel) {
                 try await engine.generate(parsed.request) { event in
                     switch event {
                     case let .textDelta(chunk):
-                        if await assembledText.isEmpty {
+                        let (slot, isFirst) = await outputs.startTextIfNeeded()
+                        if isFirst {
                             try await emit(channel, sequence, "response.output_item.added", [
-                                "output_index": outputIndex,
-                                "item": messageItemStub(id: messageItemID),
+                                "output_index": slot.index,
+                                "item": messageItemStub(id: slot.id),
                             ])
                             try await emit(channel, sequence, "response.content_part.added", [
-                                "item_id": messageItemID,
-                                "output_index": outputIndex,
+                                "item_id": slot.id,
+                                "output_index": slot.index,
                                 "content_index": contentIndex,
                                 "part": ["type": "output_text", "text": "", "annotations": []],
                             ])
                         }
-                        await assembledText.append(chunk)
+                        await outputs.appendText(chunk)
                         try await emit(channel, sequence, "response.output_text.delta", [
-                            "item_id": messageItemID,
-                            "output_index": outputIndex,
+                            "item_id": slot.id,
+                            "output_index": slot.index,
                             "content_index": contentIndex,
+                            "logprobs": [Any](),
                             "delta": chunk,
                         ])
 
                     case let .toolCall(toolCall):
-                        let itemID = await toolItems.add(toolCall)
-                        let index = await toolItems.outputIndex(after: outputIndex)
+                        let slot = await outputs.addFunctionCall(toolCall)
                         try await emit(channel, sequence, "response.output_item.added", [
-                            "output_index": index,
-                            "item": functionCallStub(id: itemID, toolCall: toolCall),
+                            "output_index": slot.index,
+                            "item": functionCallStub(id: slot.id, toolCall: toolCall),
                         ])
                         let arguments = Self.encodedArguments(toolCall.arguments)
                         try await emit(channel, sequence, "response.function_call_arguments.delta", [
-                            "item_id": itemID,
-                            "output_index": index,
+                            "item_id": slot.id,
+                            "output_index": slot.index,
                             "delta": arguments,
                         ])
                         try await emit(channel, sequence, "response.function_call_arguments.done", [
-                            "item_id": itemID,
-                            "output_index": index,
+                            "item_id": slot.id,
+                            "output_index": slot.index,
                             "arguments": arguments,
                         ])
                         try await emit(channel, sequence, "response.output_item.done", [
-                            "output_index": index,
-                            "item": functionCallItem(id: itemID, toolCall: toolCall, status: "completed"),
+                            "output_index": slot.index,
+                            "item": functionCallItem(id: slot.id, toolCall: toolCall, status: "completed"),
                         ])
                     }
                 }
             }
 
-            // Close out the assistant message item, if any text was produced.
-            let finalText = await assembledText.value
-            if await assembledText.started {
+            let terminalStatus = (result.finishReason == .length) ? "incomplete" : "completed"
+            // Close out the assistant message item with the same item id and
+            // output_index the deltas carried. Core's final output is
+            // authoritative over accumulated deltas; when Core produced final
+            // text without any delta, the item lifecycle is synthesized here so
+            // every terminal output item was announced as an event. A truncated
+            // (`length`) response marks its message item incomplete, matching
+            // the response status.
+            let textStarted = await outputs.textSlotIfStarted != nil
+            if !result.output.isEmpty || textStarted {
+                let (slot, isFirst) = await outputs.startTextIfNeeded()
+                if isFirst {
+                    try await emit(channel, sequence, "response.output_item.added", [
+                        "output_index": slot.index,
+                        "item": messageItemStub(id: slot.id),
+                    ])
+                    try await emit(channel, sequence, "response.content_part.added", [
+                        "item_id": slot.id,
+                        "output_index": slot.index,
+                        "content_index": contentIndex,
+                        "part": ["type": "output_text", "text": "", "annotations": []],
+                    ])
+                }
+                if !result.output.isEmpty {
+                    await outputs.setFinalText(result.output)
+                }
+                let finalText = await outputs.assembledText
+                let itemStatus = terminalStatus == "incomplete" ? "incomplete" : "completed"
                 try await emit(channel, sequence, "response.output_text.done", [
-                    "item_id": messageItemID,
-                    "output_index": outputIndex,
+                    "item_id": slot.id,
+                    "output_index": slot.index,
                     "content_index": contentIndex,
+                    "logprobs": [Any](),
                     "text": finalText,
                 ])
                 try await emit(channel, sequence, "response.content_part.done", [
-                    "item_id": messageItemID,
-                    "output_index": outputIndex,
+                    "item_id": slot.id,
+                    "output_index": slot.index,
                     "content_index": contentIndex,
                     "part": ["type": "output_text", "text": finalText, "annotations": []],
                 ])
                 try await emit(channel, sequence, "response.output_item.done", [
-                    "output_index": outputIndex,
-                    "item": messageItem(id: messageItemID, text: finalText, status: "completed"),
+                    "output_index": slot.index,
+                    "item": messageItem(id: slot.id, text: finalText, status: itemStatus),
                 ])
             }
-
-            let terminalStatus = (result.finishReason == .length) ? "incomplete" : "completed"
-            let object = responseObject(
+            let object = await responseObject(
                 id: responseID,
                 createdAt: createdAt,
                 model: model,
+                parsed: parsed,
                 result: result,
-                status: terminalStatus
+                status: terminalStatus,
+                streamedOutput: streamedOutput(
+                    records: outputs.records,
+                    text: outputs.assembledText,
+                    textStatus: terminalStatus == "incomplete" ? "incomplete" : "completed"
+                )
             )
             let terminalEvent = terminalStatus == "incomplete" ? "response.incomplete" : "response.completed"
             try await emit(channel, sequence, terminalEvent, ["response": object])
@@ -220,6 +249,7 @@ public enum ResponsesHandler {
                     id: responseID,
                     createdAt: createdAt,
                     model: model,
+                    parsed: parsed,
                     message: error.localizedDescription
                 ),
             ])

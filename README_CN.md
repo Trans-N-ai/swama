@@ -198,7 +198,7 @@ swama serve --host 0.0.0.0 --port 28100
 
 #### 🔌 OpenAI 兼容 API
 
-Swama 提供完全兼容 OpenAI 的 API 端点，允许您将其与现有工具和集成一起使用：
+Swama 提供 OpenAI 兼容的 API 端点（含 `/v1/responses` 的诚实子集，详见英文 README 的支持矩阵），允许您将其与现有工具和集成一起使用：
 
 注意：`/v1/audio/speech` 为 experimental。
 
