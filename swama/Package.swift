@@ -50,7 +50,10 @@ let package = Package(
             dependencies: [
                 .target(name: "SwamaRuntime"),
             ],
-            path: "Sources/SwamaCore"
+            path: "Sources/SwamaCore",
+            resources: [
+                .copy("Resources/mlx-swift_Cmlx.bundle")
+            ]
         ),
         // Transitional package-only no-Audio runtime. SwamaKit remains byte-stable through v2;
         // this derived implementation is lineage-gated and is removed with the v3 migration.

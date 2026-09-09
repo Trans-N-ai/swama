@@ -55,7 +55,7 @@
 		894B2BA72DD33F690081F47B /* SwamaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SwamaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		894B2BB12DD33F690081F47B /* SwamaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SwamaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		894B2BC82DD3428A0081F47B /* swama-bin */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = "swama-bin"; path = "../../swama/.build/arm64-apple-macosx/release/swama-bin"; sourceTree = "<group>"; };
-		8983B0312DD733BF00840502 /* mlx-swift_Cmlx.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "mlx-swift_Cmlx.bundle"; sourceTree = "<group>"; };
+		8983B0312DD733BF00840502 /* mlx-swift_Cmlx.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "../../swama/Sources/SwamaCore/Resources/mlx-swift_Cmlx.bundle"; sourceTree = "<group>"; };
 		8983B0332DD733C600840502 /* swift-transformers_Hub.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "swift-transformers_Hub.bundle"; sourceTree = "<group>"; };
 		8983B0352DD733CB00840502 /* swift-nio_NIOPosix.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "swift-nio_NIOPosix.bundle"; sourceTree = "<group>"; };
 		89E5EE6D2F04DD3B0093AB6A /* mlx-audio_MLXAudio.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "mlx-audio_MLXAudio.bundle"; sourceTree = "<group>"; };

@@ -446,6 +446,94 @@ struct AcceptanceTests {
         }
     }
 
+    @Test func swiftPMCoreDeliversThePinnedMetallibWithoutManualColocation() throws {
+        let packageRoot = repositoryRoot.appendingPathComponent("swama")
+        let packageSource = try String(
+            contentsOf: packageRoot.appendingPathComponent("Package.swift"),
+            encoding: .utf8
+        )
+        #expect(packageSource.contains(#".copy("Resources/mlx-swift_Cmlx.bundle")"#))
+
+        let engineSource = try String(
+            contentsOf: packageRoot.appendingPathComponent("Sources/SwamaCore/SwamaEngine.swift"),
+            encoding: .utf8
+        )
+        #expect(engineSource.components(separatedBy: "_ = Self.resourceBundle").count - 1 == 2)
+
+        let packagedMetal = packageRoot
+            .appendingPathComponent("Sources/SwamaCore/Resources/mlx-swift_Cmlx.bundle")
+            .appendingPathComponent("Contents/Resources/default.metallib")
+        #expect(try sha256File(packagedMetal) == "f70a09e94e0c6b29089ece9e4a9a1e58fc5f27dc45a72cad7e4387f1966d271d")
+
+        let resolvedData = try Data(contentsOf: packageRoot.appendingPathComponent("Package.resolved"))
+        let resolved = try #require(JSONSerialization.jsonObject(with: resolvedData) as? [String: Any])
+        let pins = try #require(resolved["pins"] as? [[String: Any]])
+        let mlxSwift = try #require(pins.first { $0["identity"] as? String == "mlx-swift" })
+        let mlxSwiftState = try #require(mlxSwift["state"] as? [String: Any])
+        #expect(mlxSwiftState["revision"] as? String == "0bb916c67f4b9e5c682cbe02a42c701c93ab5021")
+
+        let appProject = try String(
+            contentsOf: repositoryRoot
+                .appendingPathComponent("swama-macos/Swama/Swama.xcodeproj/project.pbxproj"),
+            encoding: .utf8
+        )
+        #expect(appProject.contains("../../swama/Sources/SwamaCore/Resources/mlx-swift_Cmlx.bundle"))
+        #expect(!FileManager.default.fileExists(
+            atPath: repositoryRoot
+                .appendingPathComponent("swama-macos/Swama/mlx-swift_Cmlx.bundle")
+                .path
+        ))
+    }
+
+    @Test func bundledMetallibVerificationRejectsManualOrMismatchedArtifacts() throws {
+        let temporary = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("swama-bundled-metal-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+
+        let binaryDirectory = temporary.appendingPathComponent("bin")
+        let binary = binaryDirectory.appendingPathComponent("Consumer")
+        let packaged = temporary.appendingPathComponent("packaged.metallib")
+        let built = temporary.appendingPathComponent("built.metallib")
+        let delivered = binaryDirectory
+            .appendingPathComponent("swama_SwamaCore.bundle/mlx-swift_Cmlx.bundle")
+            .appendingPathComponent("Contents/Resources/default.metallib")
+        try FileManager.default.createDirectory(
+            at: delivered.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        for file in [binary, packaged, built, delivered] {
+            try Data("matching-metal".utf8).write(to: file)
+        }
+
+        let report = try verifyBundledMetallib(
+            nextTo: binary,
+            packagedMetal: packaged,
+            freshlyBuiltMetal: built
+        )
+        #expect(try report.string("delivery") == "swiftpm-resource")
+        #expect(try report.string("manual_colocation") == "false")
+
+        try Data("corrupt".utf8).write(to: delivered)
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try verifyBundledMetallib(
+                nextTo: binary,
+                packagedMetal: packaged,
+                freshlyBuiltMetal: built
+            )
+        }
+
+        try Data("matching-metal".utf8).write(to: delivered)
+        try Data("manual".utf8).write(to: binaryDirectory.appendingPathComponent("mlx.metallib"))
+        #expect(throws: AcceptanceFailure.self) {
+            _ = try verifyBundledMetallib(
+                nextTo: binary,
+                packagedMetal: packaged,
+                freshlyBuiltMetal: built
+            )
+        }
+    }
+
     @Test func compilerPublicAPIGateRejectsUpstreamTypesAndConformances() throws {
         let graph: JSONObject = [
             "module": ["name": "SwamaCore"],
