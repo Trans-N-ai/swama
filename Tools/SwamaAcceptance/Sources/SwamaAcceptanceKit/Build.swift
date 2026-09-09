@@ -183,8 +183,19 @@ func buildProducts(
         paths: paths
     )
     defer { metal.remove() }
-    let swamaMetal = try installMetallib(metal.library, nextTo: swama)
-    let probeMetal = try installMetallib(metal.library, nextTo: probe)
+    let packagedMetal = paths.package
+        .appendingPathComponent("Sources/SwamaCore/Resources/mlx-swift_Cmlx.bundle")
+        .appendingPathComponent("Contents/Resources/default.metallib")
+    let swamaMetal = try verifyBundledMetallib(
+        nextTo: swama,
+        packagedMetal: packagedMetal,
+        freshlyBuiltMetal: metal.library
+    )
+    let probeMetal = try verifyBundledMetallib(
+        nextTo: probe,
+        packagedMetal: packagedMetal,
+        freshlyBuiltMetal: metal.library
+    )
     let testMetal = try installMetallib(metal.library, nextTo: testExecutable)
 
     let tests = try runCommand(
@@ -259,6 +270,47 @@ func buildProducts(
             ]
         ]
     )
+}
+
+func verifyBundledMetallib(
+    nextTo binary: URL,
+    packagedMetal: URL,
+    freshlyBuiltMetal: URL
+) throws -> JSONObject {
+    let binaryDirectory = binary.deletingLastPathComponent()
+    let manuallyColocated = binaryDirectory.appendingPathComponent("mlx.metallib")
+    guard !FileManager.default.fileExists(atPath: manuallyColocated.path) else {
+        throw AcceptanceFailure.unknown(
+            "manual mlx.metallib must not satisfy an ordinary SwiftPM consumer: \(manuallyColocated.path)"
+        )
+    }
+
+    let delivered = binaryDirectory
+        .appendingPathComponent("swama_SwamaCore.bundle/mlx-swift_Cmlx.bundle")
+        .appendingPathComponent("Contents/Resources/default.metallib")
+    for required in [packagedMetal, freshlyBuiltMetal, delivered]
+        where !FileManager.default.fileExists(atPath: required.path)
+    {
+        throw AcceptanceFailure.unknown("required metallib is missing: \(required.path)")
+    }
+
+    let packagedSHA = try sha256File(packagedMetal)
+    let builtSHA = try sha256File(freshlyBuiltMetal)
+    let deliveredSHA = try sha256File(delivered)
+    guard packagedSHA == builtSHA, deliveredSHA == packagedSHA else {
+        throw AcceptanceFailure.unknown(
+            "bundled metallib identity mismatch: packaged=\(packagedSHA), "
+                + "built=\(builtSHA), delivered=\(deliveredSHA)"
+        )
+    }
+
+    return [
+        "delivery": "swiftpm-resource",
+        "path": delivered.path,
+        "sha256": deliveredSHA,
+        "packaged_source": packagedMetal.path,
+        "manual_colocation": "false"
+    ]
 }
 
 func buildExternalFixture(

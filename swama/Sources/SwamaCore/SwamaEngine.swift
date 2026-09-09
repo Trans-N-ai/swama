@@ -5,10 +5,12 @@ import SwamaRuntime
 
 public actor SwamaEngine {
     public init(configuration: SwamaConfiguration = .init()) {
+        _ = Self.resourceBundle
         backend = RuntimeEngineBackend(configuration: configuration)
     }
 
     package init(backend: any SwamaEngineBackend) {
+        _ = Self.resourceBundle
         self.backend = backend
     }
 
@@ -96,6 +98,7 @@ public actor SwamaEngine {
     }
 
     private let backend: any SwamaEngineBackend
+    private static let resourceBundle: Bundle = .module
 
     private func validate(_ request: GenerationRequest) throws {
         try validate(request.model)
