@@ -54,10 +54,16 @@ extension ResponsesHandler {
     ) -> [String: Any] {
         // A streaming response must close with the exact item ids/indexes its
         // typed events announced; only the non-streaming path mints fresh ids.
+        let resolvedStatus = status ?? ((result.finishReason == .length) ? "incomplete" : "completed")
         var output: [[String: Any]] = streamedOutput ?? []
         if streamedOutput == nil {
             if !result.output.isEmpty {
-                output.append(messageItem(id: newItemID(prefix: "msg"), text: result.output, status: "completed"))
+                // A truncated response marks its message item incomplete too.
+                output.append(messageItem(
+                    id: newItemID(prefix: "msg"),
+                    text: result.output,
+                    status: resolvedStatus == "incomplete" ? "incomplete" : "completed"
+                ))
             }
             for toolCall in result.toolCalls {
                 output.append(functionCallItem(
@@ -67,7 +73,6 @@ extension ResponsesHandler {
                 ))
             }
         }
-        let resolvedStatus = status ?? ((result.finishReason == .length) ? "incomplete" : "completed")
         var object = baseResponse(
             id: id,
             createdAt: createdAt,

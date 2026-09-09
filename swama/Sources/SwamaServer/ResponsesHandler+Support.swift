@@ -71,15 +71,6 @@ extension ResponsesHandler {
         var instructions: String?
     }
 
-    /// Fields that carry server-side state or hosted capabilities this runtime does
-    /// not provide. Their mere presence (with a meaningful value) is a hard `400`.
-    private static let unsupportedStatefulFields: [String] = [
-        "previous_response_id",
-        "conversation",
-        "prompt",
-        "prompt_cache_key",
-    ]
-
     static func parse(_ body: ByteBuffer?) throws -> ParsedRequest {
         guard let body, body.readableBytes > 0 else {
             throw RejectionReason.malformed("empty body")
@@ -137,21 +128,36 @@ extension ResponsesHandler {
         )
     }
 
+    /// The complete top-level request surface this server implements. Anything
+    /// else — official-but-unimplemented (`reasoning`, `metadata`,
+    /// `context_management`, `stream_options`, ...) or plain unknown — is a
+    /// hard 400: an exact allowlist, not an enumerated blocklist.
+    private static let supportedTopLevelFields: Set<String> = [
+        "model",
+        "input",
+        "instructions",
+        "stream",
+        "temperature",
+        "top_p",
+        "max_output_tokens",
+        "tools",
+        "tool_choice",
+        "text",
+        "truncation",
+        "store",
+        "background",
+        "parallel_tool_calls",
+    ]
+
     private static func rejectUnsupported(_ root: [String: Any]) throws {
-        // Stateful / hosted-capability fields.
-        for field in unsupportedStatefulFields where root[field] != nil {
-            throw RejectionReason.unsupportedField(field)
+        for key in root.keys.sorted() where !supportedTopLevelFields.contains(key) {
+            throw RejectionReason.unsupportedField(key)
         }
         if let store = try requireBool(root, "store"), store {
             throw RejectionReason.unsupportedField("store:true")
         }
         if let background = try requireBool(root, "background"), background {
             throw RejectionReason.unsupportedField("background:true")
-        }
-        // Unimplemented meaningful request fields: accepting them would silently
-        // change what the caller asked for.
-        for field in ["reasoning", "max_tool_calls", "service_tier"] where root[field] != nil {
-            throw RejectionReason.unsupportedField(field)
         }
         if let parallel = try requireBool(root, "parallel_tool_calls"), !parallel {
             throw RejectionReason.unsupportedField("parallel_tool_calls:false")
@@ -163,40 +169,31 @@ extension ResponsesHandler {
                 throw RejectionReason.malformed("`text` must be a JSON object")
             }
 
-            if object["verbosity"] != nil {
-                throw RejectionReason.unsupportedField("text.verbosity")
+            for key in object.keys.sorted() where key != "format" {
+                throw RejectionReason.unsupportedField("text.\(key)")
             }
             if let format = object["format"] {
-                guard let formatObject = format as? [String: Any] else {
-                    throw RejectionReason.malformed("`text.format` must be a JSON object")
+                guard let formatObject = format as? [String: Any],
+                      let formatType = formatObject["type"] as? String
+                else {
+                    throw RejectionReason.malformed("`text.format` must be an object with a string `type`")
                 }
 
-                if (formatObject["type"] as? String) != "text" {
+                if formatType != "text" {
                     throw RejectionReason.unsupportedField("text.format")
                 }
             }
         }
-        if root["response_format"] != nil {
-            throw RejectionReason.unsupportedField("response_format")
-        }
-        // Auto truncation cannot be honoured without server-side context management.
+        // Truncation is a closed enum; only the local default is supported.
         if let truncation = root["truncation"] {
             guard let mode = truncation as? String else {
                 throw RejectionReason.malformed("`truncation` must be a JSON string")
             }
 
-            if mode == "auto" {
-                throw RejectionReason.unsupportedField("truncation:auto")
-            }
-        }
-        // include[] pulls hosted-only artifacts (logprobs, file search results, ...).
-        if let include = root["include"] {
-            guard let items = include as? [Any] else {
-                throw RejectionReason.malformed("`include` must be a JSON array")
-            }
-
-            if !items.isEmpty {
-                throw RejectionReason.unsupportedField("include")
+            switch mode {
+            case "disabled": break
+            case "auto": throw RejectionReason.unsupportedField("truncation:auto")
+            default: throw RejectionReason.malformed("`truncation` must be \"disabled\" or \"auto\"")
             }
         }
         if let instructions = root["instructions"], !(instructions is String) {
@@ -252,6 +249,9 @@ extension ResponsesHandler {
                 throw RejectionReason.malformed("input items must be objects")
             }
 
+            if let rawType = object["type"], !(rawType is String) {
+                throw RejectionReason.malformed("input item `type` must be a JSON string")
+            }
             let type = (object["type"] as? String) ?? "message"
             switch type {
             case "message":
@@ -268,6 +268,10 @@ extension ResponsesHandler {
     }
 
     private static func buildMessageItem(_ object: [String: Any]) throws -> Message {
+        try requireKeys(object, within: ["type", "role", "content", "id", "status"], of: "message item")
+        if let rawRole = object["role"], !(rawRole is String) {
+            throw RejectionReason.malformed("message item `role` must be a JSON string")
+        }
         let role = try mapRole(object["role"] as? String)
         guard let rawContent = object["content"] else {
             throw RejectionReason.malformed("message item requires `content`")
@@ -292,9 +296,26 @@ extension ResponsesHandler {
             case "input_text",
                  "output_text",
                  "text":
-                if let text = partObject["text"] as? String { content.append(.text(text)) }
+                try requireKeys(
+                    partObject,
+                    within: ["type", "text", "annotations", "logprobs"],
+                    of: "text content part"
+                )
+                guard let text = partObject["text"] as? String else {
+                    throw RejectionReason.malformed("text content part requires a string `text`")
+                }
+
+                content.append(.text(text))
 
             case "input_image":
+                try requireKeys(partObject, within: ["type", "image_url", "detail"], of: "input_image part")
+                // The local runtime has one image path; a non-default detail
+                // request would be silently downgraded, so it is refused.
+                if let detail = partObject["detail"] {
+                    guard let mode = detail as? String, mode == "auto" else {
+                        throw RejectionReason.unsupportedField("input_image.detail")
+                    }
+                }
                 if let url = partObject["image_url"] as? String, let parsed = URL(string: url) {
                     content.append(.imageURL(parsed))
                 }
@@ -313,42 +334,49 @@ extension ResponsesHandler {
         return Message(role: role, content: content)
     }
 
+    /// Structural allowlist for one object: any key outside the schema is a 400.
+    private static func requireKeys(
+        _ object: [String: Any],
+        within allowed: Set<String>,
+        of surface: String
+    ) throws {
+        for key in object.keys.sorted() where !allowed.contains(key) {
+            throw RejectionReason.unsupportedField("\(surface) `\(key)`")
+        }
+    }
+
     /// A prior model turn's tool call, replayed by the client as conversation
     /// context for the follow-up turn of the local tool loop.
     private static func buildFunctionCallItem(_ object: [String: Any]) throws -> Message {
+        try requireKeys(
+            object,
+            within: ["type", "call_id", "name", "arguments", "id", "status"],
+            of: "function_call item"
+        )
         guard let callID = object["call_id"] as? String, !callID.isEmpty,
               let name = object["name"] as? String, !name.isEmpty
         else {
             throw RejectionReason.malformed("function_call item requires `call_id` and `name`")
         }
 
-        let arguments: [String: JSONValue]
-        switch object["arguments"] {
-        case nil:
-            arguments = [:]
-
-        case let text as String where text.isEmpty:
-            arguments = [:]
-
-        case let text as String:
-            guard let parsed = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
-                throw RejectionReason.malformed("function_call `arguments` must be a JSON object string")
-            }
-
-            arguments = parsed.mapValues(jsonValue)
-
-        default:
-            throw RejectionReason.malformed("function_call `arguments` must be a JSON object string")
+        // `arguments` is a required JSON-object string in the official item
+        // type; missing or empty must not be forged into `{}`.
+        guard let text = object["arguments"] as? String,
+              let parsed = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+        else {
+            throw RejectionReason.malformed("function_call requires `arguments` as a JSON object string")
         }
+
         return Message(
             role: .assistant,
             content: [],
-            toolCalls: [ToolCall(id: callID, name: name, arguments: arguments)]
+            toolCalls: [ToolCall(id: callID, name: name, arguments: parsed.mapValues(jsonValue))]
         )
     }
 
     /// The client-executed tool result for a prior `function_call`.
     private static func buildFunctionCallOutputItem(_ object: [String: Any]) throws -> Message {
+        try requireKeys(object, within: ["type", "call_id", "output", "id", "status"], of: "function_call_output item")
         guard let callID = object["call_id"] as? String, !callID.isEmpty else {
             throw RejectionReason.malformed("function_call_output item requires `call_id`")
         }
@@ -436,7 +464,14 @@ extension ResponsesHandler {
                 throw RejectionReason.malformed("tools must be objects")
             }
 
-            let type = (object["type"] as? String) ?? "function"
+            try requireKeys(
+                object,
+                within: ["type", "name", "description", "parameters", "strict"],
+                of: "tool"
+            )
+            guard let type = object["type"] as? String else {
+                throw RejectionReason.malformed("tool requires a string `type`")
+            }
             guard type == "function" else {
                 throw RejectionReason.unsupportedToolType(type)
             }
@@ -450,7 +485,19 @@ extension ResponsesHandler {
                 throw RejectionReason.unsupportedField("tools[].strict:true")
             }
 
-            let description = object["description"] as? String
+            let description: String?
+            switch object["description"] {
+            case nil,
+                 is NSNull:
+                description = nil
+            case let text as String:
+                description = text
+            default:
+                throw RejectionReason.malformed("tool `description` must be a JSON string")
+            }
+            if let parameters = object["parameters"], !(parameters is [String: Any]) {
+                throw RejectionReason.malformed("tool `parameters` must be a JSON object")
+            }
             let parameters = jsonValue(object["parameters"] ?? [String: Any]())
             tools.append(ToolDefinition(name: name, description: description, parameters: parameters))
         }

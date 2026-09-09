@@ -78,6 +78,36 @@ public enum ResponsesHandler {
         }
     }
 
+    /// Full typed lifecycle of one function-call output item; the assembler
+    /// slot guarantees the terminal response reuses the same id and index.
+    private static func emitFunctionCallLifecycle(
+        channel: Channel,
+        sequence: SequenceCounter,
+        outputs: OutputAssembler,
+        toolCall: ToolCall
+    ) async throws {
+        let slot = await outputs.addFunctionCall(toolCall)
+        try await emit(channel, sequence, "response.output_item.added", [
+            "output_index": slot.index,
+            "item": functionCallStub(id: slot.id, toolCall: toolCall),
+        ])
+        let arguments = Self.encodedArguments(toolCall.arguments)
+        try await emit(channel, sequence, "response.function_call_arguments.delta", [
+            "item_id": slot.id,
+            "output_index": slot.index,
+            "delta": arguments,
+        ])
+        try await emit(channel, sequence, "response.function_call_arguments.done", [
+            "item_id": slot.id,
+            "output_index": slot.index,
+            "arguments": arguments,
+        ])
+        try await emit(channel, sequence, "response.output_item.done", [
+            "output_index": slot.index,
+            "item": functionCallItem(id: slot.id, toolCall: toolCall, status: "completed"),
+        ])
+    }
+
     // MARK: Non-streaming
 
     private static func respondNonStreaming(
@@ -153,28 +183,35 @@ public enum ResponsesHandler {
                         ])
 
                     case let .toolCall(toolCall):
-                        let slot = await outputs.addFunctionCall(toolCall)
-                        try await emit(channel, sequence, "response.output_item.added", [
-                            "output_index": slot.index,
-                            "item": functionCallStub(id: slot.id, toolCall: toolCall),
-                        ])
-                        let arguments = Self.encodedArguments(toolCall.arguments)
-                        try await emit(channel, sequence, "response.function_call_arguments.delta", [
-                            "item_id": slot.id,
-                            "output_index": slot.index,
-                            "delta": arguments,
-                        ])
-                        try await emit(channel, sequence, "response.function_call_arguments.done", [
-                            "item_id": slot.id,
-                            "output_index": slot.index,
-                            "arguments": arguments,
-                        ])
-                        try await emit(channel, sequence, "response.output_item.done", [
-                            "output_index": slot.index,
-                            "item": functionCallItem(id: slot.id, toolCall: toolCall, status: "completed"),
-                        ])
+                        try await emitFunctionCallLifecycle(
+                            channel: channel,
+                            sequence: sequence,
+                            outputs: outputs,
+                            toolCall: toolCall
+                        )
                     }
                 }
+            }
+
+            // The final Core result is authoritative for tool calls too: a call
+            // that produced no callback event must still get its full item
+            // lifecycle and terminal presence (deduplicated by call_id).
+            let announcedCallIDs = await Set(outputs.records.compactMap { record -> String? in
+                if case let .functionCall(_, toolCall) = record {
+                    return toolCall.id
+                }
+                return nil
+            })
+            for toolCall in result.toolCalls {
+                if let callID = toolCall.id, announcedCallIDs.contains(callID) {
+                    continue
+                }
+                try await emitFunctionCallLifecycle(
+                    channel: channel,
+                    sequence: sequence,
+                    outputs: outputs,
+                    toolCall: toolCall
+                )
             }
 
             let terminalStatus = (result.finishReason == .length) ? "incomplete" : "completed"

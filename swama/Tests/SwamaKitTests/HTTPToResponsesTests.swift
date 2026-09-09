@@ -180,6 +180,72 @@ struct HTTPToResponsesTests {
         }
     }
 
+    @Test func topLevelSurfaceIsAnExactAllowlist() {
+        let rejected: [String] = [
+            #"{"model":"m","input":"x","context_management":{"mode":"auto"}}"#,
+            #"{"model":"m","input":"x","metadata":{"k":"v"}}"#,
+            #"{"model":"m","input":"x","moderation":"auto"}"#,
+            #"{"model":"m","input":"x","prompt_cache_options":{"ttl":60}}"#,
+            #"{"model":"m","input":"x","prompt_cache_retention":"24h"}"#,
+            #"{"model":"m","input":"x","safety_identifier":"abc"}"#,
+            #"{"model":"m","input":"x","stream_options":{"include_obfuscation":false}}"#,
+            #"{"model":"m","input":"x","top_logprobs":3}"#,
+            #"{"model":"m","input":"x","user":"u-1"}"#,
+            #"{"model":"m","input":"x","totally_made_up_field":1}"#,
+        ]
+        for payload in rejected {
+            #expect(throws: RejectionReason.self, "must reject: \(payload)") {
+                _ = try ResponsesHandler.parse(bytes(payload))
+            }
+        }
+    }
+
+    @Test func nestedTypesAndEnumsAreStructurallyValidated() throws {
+        let rejected: [String] = [
+            // numeric item type / role must not default to message / user.
+            #"{"model":"m","input":[{"type":7,"role":"user","content":"x"}]}"#,
+            #"{"model":"m","input":[{"type":"message","role":7,"content":"x"}]}"#,
+            // a wrong-typed text part must not be silently dropped from the array.
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":7},{"type":"input_text","text":"kept"}]}]}"#,
+            // unknown keys inside items are refused, not ignored.
+            #"{"model":"m","input":[{"type":"message","role":"user","content":"x","attachments":[]}]}"#,
+            // non-default image detail would be silently downgraded.
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"https://e.com/a.png","detail":"high"}]}]}"#,
+            // tools: explicit string type required, description typed, parameters an object.
+            #"{"model":"m","input":"x","tools":[{"name":"f","parameters":{}}]}"#,
+            #"{"model":"m","input":"x","tools":[{"type":"function","name":"f","description":7,"parameters":{}}]}"#,
+            #"{"model":"m","input":"x","tools":[{"type":"function","name":"f","parameters":"schema"}]}"#,
+            #"{"model":"m","input":"x","tools":[{"type":"function","name":"f","parameters":{},"handler":"local"}]}"#,
+            // truncation is a closed enum.
+            #"{"model":"m","input":"x","truncation":"banana"}"#,
+        ]
+        for payload in rejected {
+            #expect(throws: RejectionReason.self, "must reject: \(payload)") {
+                _ = try ResponsesHandler.parse(bytes(payload))
+            }
+        }
+        // The supported spellings stay accepted.
+        _ = try ResponsesHandler.parse(bytes(#"{"model":"m","input":"x","truncation":"disabled"}"#))
+        _ = try ResponsesHandler.parse(bytes(#"""
+        {"model":"m","input":[{"type":"message","role":"user","content":[
+           {"type":"input_image","image_url":"https://e.com/a.png","detail":"auto"}]}]}
+        """#))
+    }
+
+    @Test func functionCallArgumentsAreRequiredJSONObjectStrings() {
+        let rejected: [String] = [
+            #"{"model":"m","input":[{"type":"function_call","call_id":"c","name":"f"}]}"#,
+            #"{"model":"m","input":[{"type":"function_call","call_id":"c","name":"f","arguments":""}]}"#,
+            #"{"model":"m","input":[{"type":"function_call","call_id":"c","name":"f","arguments":"[1,2]"}]}"#,
+            #"{"model":"m","input":[{"type":"function_call","call_id":"c","name":"f","arguments":{"k":1}}]}"#,
+        ]
+        for payload in rejected {
+            #expect(throws: RejectionReason.self, "must reject: \(payload)") {
+                _ = try ResponsesHandler.parse(bytes(payload))
+            }
+        }
+    }
+
     // MARK: Non-streaming response object
 
     @Test func nonStreamingBuildsResponseObjectFromInjectedCore() async throws {
@@ -212,6 +278,50 @@ struct HTTPToResponsesTests {
         ))
         let json = try await run(backend: backend, body: #"{"model":"m","input":"hi"}"#)
         #expect(json.body["status"] as? String == "incomplete")
+        // The truncated message item is incomplete too, not just the response.
+        let output = try #require(json.body["output"] as? [[String: Any]])
+        #expect(output.first?["status"] as? String == "incomplete")
+    }
+
+    @Test func silentFinalToolCallStillGetsLifecycleAndTerminalPresence() async throws {
+        // Core returns a tool call in the final result without ever streaming
+        // a .toolCall event: the lifecycle must be synthesized and the terminal
+        // output must contain the call.
+        let call = ToolCall(id: "call-silent", name: "lookup", arguments: ["k": .string("v")])
+        let backend = ResponsesStubBackend(
+            response: .init(
+                output: "", toolCalls: [call],
+                usage: .init(promptTokens: 1, completionTokens: 1), finishReason: .toolCall
+            ),
+            events: []
+        )
+        let events = try await runStream(backend: backend, body: #"""
+        {"model":"m","input":"x","stream":true,
+         "tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}
+        """#)
+        let types = events.compactMap { $0["type"] as? String }
+        #expect(types.contains("response.output_item.added"))
+        #expect(types.contains("response.function_call_arguments.done"))
+        let terminal = try #require(events.last?["response"] as? [String: Any])
+        let output = try #require(terminal["output"] as? [[String: Any]])
+        #expect(output.count == 1)
+        #expect(output[0]["type"] as? String == "function_call")
+        #expect(output[0]["call_id"] as? String == "call-silent")
+        // And an already-announced call is not duplicated.
+        let announced = ResponsesStubBackend(
+            response: .init(
+                output: "", toolCalls: [call],
+                usage: .init(promptTokens: 1, completionTokens: 1), finishReason: .toolCall
+            ),
+            events: [.toolCall(call)]
+        )
+        let dedupedEvents = try await runStream(backend: announced, body: #"""
+        {"model":"m","input":"x","stream":true,
+         "tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}
+        """#)
+        let dedupedTerminal = try #require(dedupedEvents.last?["response"] as? [String: Any])
+        let dedupedOutput = try #require(dedupedTerminal["output"] as? [[String: Any]])
+        #expect(dedupedOutput.count == 1)
     }
 
     // MARK: Streaming typed SSE
