@@ -64,8 +64,12 @@ public actor SwamaEngine {
     }
 
     public func fetch(_ model: ModelID) async throws {
+        _ = try await fetchResolved(model)
+    }
+
+    package func fetchResolved(_ model: ModelID) async throws -> ModelID {
         try validate(model)
-        try await backend.fetch(model)
+        return try await backend.fetch(model)
     }
 
     public func remove(_ model: ModelID) async throws {
@@ -83,6 +87,12 @@ public actor SwamaEngine {
 
     public func clearCache() async {
         await backend.clearCache()
+    }
+
+    package static func withCLIDiagnostics<T>(
+        operation: () async throws -> T
+    ) async throws -> T {
+        try await SwamaDiagnostics.withSession(mode: .cli, operation: operation)
     }
 
     private let backend: any SwamaEngineBackend
@@ -190,7 +200,7 @@ protocol SwamaEngineBackend: Sendable {
 
     func embed(_ request: EmbeddingRequest) async throws -> EmbeddingResponse
     func models() async throws -> [ModelInfo]
-    func fetch(_ model: ModelID) async throws
+    func fetch(_ model: ModelID) async throws -> ModelID
     func remove(_ model: ModelID) async throws
     func clearCache(for model: ModelID) async
     func clearCache() async
@@ -241,9 +251,10 @@ private struct RuntimeEngineBackend: SwamaEngineBackend {
         await runtime.models().map(\.coreValue)
     }
 
-    func fetch(_ model: ModelID) async throws {
+    func fetch(_ model: ModelID) async throws -> ModelID {
         do {
-            try await runtime.fetch(model.rawValue)
+            let resolved = try await runtime.fetch(model.rawValue)
+            return .init(resolved)
         }
         catch let error as RuntimeCoreError {
             throw error.coreValue

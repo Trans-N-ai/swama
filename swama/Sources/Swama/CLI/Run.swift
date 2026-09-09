@@ -1,10 +1,7 @@
 import AppKit
 import ArgumentParser
 import Foundation
-import MLX
-import MLXLLM
-@preconcurrency import MLXLMCommon
-import SwamaKit
+import SwamaCore
 
 // MARK: - CompletionRequest
 
@@ -14,6 +11,7 @@ private struct CompletionRequest: Codable {
     let temperature: Float?
     let top_p: Float?
     let max_tokens: Int?
+    let repetition_penalty: Float?
     let stream: Bool?
 }
 
@@ -116,6 +114,21 @@ private enum RunError: Error, LocalizedError {
     }
 }
 
+// MARK: - RunRoute
+
+enum RunRoute: Equatable {
+    case core
+    case server
+}
+
+// MARK: - RunExecutionOperations
+
+struct RunExecutionOperations {
+    let fetch: (ModelID) async throws -> ModelID
+    let core: (ModelID) async throws -> Void
+    let server: (ModelID) async throws -> Void
+}
+
 // MARK: - Run
 
 struct Run: AsyncParsableCommand {
@@ -133,6 +146,7 @@ struct Run: AsyncParsableCommand {
           swama run gemma3 "What's in this image?" --image-paths image.jpg
           swama run llama-vision "Describe these images" -i img1.png -i img2.jpg
           swama run qwen3 "Explain this" --no-stream  # Disable streaming for complete response
+          swama run qwen3 "Hello" --server             # Explicitly use the local HTTP server
         """
     )
 
@@ -163,8 +177,11 @@ struct Run: AsyncParsableCommand {
     @Flag(name: [.customShort("s"), .long], inversion: .prefixedNo, help: "Enable streaming output (default: true)")
     var stream: Bool = true
 
-    @Flag(name: [.long], help: "Force direct model execution (bypass server)")
+    @Flag(name: [.long], help: "Use in-process execution (kept for compatibility; this is now the default)")
     var direct: Bool = false
+
+    @Flag(name: [.long], help: "Run through the local HTTP server instead of in-process SwamaCore")
+    var server: Bool = false
 
     @Option(name: [.long], help: "Server host (default: localhost)")
     var serverHost: String = "localhost"
@@ -176,56 +193,78 @@ struct Run: AsyncParsableCommand {
     var commonOptions: CommonRunOptions
 
     func run() async throws {
-        try await SwamaDiagnostics.withSession(mode: .cli) {
-            let resolvedModelName = try await ModelDownloader.fetchModel(modelName: modelName)
-
-            if let limit = commonOptions.resolvedContextLimit {
-                await ContextLimitConfig.shared.updateLimit(limit)
-            }
-
-            if !direct {
-                if await isServerRunning() {
-                    do {
-                        try await runViaServer(modelName: resolvedModelName)
-                        return
-                    }
-                    catch {
-                        print("⚠️  Server request failed, falling back to direct execution...")
-                    }
-                }
-                else {
-                    // Try to start server silently
-                    if await startServerAndWait() {
-                        do {
-                            try await runViaServer(modelName: resolvedModelName)
-                            return
-                        }
-                        catch {
-                            print("⚠️  Server request failed, falling back to direct execution...")
-                        }
-                    }
-                    else {
-                        print("⚠️  Server startup failed, falling back to direct execution...")
-                    }
-                }
-            }
-
-            // Fallback: Direct execution
-            try await runDirectly(modelName: resolvedModelName)
+        try await SwamaEngine.withCLIDiagnostics {
+            let engine = SwamaEngine()
+            try await execute(using: .init(
+                fetch: { try await engine.fetchResolved($0) },
+                core: { try await runWithCore(engine: engine, model: $0) },
+                server: { try await runWithServer(model: $0) }
+            ))
         }
     }
 
-    // MARK: - Server Detection and Management
+    func execute(using operations: RunExecutionOperations) async throws {
+        let route = try executionRoute()
+        if route == .server {
+            try validateServerOptions()
+        }
 
-    private func isServerRunning() async -> Bool {
+        let resolvedModel = try await operations.fetch(ModelID(modelName))
+        switch route {
+        case .core:
+            try await operations.core(resolvedModel)
+        case .server:
+            try await operations.server(resolvedModel)
+        }
+    }
+
+    func waitForServerReady(
+        timeout: Duration,
+        checkInterval: Duration,
+        readiness: () async throws -> Bool
+    ) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            try Task.checkCancellation()
+            if try await readiness() {
+                return true
+            }
+            try await Task.sleep(for: checkInterval)
+        }
+
+        try Task.checkCancellation()
+        return false
+    }
+
+    private func runWithServer(model: ModelID) async throws {
+        if try await isServerRunning() == false,
+           try await startServerAndWait() == false
+        {
+            throw RunError.serverError("local server is unavailable")
+        }
+        try await runViaServer(modelName: model.rawValue)
+    }
+
+    private func waitForServerReady(
+        timeout: Duration = .seconds(30),
+        checkInterval: Duration = .seconds(1)
+    ) async throws -> Bool {
+        try await waitForServerReady(timeout: timeout, checkInterval: checkInterval) {
+            try await isServerRunning()
+        }
+    }
+
+    private func isServerRunning() async throws -> Bool {
         do {
+            try Task.checkCancellation()
             let url = URL(string: "http://\(serverHost):\(serverPort)/v1/models")!
             var request = URLRequest(url: url)
             request.timeoutInterval = 2.0
 
             let (data, response) = try await URLSession.shared.data(for: request)
+            try Task.checkCancellation()
 
-            // Check both status code and that we got valid JSON response
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200
             else {
@@ -236,19 +275,21 @@ struct Run: AsyncParsableCommand {
             return true
         }
         catch {
+            try Task.checkCancellation()
             return false
         }
     }
 
-    private func startServerAndWait() async -> Bool {
+    private func startServerAndWait() async throws -> Bool {
         let success = launchSwamaApp()
         if !success {
             return false
         }
 
-        // Wait for server to be ready
-        return await waitForServerReady()
+        return try await waitForServerReady()
     }
+
+    // MARK: - Server Detection and Management
 
     private func launchSwamaApp() -> Bool {
         let appPath = "/Applications/Swama.app"
@@ -270,20 +311,6 @@ struct Run: AsyncParsableCommand {
             }
         }
         return true
-    }
-
-    private func waitForServerReady(timeout: TimeInterval = 30) async -> Bool {
-        let startTime = Date()
-        let checkInterval: TimeInterval = 1.0
-
-        while Date().timeIntervalSince(startTime) < timeout {
-            if await isServerRunning() {
-                return true
-            }
-            try? await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
-        }
-
-        return false
     }
 
     // MARK: - Common Processing
@@ -337,36 +364,37 @@ struct Run: AsyncParsableCommand {
             messageContent = .multimodal(contentParts)
         }
 
-        // Prepare request
-        let message = Message(role: "user", content: messageContent)
-        let request = CompletionRequest(
+        let request = makeServerRequest(modelName: modelName, content: messageContent)
+
+        showResponseHeader()
+
+        if stream {
+            try await sendStreamingRequest(request)
+        }
+        else {
+            try await sendNonStreamingRequest(request)
+        }
+
+        showCompletionIndicator()
+    }
+
+    private func makeServerRequest(
+        modelName: String,
+        content: MessageContent? = nil
+    ) -> CompletionRequest {
+        let message = Message(
+            role: "user",
+            content: content ?? .text(prompt)
+        )
+        return CompletionRequest(
             model: modelName,
             messages: [message],
             temperature: temperature,
             top_p: topP,
             max_tokens: maxTokens,
+            repetition_penalty: repetitionPenalty,
             stream: stream
         )
-
-        showResponseHeader()
-
-        // Send HTTP request with fallback
-        do {
-            if stream {
-                try await sendStreamingRequest(request)
-            }
-            else {
-                try await sendNonStreamingRequest(request)
-            }
-
-            showCompletionIndicator()
-        }
-        catch {
-            // If server request fails, fall back to direct execution
-            fputs("\n⚠️  Server request failed, falling back to direct execution...\n", stdout)
-            fflush(stdout)
-            try await runDirectly(modelName: modelName)
-        }
     }
 
     private func sendStreamingRequest(_ request: CompletionRequest) async throws {
@@ -409,6 +437,41 @@ struct Run: AsyncParsableCommand {
         }
     }
 
+    func executionRoute() throws -> RunRoute {
+        guard direct == false || server == false else {
+            throw ValidationError("--direct and --server cannot be used together")
+        }
+
+        return server ? .server : .core
+    }
+
+    func validateServerOptions() throws {
+        guard commonOptions.resolvedContextLimit == nil else {
+            throw ValidationError("--context-limit/--num-ctx is not supported with --server")
+        }
+    }
+
+    func makeCoreRequest(modelName: String) -> GenerationRequest {
+        let images = imagePaths.map { path in
+            ContentPart.imageURL(URL(fileURLWithPath: path))
+        }
+        return GenerationRequest(
+            model: ModelID(modelName),
+            messages: [.init(role: .user, content: [.text(prompt)] + images)],
+            options: .init(
+                maxTokens: maxTokens,
+                temperature: temperature,
+                topP: topP,
+                repetitionPenalty: repetitionPenalty,
+                contextLimit: commonOptions.resolvedContextLimit
+            )
+        )
+    }
+
+    func encodedServerRequest(modelName: String) throws -> Data {
+        try JSONEncoder().encode(makeServerRequest(modelName: modelName))
+    }
+
     private func sendNonStreamingRequest(_ request: CompletionRequest) async throws {
         let url = URL(string: "http://\(serverHost):\(serverPort)/v1/chat/completions")!
         var httpRequest = URLRequest(url: url)
@@ -439,9 +502,9 @@ struct Run: AsyncParsableCommand {
         print(content)
     }
 
-    // MARK: - Direct Execution (Fallback)
+    // MARK: - In-process Core Execution
 
-    private func runDirectly(modelName: String) async throws {
+    private func runWithCore(engine: SwamaEngine, model: ModelID) async throws {
         // Animation for model loading and response generation
         let animatedMessagePrefix = "Generating response"
         let spinnerFrames = ["/", "-", "\\", "|"]
@@ -487,21 +550,7 @@ struct Run: AsyncParsableCommand {
             // that's handled by the main thread's explicit cleanup or the defer block.
         }
 
-        // Use ModelPool to properly handle both LLM and VLM models
-        let modelPool = ModelPool.shared
-
-        // Validate and process image files
         try validateImageFiles()
-        var processedImages: [MLXLMCommon.UserInput.Image] = []
-        if !imagePaths.isEmpty {
-            for imagePath in imagePaths {
-                let imageURL = URL(fileURLWithPath: imagePath)
-                processedImages.append(.url(imageURL))
-            }
-        }
-
-        // Copy images to avoid capture issues in async closure
-        let imagesToUse = processedImages
 
         // Stop animation before starting output
         if let task = animationDisplayTask {
@@ -517,55 +566,21 @@ struct Run: AsyncParsableCommand {
 
         showResponseHeader()
 
-        let output = try await modelPool.run(modelName: modelName) { runner in
-            // Create chat messages with images if provided
-            let chatMessages: [MLXLMCommon.Chat.Message] = [
-                MLXLMCommon.Chat.Message(role: .user, content: prompt, images: imagesToUse)
-            ]
-            let userInput = MLXLMCommon.UserInput(chat: chatMessages)
-
-            if stream {
-                // Use streaming output for real-time response
-                let result = try await runner.runChat(
-                    userInput: userInput,
-                    parameters: .init(
-                        maxTokens: maxTokens,
-                        temperature: temperature,
-                        topP: topP,
-                        repetitionPenalty: repetitionPenalty
-                    ),
-                    onToken: { chunk in
-                        // Print each token as it's generated
-                        fputs(chunk, stdout)
-                        fflush(stdout)
-                    }
-                )
-
-                // Print newline after completion
-                fputs("\n", stdout)
-                fflush(stdout)
-
-                return result.output
+        let request = makeCoreRequest(modelName: model.rawValue)
+        let response: GenerationResponse
+        if stream {
+            response = try await engine.generate(request) { event in
+                if case let .textDelta(chunk) = event {
+                    fputs(chunk, stdout)
+                    fflush(stdout)
+                }
             }
-            else {
-                // Use non-streaming for complete response at once
-                let result = try await runner.runChatNonStream(
-                    userInput: userInput,
-                    parameters: .init(
-                        maxTokens: maxTokens,
-                        temperature: temperature,
-                        topP: topP,
-                        repetitionPenalty: repetitionPenalty
-                    )
-                )
-
-                return result.output
-            }
+            fputs("\n", stdout)
+            fflush(stdout)
         }
-
-        // For non-streaming mode, print the complete output
-        if !stream {
-            print(output)
+        else {
+            response = try await engine.generate(request)
+            print(response.output)
         }
 
         showCompletionIndicator()

@@ -107,6 +107,7 @@ let package = Package(
         .executableTarget(
             name: "Swama",
             dependencies: [
+                .target(name: "SwamaCore"),
                 .target(name: "SwamaKit"),
                 .target(name: "SwamaServer"),
                 .target(name: "SwamaAppSupport"),
@@ -136,6 +137,10 @@ let package = Package(
         .testTarget(
             name: "SwamaCoreTests",
             dependencies: ["SwamaCore"]
+        ),
+        .testTarget(
+            name: "SwamaCLITests",
+            dependencies: ["Swama", "SwamaCore", "SwamaRuntime"]
         ),
     ]
 )

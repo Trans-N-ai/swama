@@ -449,11 +449,11 @@ package actor RuntimeCoreEngine {
             .sorted { $0.id < $1.id }
     }
 
-    package func fetch(_ model: String) async throws {
+    package func fetch(_ model: String) async throws -> String {
         try validateModelID(model)
         try rejectUnsupportedAudioModel(model)
         do {
-            _ = try await ModelDownloader.fetchModel(modelName: model)
+            return try await ModelDownloader.fetchModel(modelName: model)
         }
         catch {
             throw mapError(error, model: model, fallback: .downloadFailed)
