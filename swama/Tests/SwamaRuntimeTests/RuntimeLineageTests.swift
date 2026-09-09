@@ -71,8 +71,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Diagnostics/SwamaDiagnostics.swift",
-        legacySHA256: "7f6063b0c875121dff03a438e428a9469829c7162d314456fd4d57d4c76eb400",
-        runtimeSHA256: "16892d9ec137cce43056f9ec8ece0068e91007fc1e892ad65cbeae7a7744351d",
+        legacySHA256: "8bf82d947f5af06192e5cec2d9670dbb292aefd62f8ab85651227a984b10ae58",
+        runtimeSHA256: "b3c5c87d581a4cb7138e50355a002e140817e2026ad44097e4cf8c1eb294a5b6",
         derivedSymbols: ["enum SwamaDiagnostics"]
     ),
     .init(

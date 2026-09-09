@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [ main, develop ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ main ]
 
@@ -42,6 +43,9 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+
+    - name: Check product version
+      run: Tools/Versioning/version.sh check
     
     - name: Install SwiftFormat
       env:
