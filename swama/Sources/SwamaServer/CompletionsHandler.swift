@@ -4,18 +4,14 @@
 //
 
 import Foundation
-@preconcurrency import MLXLMCommon
 import NIOCore
 import NIOHTTP1
-import SwamaKit
-import struct Tokenizers.ToolSpec
+import SwamaCore
 
 // MARK: - CompletionsHandler
 
 public enum CompletionsHandler {
     // MARK: Public
-
-    private static let qwen35MultimodalResize: CGSize = .init(width: 1344, height: 1344)
 
     public struct CompletionRequest: Decodable, Sendable {
         let model: String
@@ -28,6 +24,7 @@ public enum CompletionsHandler {
         let repetition_context_size: Int?
         let presence_penalty: Float?
         let frequency_penalty: Float?
+        let context_limit: Int?
         let max_tokens: Int?
         let stream: Bool?
         let tools: [Tool]?
@@ -38,17 +35,20 @@ public enum CompletionsHandler {
         let role: String
         let content: MessageContent
         let tool_calls: [ResponseToolCall]?
+        let tool_call_id: String?
 
         private enum CodingKeys: String, CodingKey {
             case role
             case content
             case tool_calls
+            case tool_call_id
         }
 
         public init(role: String, content: MessageContent, tool_calls: [ResponseToolCall]? = nil) {
             self.role = role
             self.content = content
             self.tool_calls = tool_calls
+            tool_call_id = nil
         }
 
         public init(from decoder: Decoder) throws {
@@ -56,6 +56,7 @@ public enum CompletionsHandler {
             role = try container.decode(String.self, forKey: .role)
             content = try container.decode(MessageContent.self, forKey: .content)
             tool_calls = try container.decodeIfPresent([ResponseToolCall].self, forKey: .tool_calls)
+            tool_call_id = try container.decodeIfPresent(String.self, forKey: .tool_call_id)
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -65,6 +66,7 @@ public enum CompletionsHandler {
             if let tool_calls, !tool_calls.isEmpty {
                 try container.encode(tool_calls, forKey: .tool_calls)
             }
+            try container.encodeIfPresent(tool_call_id, forKey: .tool_call_id)
         }
     }
 
@@ -406,9 +408,23 @@ public enum CompletionsHandler {
     }
 
     public static func handle(
-        requestHead _: HTTPRequestHead,
+        requestHead: HTTPRequestHead,
         body: ByteBuffer?,
         channel: Channel
+    ) async {
+        await handle(
+            requestHead: requestHead,
+            body: body,
+            channel: channel,
+            engine: ServerCoreEngine.shared
+        )
+    }
+
+    static func handle(
+        requestHead _: HTTPRequestHead,
+        body: ByteBuffer?,
+        channel: Channel,
+        engine: SwamaEngine
     ) async {
         do {
             guard let payload = parsePayload(body),
@@ -422,38 +438,33 @@ public enum CompletionsHandler {
                 return
             }
 
-            let resolvedModelName = ModelAliasResolver.resolve(name: payload.model)
-
-            // Convert messages to MLX Chat.Message format
-            let chatMessages = try convertToMLXChatMessages(payload.messages)
-
-            let parameters = generateParameters(from: payload)
-
-            // Convert tools to MLX ToolSpec format once here
-            let tools: [ToolSpec]? = convertToolsToMLX(payload.tools)
+            let request = try coreRequest(from: payload)
 
             if payload.stream == true {
                 try await sendStreamResponse(
                     channel: channel,
-                    modelName: resolvedModelName,
-                    chatMessages: chatMessages,
+                    request: request,
                     model: payload.model,
-                    parameters: parameters,
-                    tools: tools
+                    engine: engine
                 )
             }
             else {
                 try await sendNonStreamResponse(
                     channel: channel,
-                    modelName: resolvedModelName,
-                    chatMessages: chatMessages,
+                    request: request,
                     model: payload.model,
-                    parameters: parameters,
-                    mlxTools: tools
+                    engine: engine
                 )
             }
         }
-        catch let error as ContextLimitError {
+        catch let error as SwamaError {
+            try? await respondError(
+                channel: channel,
+                status: status(for: error),
+                message: error.message
+            )
+        }
+        catch let error as CompletionsError {
             try? await respondError(
                 channel: channel,
                 status: .badRequest,
@@ -469,117 +480,116 @@ public enum CompletionsHandler {
         }
     }
 
-    // MARK: - Tool Conversion Helper
+    // MARK: - Core conversion
 
-    private static func convertToolsToMLX(_ tools: [Tool]?) -> [ToolSpec]? {
-        tools?.map { tool in
-            var functionDict: [String: any Sendable] = [
-                "name": tool.function.name
-            ]
-
-            if let description = tool.function.description {
-                functionDict["description"] = description
-            }
-
-            if let parameters = tool.function.parameters {
-                // Convert JSON string back to object
-                if let jsonData = parameters.data(using: .utf8),
-                   let jsonObject = try? JSONSerialization.jsonObject(with: jsonData)
-                {
-                    // JSON objects are always Sendable (they're value types)
-                    // Using as! because JSONSerialization guarantees Sendable types (Dictionary, Array, String, Number,
-                    // etc.)
-                    functionDict["parameters"] = (jsonObject as! any Sendable)
-                }
-            }
-
-            return [
-                "type": tool.type,
-                "function": functionDict
-            ]
-        }
+    static func coreRequest(from payload: CompletionRequest) throws -> GenerationRequest {
+        try .init(
+            model: .init(payload.model),
+            messages: payload.messages.map(coreMessage),
+            options: .init(
+                maxTokens: payload.max_tokens,
+                temperature: payload.temperature ?? 0.6,
+                topP: payload.top_p ?? 1,
+                topK: payload.top_k ?? 0,
+                minP: payload.min_p ?? 0,
+                repetitionPenalty: payload.repetition_penalty,
+                repetitionContextSize: payload.repetition_context_size ?? 20,
+                presencePenalty: payload.presence_penalty,
+                frequencyPenalty: payload.frequency_penalty,
+                contextLimit: payload.context_limit
+            ),
+            tools: payload.tools?.map(coreTool) ?? []
+        )
     }
 
-    // MARK: - Chat Message Conversion
-
-    private static func convertToMLXChatMessages(_ messages: [Message]) throws -> [MLXLMCommon.Chat.Message] {
-        try messages.map { message in
-            let role: MLXLMCommon.Chat.Message.Role
+    private static func coreMessage(_ message: Message) throws -> SwamaCore.Message {
+        let role: SwamaCore.Message.Role =
             switch message.role {
             case "system":
-                role = .system
+                .system
             case "user":
-                role = .user
+                .user
             case "assistant":
-                role = .assistant
+                .assistant
             case "tool":
-                role = .tool
+                .tool
             default:
                 throw CompletionsError.invalidRole(message.role)
             }
 
-            let content = message.content.textContent
-            let imageURLs = message.content.imageURLs
-            let images = imageURLs.compactMap { urlString in
-                URL(string: urlString).map { MLXLMCommon.UserInput.Image.url($0) }
+        let content: [SwamaCore.ContentPart] =
+            switch message.content {
+            case let .text(text):
+                [.text(text)]
+            case let .multimodal(parts):
+                try parts.map { part -> SwamaCore.ContentPart in
+                    switch part {
+                    case let .text(text):
+                        return .text(text)
+                    case let .imageURL(image):
+                        guard let url = URL(string: image.url) else {
+                            throw CompletionsError.invalidImageURL(image.url)
+                        }
+
+                        return SwamaCore.ContentPart.imageURL(url)
+                    }
+                }
             }
 
-            return MLXLMCommon.Chat.Message(
-                role: role,
-                content: content,
-                images: images
-            )
-        }
-    }
-
-    private static func buildUserInput(
-        chatMessages: [MLXLMCommon.Chat.Message],
-        modelName: String,
-        tools: [ToolSpec]?
-    ) -> MLXLMCommon.UserInput {
-        guard chatMessages.contains(where: { !$0.images.isEmpty || !$0.videos.isEmpty }) else {
-            return MLXLMCommon.UserInput(chat: chatMessages, tools: tools)
-        }
-        guard shouldApplyQwen35MultimodalSafety(modelName: modelName) else {
-            return MLXLMCommon.UserInput(chat: chatMessages, tools: tools)
-        }
-
-        return MLXLMCommon.UserInput(
-            chat: chatMessages,
-            processing: .init(resize: qwen35MultimodalResize),
-            tools: tools
+        return try .init(
+            role: role,
+            content: content,
+            toolCalls: message.tool_calls?.map(coreToolCall) ?? [],
+            toolCallID: message.tool_call_id
         )
     }
 
-    private static func shouldApplyQwen35MultimodalSafety(modelName: String) -> Bool {
-        let lowered = modelName.lowercased()
-        return lowered.contains("qwen3.5") || lowered.contains("qwen3_5")
+    private static func coreTool(_ tool: Tool) throws -> ToolDefinition {
+        let parameters: SwamaCore.JSONValue
+        if let raw = tool.function.parameters {
+            let decoded = try JSONDecoder().decode(SwamaCore.JSONValue.self, from: Data(raw.utf8))
+            guard case .object = decoded else {
+                throw CompletionsError.invalidToolJSON(tool.function.name)
+            }
+
+            parameters = decoded
+        }
+        else {
+            parameters = .object([:])
+        }
+        return .init(
+            name: tool.function.name,
+            description: tool.function.description,
+            parameters: parameters
+        )
+    }
+
+    private static func coreToolCall(_ toolCall: ResponseToolCall) throws -> SwamaCore.ToolCall {
+        let decoded = try JSONDecoder().decode(
+            SwamaCore.JSONValue.self,
+            from: Data(toolCall.function.arguments.utf8)
+        )
+        guard case let .object(arguments) = decoded else {
+            throw CompletionsError.invalidToolJSON(toolCall.function.name)
+        }
+
+        return .init(
+            id: toolCall.id,
+            name: toolCall.function.name,
+            arguments: arguments
+        )
     }
 
     // MARK: - Chat Response Methods
 
-    public static func sendNonStreamResponse(
+    static func sendNonStreamResponse(
         channel: Channel,
-        modelName: String,
-        chatMessages: [MLXLMCommon.Chat.Message],
+        request: GenerationRequest,
         model: String,
-        parameters: GenerateParameters,
-        mlxTools: [ToolSpec]? = nil
+        engine: SwamaEngine
     ) async throws {
         let result = try await runCancellingOnClose(channel: channel) {
-            try await modelPool.run(
-                modelName: modelName
-            ) { runner in
-                let userInput = buildUserInput(
-                    chatMessages: chatMessages,
-                    modelName: modelName,
-                    tools: mlxTools
-                )
-                return try await runner.runChatNonStream(
-                    userInput: userInput,
-                    parameters: parameters
-                )
-            }
+            try await engine.generate(request)
         }
 
         // The client disconnected mid-generation; the run above was cancelled promptly, and
@@ -588,30 +598,16 @@ public enum CompletionsHandler {
             return
         }
 
-        // Calculate completion tokens from completion info
-        let completionTokens = result.completionInfo?.generationTokenCount ?? 0
-
-        // Convert MLX ToolCalls to OpenAI format
         let toolCalls: [ResponseToolCall]? = result.toolCalls.isEmpty ? nil : result.toolCalls
             .enumerated()
-            .compactMap { index, toolCall in
-                let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
-                let argumentsJSON: String =
-                    if let jsonData = try? JSONSerialization.data(withJSONObject: argumentsDict),
-                    let jsonString = String(data: jsonData, encoding: .utf8) {
-                        jsonString
-                    }
-                    else {
-                        "{}"
-                    }
-
-                return ResponseToolCall(
+            .map { index, toolCall in
+                ResponseToolCall(
                     index: index,
-                    id: "call_\(UUID().uuidString)",
+                    id: toolCall.id ?? "call_\(UUID().uuidString)",
                     type: "function",
                     function: ResponseFunction(
-                        name: toolCall.function.name,
-                        arguments: argumentsJSON
+                        name: toolCall.name,
+                        arguments: encodedArguments(toolCall.arguments)
                     )
                 )
             }
@@ -627,17 +623,16 @@ public enum CompletionsHandler {
         let choice = CompletionChoice(
             index: 0,
             message: responseMessage,
-            finish_reason: toolCalls?.isEmpty == false ? "tool_calls" : "stop"
+            finish_reason: wireFinishReason(result.finishReason)
         )
 
-        // Calculate performance metrics
-        let tokensPerSecond = result.completionInfo?.tokensPerSecond ?? 0.0
-        let totalDuration = (result.completionInfo?.promptTime ?? 0.0) + (result.completionInfo?.generateTime ?? 0.0)
+        let tokensPerSecond = result.metrics?.tokensPerSecond ?? 0
+        let totalDuration = (result.metrics?.promptSeconds ?? 0) + (result.metrics?.generationSeconds ?? 0)
 
         let usage = CompletionUsage(
-            prompt_tokens: result.promptTokens,
-            completion_tokens: completionTokens,
-            total_tokens: result.promptTokens + completionTokens,
+            prompt_tokens: result.usage.promptTokens,
+            completion_tokens: result.usage.completionTokens,
+            total_tokens: result.usage.totalTokens,
             response_token_s: tokensPerSecond > 0 ? tokensPerSecond : nil,
             total_duration: totalDuration > 0 ? totalDuration : nil
         )
@@ -666,13 +661,11 @@ public enum CompletionsHandler {
         try await channel.writeAndFlush(HTTPServerResponsePart.end(nil))
     }
 
-    public static func sendStreamResponse(
+    static func sendStreamResponse(
         channel: Channel,
-        modelName: String,
-        chatMessages: [MLXLMCommon.Chat.Message],
+        request: GenerationRequest,
         model: String,
-        parameters: GenerateParameters,
-        tools: [ToolSpec]? = nil
+        engine: SwamaEngine
     ) async throws {
         actor ToolCallCounter {
             private var index = 0
@@ -706,74 +699,46 @@ public enum CompletionsHandler {
 
         try await writeSSEJSON(channel: channel, payload: initialJSON)
 
-        // Execute model with error handling
-        let result: ModelRunner.ChatRunResult
+        let result: GenerationResponse
 
         do {
             result = try await runCancellingOnClose(channel: channel) {
-                try await modelPool.run(
-                    modelName: modelName
-                ) { runner in
-                    let userInput = buildUserInput(
-                        chatMessages: chatMessages,
-                        modelName: modelName,
-                        tools: tools
-                    )
-                    let toolCallCounter = ToolCallCounter()
-                    return try await runner.runChat(
-                        userInput: userInput,
-                        parameters: parameters,
-                        onToken: { chunk in
-                            let deltaJSON: [String: Any] = [
-                                "id": chunkId,
-                                "object": "chat.completion.chunk",
-                                "created": timestamp,
-                                "model": model,
-                                "choices": [["index": 0, "delta": ["content": chunk], "finish_reason": NSNull()]]
-                            ]
-                            // Awaited directly: the write is ordered and fully drained before
-                            // `runChat` moves on to the next generation event, and a failed
-                            // write (client gone) throws here, stopping generation and flowing
-                            // through the existing catch below rather than needing an explicit
-                            // channel.close(promise: nil) to converge on the cancellation path.
-                            try await writeSSEJSON(channel: channel, payload: deltaJSON)
-                        },
-                        onToolCall: { toolCall in
-                            let argumentsDict = toolCall.function.arguments.mapValues { $0.anyValue }
-                            let argumentsJSON: String =
-                                if let jsonData = try? JSONSerialization
-                                    .data(withJSONObject: argumentsDict),
-                                    let jsonString = String(data: jsonData, encoding: .utf8)
-                                {
-                                    jsonString
-                                }
-                                else {
-                                    "{}"
-                                }
+                let toolCallCounter = ToolCallCounter()
+                return try await engine.generate(request) { event in
+                    switch event {
+                    case let .textDelta(chunk):
+                        let deltaJSON: [String: Any] = [
+                            "id": chunkId,
+                            "object": "chat.completion.chunk",
+                            "created": timestamp,
+                            "model": model,
+                            "choices": [["index": 0, "delta": ["content": chunk], "finish_reason": NSNull()]]
+                        ]
+                        try await writeSSEJSON(channel: channel, payload: deltaJSON)
 
-                            let index = await toolCallCounter.next()
-                            let toolCallDict: [String: Any] = [
-                                "index": index,
-                                "id": "call_\(UUID().uuidString)",
-                                "type": "function",
-                                "function": [
-                                    "name": toolCall.function.name,
-                                    "arguments": argumentsJSON
-                                ]
+                    case let .toolCall(toolCall):
+                        let index = await toolCallCounter.next()
+                        let toolCallDict: [String: Any] = [
+                            "index": index,
+                            "id": toolCall.id ?? "call_\(UUID().uuidString)",
+                            "type": "function",
+                            "function": [
+                                "name": toolCall.name,
+                                "arguments": encodedArguments(toolCall.arguments)
                             ]
+                        ]
 
-                            let toolCallDelta: [String: Any] = [
-                                "id": chunkId,
-                                "object": "chat.completion.chunk",
-                                "created": timestamp,
-                                "model": model,
-                                "choices": [["index": 0, "delta": ["tool_calls": [toolCallDict]],
-                                             "finish_reason": NSNull()]]
-                            ]
+                        let toolCallDelta: [String: Any] = [
+                            "id": chunkId,
+                            "object": "chat.completion.chunk",
+                            "created": timestamp,
+                            "model": model,
+                            "choices": [["index": 0, "delta": ["tool_calls": [toolCallDict]],
+                                         "finish_reason": NSNull()]]
+                        ]
 
-                            try await writeSSEJSON(channel: channel, payload: toolCallDelta)
-                        }
-                    )
+                        try await writeSSEJSON(channel: channel, payload: toolCallDelta)
+                    }
                 }
             }
         }
@@ -808,23 +773,19 @@ public enum CompletionsHandler {
         }
 
         // Send final chunk with usage information
-        let finalCompletionTokens = result.completionInfo?.generationTokenCount ?? 0
-        let tokensPerSecond = result.completionInfo?.tokensPerSecond ?? 0.0
-        let totalDuration = (result.completionInfo?.promptTime ?? 0.0) + (result.completionInfo?.generateTime ?? 0.0)
-
-        // Determine finish reason based on whether tool calls were made
-        let finishReason = result.toolCalls.isEmpty ? "stop" : "tool_calls"
+        let tokensPerSecond = result.metrics?.tokensPerSecond ?? 0
+        let totalDuration = (result.metrics?.promptSeconds ?? 0) + (result.metrics?.generationSeconds ?? 0)
 
         let finishJSON: [String: Any] = [
             "id": chunkId,
             "object": "chat.completion.chunk",
             "created": timestamp,
             "model": model,
-            "choices": [["index": 0, "delta": [:], "finish_reason": finishReason]],
+            "choices": [["index": 0, "delta": [:], "finish_reason": wireFinishReason(result.finishReason)]],
             "usage": [
-                "prompt_tokens": result.promptTokens,
-                "completion_tokens": finalCompletionTokens,
-                "total_tokens": result.promptTokens + finalCompletionTokens,
+                "prompt_tokens": result.usage.promptTokens,
+                "completion_tokens": result.usage.completionTokens,
+                "total_tokens": result.usage.totalTokens,
                 "response_token/s": tokensPerSecond,
                 "total_duration": totalDuration
             ]
@@ -837,12 +798,9 @@ public enum CompletionsHandler {
 
     // MARK: - Helper Methods
 
-    private static let modelPool: ModelPool = .shared
-
     /// Runs `operation` in a child task, cancelling that task as soon as `channel`'s connection
-    /// closes (the client disconnecting mid-request). `operation` is expected to observe
-    /// `Task.isCancelled` and return promptly rather than throw, so its (possibly partial)
-    /// result is still returned normally here.
+    /// closes (the client disconnecting mid-request). Core operations propagate
+    /// `CancellationError`; already-written stream deltas are not retracted.
     ///
     /// Not marked `private` so tests can drive this channel-close -> cancellation path directly
     /// with a stub `operation` and an `EmbeddedChannel`, without needing a real model.
@@ -940,20 +898,43 @@ public enum CompletionsHandler {
         try await sendFullResponse(channel: channel, data: jsonData, status: status, version: .http1_1)
     }
 
-    /// Maps request sampling fields onto the engine's `GenerateParameters`,
-    /// falling back to the engine defaults when a field is absent.
-    static func generateParameters(from payload: CompletionRequest) -> GenerateParameters {
-        GenerateParameters(
-            maxTokens: payload.max_tokens,
-            temperature: payload.temperature ?? 0.6,
-            topP: payload.top_p ?? 1.0,
-            topK: payload.top_k ?? 0,
-            minP: payload.min_p ?? 0.0,
-            repetitionPenalty: payload.repetition_penalty,
-            repetitionContextSize: payload.repetition_context_size ?? 20,
-            presencePenalty: payload.presence_penalty,
-            frequencyPenalty: payload.frequency_penalty
-        )
+    private static func encodedArguments(_ arguments: [String: SwamaCore.JSONValue]) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(SwamaCore.JSONValue.object(arguments)) else {
+            return "{}"
+        }
+
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func wireFinishReason(_ reason: FinishReason) -> String {
+        switch reason {
+        case .completed,
+             .unknown:
+            "stop"
+        case .length:
+            "length"
+        case .toolCall:
+            "tool_calls"
+        }
+    }
+
+    private static func status(for error: SwamaError) -> HTTPResponseStatus {
+        switch error.code {
+        case .contextLimitExceeded,
+             .invalidImage,
+             .invalidRequest:
+            .badRequest
+        case .modelNotFound:
+            .notFound
+        case .backendFailure,
+             .downloadFailed,
+             .embeddingFailed,
+             .modelLoadFailed,
+             .removalFailed:
+            .internalServerError
+        }
     }
 
     private static func parsePayload(_ buffer: ByteBuffer?) -> CompletionRequest? {
@@ -995,11 +976,17 @@ public enum CompletionsHandler {
 
 enum CompletionsError: Error, LocalizedError {
     case invalidRole(String)
+    case invalidImageURL(String)
+    case invalidToolJSON(String)
 
     public var errorDescription: String? {
         switch self {
         case let .invalidRole(role):
-            "Invalid role: \(role). Must be 'system', 'user', or 'assistant'"
+            "Invalid role: \(role). Must be 'system', 'user', 'assistant', or 'tool'"
+        case let .invalidImageURL(value):
+            "Invalid image URL: \(value)"
+        case let .invalidToolJSON(name):
+            "Tool '\(name)' requires JSON object arguments or parameters"
         }
     }
 }

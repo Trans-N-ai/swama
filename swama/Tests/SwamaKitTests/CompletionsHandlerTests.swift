@@ -1,8 +1,8 @@
 import Foundation
-@preconcurrency import MLXLMCommon
 import NIOCore
 import NIOEmbedded
 import NIOHTTP1
+import SwamaCore
 @testable import SwamaKit
 @testable import SwamaServer
 import Testing
@@ -104,7 +104,8 @@ final class CompletionsHandlerTests {
             "repetition_penalty": 1.15,
             "repetition_context_size": 64,
             "presence_penalty": 0.5,
-            "frequency_penalty": 0.3
+            "frequency_penalty": 0.3,
+            "context_limit": 4096
         ]
         return try! JSONSerialization.data(withJSONObject: request)
     }
@@ -122,14 +123,15 @@ final class CompletionsHandlerTests {
         #expect(payload?.repetition_context_size == 64)
         #expect(payload?.presence_penalty == 0.5)
         #expect(payload?.frequency_penalty == 0.3)
+        #expect(payload?.context_limit == 4096)
     }
 
-    @Test func samplingParametersMapToGenerateParameters() throws {
+    @Test func samplingParametersMapToCoreOptions() throws {
         let requestData = createSamplingCompletionRequest()
         let buffer = ByteBuffer(bytes: requestData)
 
         let payload = try #require(CompletionsHandler.parsePayload(buffer))
-        let parameters = CompletionsHandler.generateParameters(from: payload)
+        let parameters = try CompletionsHandler.coreRequest(from: payload).options
 
         #expect(parameters.topK == 40)
         #expect(parameters.minP == 0.05)
@@ -137,6 +139,7 @@ final class CompletionsHandlerTests {
         #expect(parameters.repetitionContextSize == 64)
         #expect(parameters.presencePenalty == 0.5)
         #expect(parameters.frequencyPenalty == 0.3)
+        #expect(parameters.contextLimit == 4096)
     }
 
     @Test func absentSamplingParametersKeepEngineDefaults() throws {
@@ -151,8 +154,8 @@ final class CompletionsHandlerTests {
         #expect(payload.presence_penalty == nil)
         #expect(payload.frequency_penalty == nil)
 
-        let parameters = CompletionsHandler.generateParameters(from: payload)
-        let defaults = GenerateParameters()
+        let parameters = try CompletionsHandler.coreRequest(from: payload).options
+        let defaults = GenerationOptions()
 
         #expect(parameters.topK == defaults.topK)
         #expect(parameters.minP == defaults.minP)

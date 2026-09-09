@@ -409,6 +409,43 @@ struct AcceptanceTests {
         #expect(imports.isDisjoint(with: ["MLX", "MLXLLM", "MLXLMCommon", "SwamaKit"]))
     }
 
+    @Test func nonAudioHTTPHandlersUseCoreWithoutLegacyRuntimeImports() throws {
+        let serverRoot = repositoryRoot.appendingPathComponent("swama/Sources/SwamaServer")
+        let coreHandlers = ["CompletionsHandler.swift", "EmbeddingsHandler.swift"]
+        let forbidden: Set = ["MLX", "MLXLLM", "MLXLMCommon", "SwamaKit", "Tokenizers"]
+
+        for name in coreHandlers {
+            let file = serverRoot.appendingPathComponent(name)
+            let source = try String(contentsOf: file, encoding: .utf8)
+            let imports = try Set(parsedSwiftImports(source: source, file: file).map(\.module))
+            #expect(imports.contains("SwamaCore"))
+            #expect(imports.isDisjoint(with: forbidden))
+        }
+
+        let shell = serverRoot.appendingPathComponent("HTTPHandler.swift")
+        let shellSource = try String(contentsOf: shell, encoding: .utf8)
+        let shellImports = try Set(parsedSwiftImports(source: shellSource, file: shell).map(\.module))
+        #expect(shellImports.isDisjoint(with: forbidden))
+        #expect(shellSource.contains("ModelsHandler.handle"))
+
+        let models = serverRoot.appendingPathComponent("ModelsHandler.swift")
+        let modelsSource = try String(contentsOf: models, encoding: .utf8)
+        let modelsImports = try Set(parsedSwiftImports(source: modelsSource, file: models).map(\.module))
+        #expect(modelsImports.contains("SwamaKit"))
+        #expect(!modelsImports.contains("SwamaCore"))
+
+        for name in [
+            "LegacyServerCoreBackend.swift",
+            "TextToSpeechHandler.swift",
+            "TranscriptionsHandler.swift"
+        ] {
+            let file = serverRoot.appendingPathComponent(name)
+            let source = try String(contentsOf: file, encoding: .utf8)
+            #expect(source.contains("ServerModelPool.shared"), "\(name) must use the shared server pool")
+            #expect(!source.contains("ModelPool()"), "\(name) must not create a second pool")
+        }
+    }
+
     @Test func compilerPublicAPIGateRejectsUpstreamTypesAndConformances() throws {
         let graph: JSONObject = [
             "module": ["name": "SwamaCore"],

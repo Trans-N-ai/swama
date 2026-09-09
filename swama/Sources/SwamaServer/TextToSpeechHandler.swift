@@ -57,7 +57,7 @@ public enum TextToSpeechHandler {
 
             let responseFormat = try resolveResponseFormat(request.response_format)
 
-            let result = try await ModelPool.shared.runTTS(
+            let result = try await ServerModelPool.shared.runTTS(
                 modelKey: modelResolution.cacheKey,
                 kind: modelResolution.kind,
                 repository: modelResolution.repository

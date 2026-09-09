@@ -157,7 +157,7 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/ModelRunner.swift",
-        legacySHA256: "c5715822d87ff73f9ca54f8577d1f9873a45088b098575b464a1a4660903ef3e",
+        legacySHA256: "4e29ee4fb09d9fc8ec76e353a280214165936f7f09ba3a5b129e4b865c34fff6",
         runtimeSHA256: "eb60d9b94d013522be7ceb2c810d1eb9027ce9f0ca958df68b585d04747fe32c",
         derivedSymbols: ["actor ModelRunner", "struct ChatRunResult", "func runChat"]
     ),

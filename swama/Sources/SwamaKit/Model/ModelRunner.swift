@@ -81,6 +81,22 @@ public actor ModelRunner {
         onToken: (@Sendable (String) async throws -> Void)? = nil,
         onToolCall: (@Sendable (MLXLMCommon.ToolCall) async throws -> Void)? = nil
     ) async throws -> ChatRunResult {
+        try await runChatForCore(
+            userInput: userInput,
+            parameters: parameters,
+            contextLimit: nil,
+            onToken: onToken,
+            onToolCall: onToolCall
+        )
+    }
+
+    package nonisolated func runChatForCore(
+        userInput: MLXLMCommon.UserInput,
+        parameters: GenerateParameters,
+        contextLimit: Int?,
+        onToken: (@Sendable (String) async throws -> Void)? = nil,
+        onToolCall: (@Sendable (MLXLMCommon.ToolCall) async throws -> Void)? = nil
+    ) async throws -> ChatRunResult {
         try await withError {
             let modelName = await container.configuration.name
             let diagnosticOperation = SwamaDiagnostics.startGeneration(model: modelName)
@@ -124,7 +140,13 @@ public actor ModelRunner {
 
             let rawOutputStorage = RawOutputBuffer()
             let hasMediaInput = userInput.hasMediaContent
-            let configuredContextLimit = await ContextLimitConfig.shared.currentLimit()
+            let configuredContextLimit: Int =
+                if let contextLimit {
+                    contextLimit
+                }
+                else {
+                    await ContextLimitConfig.shared.currentLimit()
+                }
             let effectiveContextLimit = hasMediaInput
                 ? min(configuredContextLimit, InferenceSafetyLimits.multimodalContextLimit)
                 : configuredContextLimit

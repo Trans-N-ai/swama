@@ -88,6 +88,7 @@ let package = Package(
         .target(
             name: "SwamaServer",
             dependencies: [
+                .target(name: "SwamaCore"),
                 .target(name: "SwamaKit"),
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -120,6 +121,7 @@ let package = Package(
         .testTarget(
             name: "SwamaKitTests",
             dependencies: [
+                "SwamaCore",
                 "SwamaKit",
                 "SwamaServer",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
