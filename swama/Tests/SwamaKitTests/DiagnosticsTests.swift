@@ -332,7 +332,7 @@ struct DiagnosticsTests {
         #expect(events.map(\.model) == identities.map(Optional.some))
     }
 
-    @Test func embeddingsRequestRelativeModelCannotLeakIntoDiagnostics() async throws {
+    @Test func embeddingsRequestRelativeModelIsRejectedBeforeDiagnostics() async throws {
         let primary = LockedData()
         let recorder = makeRecorder(primary: primary)
         recorder.start(mode: .serve)
@@ -354,11 +354,10 @@ struct DiagnosticsTests {
         #expect(!text.contains("prompt-secret"))
         #expect(!text.contains("poison-input"))
         let modelEvents = try validEvents(primary.data).filter { $0.subsystem == "model" }
-        #expect(modelEvents.map(\.event) == [.modelLoadStarted, .modelLoadFailed])
-        #expect(modelEvents.allSatisfy { $0.model?.hasPrefix("local:") == true })
+        #expect(modelEvents.isEmpty)
     }
 
-    @Test func embeddingsRequestCredentialURLCannotLeakIntoDiagnostics() async throws {
+    @Test func embeddingsRequestCredentialURLIsRejectedBeforeDiagnostics() async throws {
         let primary = LockedData()
         let recorder = makeRecorder(primary: primary)
         recorder.start(mode: .serve)
@@ -383,8 +382,7 @@ struct DiagnosticsTests {
         #expect(!text.contains("example.invalid"))
         #expect(!text.contains("poison-input"))
         let modelEvents = try validEvents(primary.data).filter { $0.subsystem == "model" }
-        #expect(modelEvents.map(\.event) == [.modelLoadStarted, .modelLoadFailed])
-        #expect(modelEvents.allSatisfy { $0.model?.hasPrefix("local:") == true })
+        #expect(modelEvents.isEmpty)
     }
 
     @Test func disabledRecorderHasNoSideEffects() {

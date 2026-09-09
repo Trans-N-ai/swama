@@ -8,7 +8,7 @@ public actor SwamaEngine {
         backend = RuntimeEngineBackend(configuration: configuration)
     }
 
-    init(backend: any SwamaEngineBackend) {
+    package init(backend: any SwamaEngineBackend) {
         self.backend = backend
     }
 
@@ -192,7 +192,7 @@ private extension ContentPart {
 
 // MARK: - SwamaEngineBackend
 
-protocol SwamaEngineBackend: Sendable {
+package protocol SwamaEngineBackend: Sendable {
     func generate(
         _ request: GenerationRequest,
         onEvent: (@Sendable (GenerationEvent) async throws -> Void)?

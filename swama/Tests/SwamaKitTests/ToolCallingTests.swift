@@ -268,6 +268,7 @@ final class ToolCallingTests {
         #expect(message.role == "tool")
         #expect(message.content.textContent == "The weather in Tokyo is 22°C and sunny.")
         #expect(message.content.imageURLs.isEmpty)
+        #expect(message.tool_call_id == "call_123")
     }
 
     @Test func completionRequest_WithToolMessages() throws {
@@ -320,6 +321,7 @@ final class ToolCallingTests {
         let toolMessage = request.messages[2]
         #expect(toolMessage.role == "tool")
         #expect(toolMessage.content.textContent == "The weather in Tokyo is 22°C and sunny.")
+        #expect(toolMessage.tool_call_id == "call_123")
     }
 
     // MARK: - CompletionResponse Tests

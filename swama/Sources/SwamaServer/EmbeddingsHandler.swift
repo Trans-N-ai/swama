@@ -1,7 +1,7 @@
 import Foundation
 import NIOCore
 import NIOHTTP1
-import SwamaKit
+import SwamaCore
 
 // MARK: - EmbeddingsRequest
 
@@ -116,6 +116,20 @@ public enum EmbeddingsHandler {
         body: ByteBuffer,
         channel: Channel
     ) async {
+        await handle(
+            requestHead: requestHead,
+            body: body,
+            channel: channel,
+            engine: ServerCoreEngine.shared
+        )
+    }
+
+    static func handle(
+        requestHead: HTTPRequestHead,
+        body: ByteBuffer,
+        channel: Channel,
+        engine: SwamaEngine
+    ) async {
         do {
             // Parse JSON body
             var mutableBody = body
@@ -145,14 +159,18 @@ public enum EmbeddingsHandler {
                 return
             }
 
-            // Generate embeddings using MLXEmbedders
-            let (embeddings, usage): ([[Float]], EmbeddingUsage)
+            let result: SwamaCore.EmbeddingResponse
             do {
-                (embeddings, usage) = try await modelPool.runEmbeddingWithConcurrencyControl(
-                    modelName: request.model
-                ) { runner in
-                    try await runner.generateEmbeddings(inputs: inputs)
-                }
+                result = try await engine.embed(.init(model: .init(request.model), inputs: inputs))
+            }
+            catch let error as SwamaError {
+                try await sendErrorResponse(
+                    channel: channel,
+                    status: status(for: error),
+                    error: error.message,
+                    requestVersion: requestHead.version
+                )
+                return
             }
             catch {
                 try await sendErrorResponse(
@@ -165,7 +183,7 @@ public enum EmbeddingsHandler {
             }
 
             // Create response
-            let embeddingData = embeddings.enumerated().map { index, embedding in
+            let embeddingData = result.embeddings.enumerated().map { index, embedding in
                 EmbeddingsResponse.EmbeddingData(
                     object: "embedding",
                     embedding: embedding,
@@ -178,8 +196,8 @@ public enum EmbeddingsHandler {
                 data: embeddingData,
                 model: request.model,
                 usage: EmbeddingsResponse.Usage(
-                    promptTokens: usage.promptTokens,
-                    totalTokens: usage.totalTokens
+                    promptTokens: result.usage.promptTokens,
+                    totalTokens: result.usage.totalTokens
                 )
             )
 
@@ -198,6 +216,23 @@ public enum EmbeddingsHandler {
                 error: "Internal server error: \(error.localizedDescription)",
                 requestVersion: requestHead.version
             )
+        }
+    }
+
+    private static func status(for error: SwamaError) -> HTTPResponseStatus {
+        switch error.code {
+        case .contextLimitExceeded,
+             .invalidImage,
+             .invalidRequest:
+            .badRequest
+        case .modelNotFound:
+            .notFound
+        case .backendFailure,
+             .downloadFailed,
+             .embeddingFailed,
+             .modelLoadFailed,
+             .removalFailed:
+            .internalServerError
         }
     }
 
