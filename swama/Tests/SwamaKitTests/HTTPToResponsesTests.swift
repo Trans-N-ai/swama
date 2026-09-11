@@ -275,11 +275,91 @@ struct HTTPToResponsesTests {
         }
     }
 
-    @Test func imageURLSchemesAreRestrictedToWhatTheHostedAPIAccepts() {
+    @Test func malformedImageWireFormsAreRejectedLikeTheChatAdapter() {
+        // Both HTTP adapters share ImageInputParser; these are the exact inputs
+        // that previously reached Core through the weaker Responses-only check.
+        func payload(_ url: String) -> String {
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"\#(url)"}]}]}"#
+        }
         let rejected: [String] = [
-            // A remote caller must not be able to make the host read local files.
-            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"file:///etc/hosts"}]}]}"#,
-            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"/tmp/local.png"}]}]}"#,
+            payload("https://example.com/%zz.png"),          // invalid percent encoding
+            payload("https://example.com/a.png\n"),          // raw trailing newline
+            payload("https://example.com:99999/a.png"),      // port parses, out of range
+            payload("https://[::1]:99999/a.png"),            // bracketed IPv6, out of range
+            // Overflowing ports do NOT parse, so `components.port` is nil and the
+            // range check passes by default; only the explicit-port scan rejects
+            // these. Without them this suite cannot police that guard.
+            payload("https://example.com:999999999999999999999999/a.png"),
+            payload("https://[::1]:999999999999999999999999/a.png"),
+            payload("data:image/pn/g;base64,QQ=="),          // extra slash in subtype
+            payload("data:image/p g;base64,QQ=="),           // space in subtype
+            payload("data:image/png;base64,!!!!"),           // invalid base64
+            payload("data:image/png;base64,")                // empty base64
+        ]
+        for body in rejected {
+            #expect(throws: RejectionReason.self, "must reject: \(body)") {
+                _ = try ResponsesHandler.parse(bytes(body))
+            }
+        }
+        // Control: the supported forms still pass, so this is not a blanket refusal.
+        #expect(throws: Never.self) {
+            _ = try ResponsesHandler.parse(bytes(payload("https://example.com/a.png")))
+            _ = try ResponsesHandler.parse(bytes(payload("data:image/png;base64,QQ==")))
+        }
+    }
+
+    @Test func itemMetadataIsAClosedSchema() {
+        let rejected: [String] = [
+            // status must be the official enum, not any string
+            #"{"model":"m","input":[{"type":"message","role":"user","content":"x","status":"banana"}]}"#,
+            #"{"model":"m","input":[{"type":"function_call","call_id":"c","name":"n","arguments":"{}","status":"banana"}]}"#,
+            #"{"model":"m","input":[{"type":"function_call_output","call_id":"c","output":"o","status":"banana"}]}"#,
+            // an empty id is not an id
+            #"{"model":"m","input":[{"type":"message","role":"user","content":"x","id":""}]}"#,
+            // accepted-and-erased annotations/logprobs must fail closed
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"t","annotations":5}]}]}"#,
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"t","logprobs":"x"}]}]}"#,
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"t","annotations":[{"a":1}]}]}]}"#
+        ]
+        for body in rejected {
+            #expect(throws: RejectionReason.self, "must reject: \(body)") {
+                _ = try ResponsesHandler.parse(bytes(body))
+            }
+        }
+        // Controls: valid status, non-empty id and empty arrays are accepted.
+        #expect(throws: Never.self) {
+            _ = try ResponsesHandler.parse(bytes(
+                #"{"model":"m","input":[{"type":"message","role":"user","content":"x","status":"completed","id":"msg_1"}]}"#))
+            _ = try ResponsesHandler.parse(bytes(
+                #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"t","annotations":[],"logprobs":[]}]}]}"#))
+        }
+    }
+
+    @Test func parallelToolCallsIsEchoedFromTheRequestNotHardcoded() throws {
+        let asked = try ResponsesHandler.parse(bytes(
+            #"{"model":"m","input":"x","parallel_tool_calls":false}"#))
+        #expect(asked.parallelToolCalls == false)
+        let scaffold = ResponsesHandler.baseResponse(
+            id: "resp_1", createdAt: 0, model: "m", parsed: asked, status: "completed")
+        #expect(scaffold["parallel_tool_calls"] as? Bool == false)
+
+        let allowed = try ResponsesHandler.parse(bytes(
+            #"{"model":"m","input":"x","parallel_tool_calls":true}"#))
+        #expect(allowed.parallelToolCalls == true)
+        #expect(ResponsesHandler.baseResponse(
+            id: "r", createdAt: 0, model: "m", parsed: allowed, status: "completed")["parallel_tool_calls"] as? Bool == true)
+
+        // Absent: this server never issues calls concurrently, so it reports false.
+        let absent = try ResponsesHandler.parse(bytes(#"{"model":"m","input":"x"}"#))
+        #expect(absent.parallelToolCalls == false)
+    }
+
+    @Test func imageURLsUseOnlySupportedWireForms() {
+        let rejected: [String] = [
+            // Only the wire forms the hosted API accepts are supported; every
+            // other scheme or shape is an unsupported input.
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"file:///a/b.png"}]}]}"#,
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"/relative/a.png"}]}]}"#,
             #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"ftp://example.com/a.png"}]}]}"#,
             #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:text/plain;base64,QQ=="}]}]}"#,
         ]

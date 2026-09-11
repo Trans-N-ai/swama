@@ -65,6 +65,12 @@ extension ResponsesHandler {
         /// Effective tool_choice ("auto" or "none"), echoed into Response objects:
         /// the official schema requires `tool_choice` and `tools` on every response.
         var toolChoice: String
+        /// Effective `parallel_tool_calls`, echoed into every Response object.
+        /// Absent means `false`: this server never issues tool calls
+        /// concurrently, so reporting the hosted default of `true` would
+        /// describe behaviour it does not have. An explicit `true` is echoed
+        /// back because sequential emission also satisfies "may be parallel".
+        var parallelToolCalls: Bool
         var maxOutputTokens: Int?
         var temperature: Float
         var topP: Float
@@ -121,6 +127,7 @@ extension ResponsesHandler {
             ),
             stream: stream,
             toolChoice: (root["tool_choice"] as? String) ?? "auto",
+            parallelToolCalls: (try? requireBool(root, "parallel_tool_calls")).flatMap { $0 } ?? false,
             maxOutputTokens: options.maxTokens,
             temperature: options.temperature,
             topP: options.topP,
@@ -227,8 +234,9 @@ extension ResponsesHandler {
     /// - `prompt_cache_key`: names OpenAI's server-side prompt cache. This
     ///   server keeps its own local cache keyed by prompt content, so the key is
     ///   accepted and superseded rather than obeyed.
-    /// - `reasoning`: only the empty object. A local model produces no reasoning
-    ///   items, so `effort`/`summary` could not be honoured and are refused.
+    /// - `reasoning`: the empty object, or exactly `summary: "auto"` (what Codex
+    ///   sends). A local model produces no reasoning items, so `effort` and any
+    ///   other summary style could not be honoured and are refused.
     /// - `include`: only the reasoning-content entry Codex always sends; with no
     ///   reasoning items there is nothing to return. Any other entry is refused.
     private static func acceptCodexEnvelope(_ root: [String: Any]) throws {
@@ -366,7 +374,7 @@ extension ResponsesHandler {
 
     private static func buildMessageItem(_ object: [String: Any]) throws -> Message {
         try requireKeys(object, within: ["type", "role", "content", "id", "status"], of: "message item")
-        try requireItemMetadata(object, of: "message item")
+        try requireItemMetadata(object, of: "message item", statuses: ["in_progress", "completed", "incomplete"])
         if let rawRole = object["role"], !(rawRole is String) {
             throw RejectionReason.malformed("message item `role` must be a JSON string")
         }
@@ -399,6 +407,20 @@ extension ResponsesHandler {
                     within: ["type", "text", "annotations", "logprobs"],
                     of: "text content part"
                 )
+                // Echoed by clients replaying our own output. We produce
+                // neither, so only the empty forms are meaningful; anything
+                // else would be accepted and then silently erased.
+                for key in ["annotations", "logprobs"] {
+                    guard let value = partObject[key] else {
+                        continue
+                    }
+                    guard let entries = value as? [Any] else {
+                        throw RejectionReason.malformed("text content part `\(key)` must be a JSON array")
+                    }
+                    guard entries.isEmpty else {
+                        throw RejectionReason.unsupportedField("text content part `\(key)`")
+                    }
+                }
                 guard let text = partObject["text"] as? String else {
                     throw RejectionReason.malformed("text content part requires a string `text`")
                 }
@@ -414,12 +436,17 @@ extension ResponsesHandler {
                         throw RejectionReason.unsupportedField("input_image.detail")
                     }
                 }
-                guard let url = partObject["image_url"] as? String, let parsed = URL(string: url) else {
+                guard let url = partObject["image_url"] as? String else {
                     throw RejectionReason.malformed("input_image requires a valid image_url")
                 }
+                // Same validator as /v1/chat/completions - see ImageInputParser.
+                // Responses previously checked only the scheme and so accepted
+                // malformed inputs that Chat already refused.
+                guard let part = ImageInputParser.contentPart(url) else {
+                    throw RejectionReason.unsupportedField("input_image.image_url")
+                }
 
-                try requireSupportedImageScheme(parsed)
-                content.append(.imageURL(parsed))
+                content.append(part)
 
             default:
                 throw RejectionReason.unsupportedField("content part `\(partType)`")
@@ -432,36 +459,29 @@ extension ResponsesHandler {
         return Message(role: role, content: content)
     }
 
-    /// Only schemes the hosted API actually accepts. Anything else (notably
-    /// `file:`, but equally custom or relative references) is refused before it
-    /// can reach the image loader.
-    private static func requireSupportedImageScheme(_ url: URL) throws {
-        switch url.scheme?.lowercased() {
-        case "http",
-             "https":
-            return
-
-        case "data":
-            guard url.absoluteString.lowercased().hasPrefix("data:image/") else {
-                throw RejectionReason.unsupportedField("input_image.image_url data payload")
+    /// Item envelope fields we accept but do not act on are still a CLOSED
+    /// schema. Typing them was not enough: an arbitrary `status: "banana"` or an
+    /// empty `id` was accepted and then erased, which is indistinguishable from
+    /// support - the same fail-closed rule already applied to `text.format`.
+    private static func requireItemMetadata(
+        _ object: [String: Any],
+        of surface: String,
+        statuses: Set<String>
+    ) throws {
+        if let value = object["id"] {
+            guard let id = value as? String else {
+                throw RejectionReason.malformed("\(surface) `id` must be a JSON string")
             }
-
-            return
-
-        default:
-            throw RejectionReason.unsupportedField("input_image.image_url scheme")
+            guard !id.isEmpty else {
+                throw RejectionReason.malformed("\(surface) `id` must not be empty")
+            }
         }
-    }
-
-    /// Item envelope fields we accept but do not act on still have to be typed:
-    /// a numeric `status` silently ignored is indistinguishable from support.
-    private static func requireItemMetadata(_ object: [String: Any], of surface: String) throws {
-        for key in ["id", "status"] {
-            guard let value = object[key] else {
-                continue
+        if let value = object["status"] {
+            guard let status = value as? String else {
+                throw RejectionReason.malformed("\(surface) `status` must be a JSON string")
             }
-            guard value is String else {
-                throw RejectionReason.malformed("\(surface) `\(key)` must be a JSON string")
+            guard statuses.contains(status) else {
+                throw RejectionReason.unsupportedField("\(surface) status `\(status)`")
             }
         }
     }
@@ -485,7 +505,7 @@ extension ResponsesHandler {
             within: ["type", "call_id", "name", "arguments", "id", "status"],
             of: "function_call item"
         )
-        try requireItemMetadata(object, of: "function_call item")
+        try requireItemMetadata(object, of: "function_call item", statuses: ["in_progress", "completed", "incomplete"])
         guard let callID = object["call_id"] as? String, !callID.isEmpty,
               let name = object["name"] as? String, !name.isEmpty
         else {
@@ -510,7 +530,7 @@ extension ResponsesHandler {
     /// The client-executed tool result for a prior `function_call`.
     private static func buildFunctionCallOutputItem(_ object: [String: Any]) throws -> Message {
         try requireKeys(object, within: ["type", "call_id", "output", "id", "status"], of: "function_call_output item")
-        try requireItemMetadata(object, of: "function_call_output item")
+        try requireItemMetadata(object, of: "function_call_output item", statuses: ["in_progress", "completed", "incomplete"])
         guard let callID = object["call_id"] as? String, !callID.isEmpty else {
             throw RejectionReason.malformed("function_call_output item requires `call_id`")
         }

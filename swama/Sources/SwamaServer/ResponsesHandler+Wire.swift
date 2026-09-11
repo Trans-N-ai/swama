@@ -23,7 +23,7 @@ extension ResponsesHandler {
             "model": model,
             "status": status,
             "output": [[String: Any]](),
-            "parallel_tool_calls": true,
+            "parallel_tool_calls": parsed.parallelToolCalls,
             "tool_choice": parsed.toolChoice,
             "tools": parsed.request.tools.map(toolPayload),
             "temperature": Double(parsed.temperature),
