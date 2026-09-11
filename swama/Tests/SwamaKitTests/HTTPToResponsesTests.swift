@@ -156,8 +156,10 @@ struct HTTPToResponsesTests {
         let rejected: [String] = [
             #"{"model":"m","input":"x","reasoning":{"effort":"low"}}"#,
             #"{"model":"m","input":"x","max_tool_calls":2}"#,
-            #"{"model":"m","input":"x","parallel_tool_calls":false}"#,
             #"{"model":"m","input":"x","service_tier":"flex"}"#,
+            // `parallel_tool_calls:false` is deliberately NOT here: the Codex
+            // profile accepts it and honours it as sequential emission, covered
+            // by `parallelToolCallsFalseIsHonouredAsSequentialEmission`.
             #"{"model":"m","input":"x","text":{"verbosity":"low"}}"#,
             #"{"model":"m","input":"x","text":{"format":{"type":"json_object"}}}"#,
             #"{"model":"m","input":"x","tools":[{"type":"function","name":"f","strict":true,"parameters":{}}]}"#,
@@ -244,6 +246,257 @@ struct HTTPToResponsesTests {
                 _ = try ResponsesHandler.parse(bytes(payload))
             }
         }
+    }
+
+    @Test func acceptedMetadataValuesAreTypedAndIntegersMustFitInInt() {
+        let rejected: [String] = [
+            // 1e100 is integral but saturates through NSNumber.intValue.
+            #"{"model":"m","input":"x","max_output_tokens":1e100}"#,
+            // text.format is accepted only as a bare {"type":"text"}.
+            #"{"model":"m","input":"x","text":{"format":{"type":"text","schema":{}}}}"#,
+            // item envelope fields we accept but ignore still have to be typed.
+            #"{"model":"m","input":[{"type":"message","role":"user","content":"x","status":7}]}"#,
+            #"{"model":"m","input":[{"type":"message","role":"user","content":"x","id":7}]}"#,
+            #"""
+            {"model":"m","input":[{"type":"function_call","call_id":"c","name":"f",
+             "arguments":"{}","status":7}]}
+            """#,
+        ]
+        for payload in rejected {
+            #expect(throws: RejectionReason.self, "must reject: \(payload)") {
+                _ = try ResponsesHandler.parse(bytes(payload))
+            }
+        }
+        // A plain in-range integer and a bare text format still pass.
+        #expect(throws: Never.self) {
+            _ = try ResponsesHandler.parse(bytes(#"""
+            {"model":"m","input":"x","max_output_tokens":128,"text":{"format":{"type":"text"}}}
+            """#))
+        }
+    }
+
+    @Test func imageURLSchemesAreRestrictedToWhatTheHostedAPIAccepts() {
+        let rejected: [String] = [
+            // A remote caller must not be able to make the host read local files.
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"file:///etc/hosts"}]}]}"#,
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"/tmp/local.png"}]}]}"#,
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"ftp://example.com/a.png"}]}]}"#,
+            #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:text/plain;base64,QQ=="}]}]}"#,
+        ]
+        for payload in rejected {
+            #expect(throws: RejectionReason.self, "must reject: \(payload)") {
+                _ = try ResponsesHandler.parse(bytes(payload))
+            }
+        }
+        #expect(throws: Never.self) {
+            _ = try ResponsesHandler.parse(bytes(#"""
+            {"model":"m","input":[{"type":"message","role":"user","content":[
+               {"type":"input_image","image_url":"https://example.com/a.png"},
+               {"type":"input_image","image_url":"data:image/png;base64,QQ=="}]}]}
+            """#))
+        }
+    }
+
+    @Test func nilCallIDToolCallIsNotEmittedTwice() async throws {
+        // Core's ToolCall.id is optional: the same call arriving via callback and
+        // again in the final result must produce exactly one output item.
+        let call = ToolCall(id: nil, name: "lookup", arguments: ["k": .string("v")])
+        let backend = ResponsesStubBackend(
+            response: .init(
+                output: "", toolCalls: [call],
+                usage: .init(promptTokens: 1, completionTokens: 1), finishReason: .toolCall
+            ),
+            events: [.toolCall(call)]
+        )
+        let events = try await runStream(backend: backend, body: #"""
+        {"model":"m","input":"x","stream":true,
+         "tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}
+        """#)
+        let added = events.filter { $0["type"] as? String == "response.output_item.added" }
+        #expect(added.count == 1)
+        let terminal = try #require(events.last?["response"] as? [String: Any])
+        let output = try #require(terminal["output"] as? [[String: Any]])
+        #expect(output.count == 1)
+    }
+
+    @Test func genuinelyRepeatedNilCallIDToolCallsAreBothEmitted() async throws {
+        // Two identical nil-id calls really made twice must not collapse into one.
+        let call = ToolCall(id: nil, name: "lookup", arguments: ["k": .string("v")])
+        let backend = ResponsesStubBackend(
+            response: .init(
+                output: "", toolCalls: [call, call],
+                usage: .init(promptTokens: 1, completionTokens: 1), finishReason: .toolCall
+            ),
+            events: [.toolCall(call)]
+        )
+        let events = try await runStream(backend: backend, body: #"""
+        {"model":"m","input":"x","stream":true,
+         "tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}
+        """#)
+        let terminal = try #require(events.last?["response"] as? [String: Any])
+        let output = try #require(terminal["output"] as? [[String: Any]])
+        #expect(output.count == 2)
+    }
+
+    @Test func codexEnvelopeIsAcceptedWithExplicitLocalSemantics() throws {
+        // The fixed envelope Codex CLI always sends must get through; each field
+        // has a documented local meaning rather than being silently honoured.
+        let parsed = try ResponsesHandler.parse(bytes(#"""
+        {"model":"m","input":"hi","stream":true,
+         "client_metadata":{"session_id":"s-1","cli_version":"0.147.0"},
+         "prompt_cache_key":"codex-session-1",
+         "reasoning":{"summary":"auto"},
+         "include":["reasoning.encrypted_content"],
+         "parallel_tool_calls":false,
+         "tools":[{"type":"function","name":"shell","parameters":{"type":"object"}}]}
+        """#))
+        #expect(parsed.request.model == ModelID("m"))
+        #expect(parsed.request.tools.count == 1)
+        #expect(parsed.stream == true)
+    }
+
+    @Test func adjacentSystemTurnsAreMergedForTheLocalChatTemplate() throws {
+        // `instructions` and `developer` items both lower to system turns, which
+        // every real Codex request contains together. Two adjacent system turns
+        // make the local backend fail, so they are concatenated in order.
+        let parsed = try ResponsesHandler.parse(bytes(#"""
+        {"model":"m","instructions":"top-level guidance",
+         "input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"dev one"}]},
+                  {"type":"message","role":"developer","content":[{"type":"input_text","text":"dev two"}]},
+                  {"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+        """#))
+        #expect(parsed.request.messages.count == 2)
+        #expect(parsed.request.messages[0].role == .system)
+        #expect(parsed.request.messages[0].content == [
+            .text("top-level guidance"), .text("dev one"), .text("dev two")
+        ])
+        #expect(parsed.request.messages[1].role == .user)
+        // No two system turns may remain adjacent anywhere in the sequence.
+        for pair in zip(parsed.request.messages, parsed.request.messages.dropFirst()) {
+            #expect(!(pair.0.role == .system && pair.1.role == .system))
+        }
+    }
+
+    @Test func mergingSystemTurnsPreservesOrderAndDoesNotTouchOtherRoles() {
+        let input: [Message] = [
+            Message(role: .system, text: "a"),
+            Message(role: .system, text: "b"),
+            Message(role: .user, text: "u1"),
+            Message(role: .system, text: "c"),
+            Message(role: .assistant, text: "r"),
+            Message(role: .user, text: "u2")
+        ]
+        let merged = ResponsesHandler.mergingAdjacentSystemTurns(input)
+        #expect(merged.map(\.role) == [.system, .user, .system, .assistant, .user])
+        #expect(merged[0].content == [.text("a"), .text("b")])
+        // A lone system turn later in the conversation is left exactly as it was.
+        #expect(merged[2].content == [.text("c")])
+        #expect(merged[4].content == [.text("u2")])
+    }
+
+    @Test func codexWebSearchToolIsAcceptedButNeverReachesTheModel() throws {
+        // Codex CLI 0.147.0 always sends this tool and no client configuration
+        // removes it. We accept the exact offline-only shape and DROP it, so the
+        // model is never offered a capability this server cannot perform.
+        let parsed = try ResponsesHandler.parse(bytes(#"""
+        {"model":"m","input":"hi",
+         "tools":[{"type":"function","name":"exec_command","parameters":{"type":"object"}},
+                  {"type":"web_search","external_web_access":false},
+                  {"type":"function","name":"update_plan","parameters":{"type":"object"}}]}
+        """#))
+        // The request is accepted...
+        #expect(parsed.request.tools.count == 2)
+        // ...and what the model can see contains ONLY the real function tools.
+        #expect(parsed.request.tools.map(\.name).sorted() == ["exec_command", "update_plan"])
+        #expect(!parsed.request.tools.contains { $0.name.contains("web_search") })
+    }
+
+    @Test func onlyTheExactOfflineWebSearchShapeIsAccepted() {
+        let rejected: [String] = [
+            // Real web access is a capability we do not have; silence would lie.
+            #"{"model":"m","input":"x","tools":[{"type":"web_search","external_web_access":true}]}"#,
+            // Absent flag is not the offline shape; it must not default to accepted.
+            #"{"model":"m","input":"x","tools":[{"type":"web_search"}]}"#,
+            #"{"model":"m","input":"x","tools":[{"type":"web_search","external_web_access":null}]}"#,
+            #"{"model":"m","input":"x","tools":[{"type":"web_search","external_web_access":"false"}]}"#,
+            // Any richer configuration (filters, domains, ...) is a request for
+            // behaviour we cannot honour.
+            #"{"model":"m","input":"x","tools":[{"type":"web_search","external_web_access":false,"filters":{"allowed_domains":["a.com"]}}]}"#,
+            #"{"model":"m","input":"x","tools":[{"type":"web_search","external_web_access":false,"search_context_size":"low"}]}"#,
+            // Other hosted kinds stay refused outright.
+            #"{"model":"m","input":"x","tools":[{"type":"file_search"}]}"#,
+            #"{"model":"m","input":"x","tools":[{"type":"namespace","name":"multi_agent_v1","tools":[]}]}"#,
+        ]
+        for payload in rejected {
+            #expect(throws: RejectionReason.self, "must reject: \(payload)") {
+                _ = try ResponsesHandler.parse(bytes(payload))
+            }
+        }
+    }
+
+    @Test func toolChoiceCannotForceTheStrippedWebSearchTool() {
+        // The tool is gone from the model's view, so a forced choice naming it
+        // could never be satisfied; it must fail loudly rather than silently.
+        let rejected: [String] = [
+            #"{"model":"m","input":"x","tool_choice":"web_search","tools":[{"type":"web_search","external_web_access":false}]}"#,
+            #"{"model":"m","input":"x","tool_choice":{"type":"web_search"},"tools":[{"type":"web_search","external_web_access":false}]}"#,
+        ]
+        for payload in rejected {
+            #expect(throws: RejectionReason.self, "must reject: \(payload)") {
+                _ = try ResponsesHandler.parse(bytes(payload))
+            }
+        }
+    }
+
+    @Test func anythingRicherThanTheCodexEnvelopeStillFailsClosed() {
+        let rejected: [String] = [
+            // Reasoning we cannot perform must not look honoured.
+            #"{"model":"m","input":"x","reasoning":{"effort":"high"}}"#,
+            #"{"model":"m","input":"x","reasoning":{"summary":"detailed"}}"#,
+            #"{"model":"m","input":"x","reasoning":{"summary":7}}"#,
+            #"{"model":"m","input":"x","reasoning":{"summary":"auto","effort":"low"}}"#,
+            // Only the one include entry Codex sends; nothing else exists locally.
+            #"{"model":"m","input":"x","include":["message.output_text.logprobs"]}"#,
+            #"{"model":"m","input":"x","include":["reasoning.encrypted_content","file_search_call.results"]}"#,
+            // Envelope fields are still strictly typed.
+            #"{"model":"m","input":"x","client_metadata":"session-1"}"#,
+            #"{"model":"m","input":"x","prompt_cache_key":42}"#,
+            #"{"model":"m","input":"x","reasoning":"high"}"#,
+            #"{"model":"m","input":"x","include":"reasoning.encrypted_content"}"#,
+            // Hosted tool types Codex offers by default remain refused.
+            #"{"model":"m","input":"x","tools":[{"type":"web_search"}]}"#,
+        ]
+        for payload in rejected {
+            #expect(throws: RejectionReason.self, "must reject: \(payload)") {
+                _ = try ResponsesHandler.parse(bytes(payload))
+            }
+        }
+    }
+
+    @Test func parallelToolCallsFalseIsHonouredAsSequentialEmission() async throws {
+        // We never execute tools; `false` asks that calls not be issued at once,
+        // and the stream emits each function item's lifecycle in order.
+        let first = ToolCall(id: "call-a", name: "shell", arguments: ["cmd": .string("ls")])
+        let second = ToolCall(id: "call-b", name: "shell", arguments: ["cmd": .string("pwd")])
+        let backend = ResponsesStubBackend(
+            response: .init(
+                output: "", toolCalls: [first, second],
+                usage: .init(promptTokens: 1, completionTokens: 1), finishReason: .toolCall
+            ),
+            events: [.toolCall(first), .toolCall(second)]
+        )
+        let events = try await runStream(backend: backend, body: #"""
+        {"model":"m","input":"x","stream":true,"parallel_tool_calls":false,
+         "tools":[{"type":"function","name":"shell","parameters":{"type":"object"}}]}
+        """#)
+        let indexes = events
+            .filter { $0["type"] as? String == "response.output_item.added" }
+            .compactMap { $0["output_index"] as? Int }
+        #expect(indexes == [0, 1])
+        let terminal = try #require(events.last?["response"] as? [String: Any])
+        let output = try #require(terminal["output"] as? [[String: Any]])
+        #expect(output.count == 2)
+        #expect(output.compactMap { $0["call_id"] as? String } == ["call-a", "call-b"])
     }
 
     // MARK: Non-streaming response object

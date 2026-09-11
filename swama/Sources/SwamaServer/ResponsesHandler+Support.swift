@@ -98,7 +98,7 @@ extension ResponsesHandler {
 
         try rejectUnsupported(root)
 
-        let messages = try buildMessages(root)
+        let messages = try mergingAdjacentSystemTurns(buildMessages(root))
         guard !messages.isEmpty else {
             throw RejectionReason.emptyInput
         }
@@ -129,9 +129,9 @@ extension ResponsesHandler {
     }
 
     /// The complete top-level request surface this server implements. Anything
-    /// else — official-but-unimplemented (`reasoning`, `metadata`,
-    /// `context_management`, `stream_options`, ...) or plain unknown — is a
-    /// hard 400: an exact allowlist, not an enumerated blocklist.
+    /// else — official-but-unimplemented (`metadata`, `context_management`,
+    /// `stream_options`, ...) or plain unknown — is a hard 400: an exact
+    /// allowlist, not an enumerated blocklist.
     private static let supportedTopLevelFields: Set<String> = [
         "model",
         "input",
@@ -147,6 +147,13 @@ extension ResponsesHandler {
         "store",
         "background",
         "parallel_tool_calls",
+        // Codex CLI interop envelope: accepted with strict typing and an
+        // explicit local meaning (see `acceptCodexEnvelope`), never silently
+        // honoured. Anything richer than this fixed envelope still fails closed.
+        "client_metadata",
+        "prompt_cache_key",
+        "reasoning",
+        "include",
     ]
 
     private static func rejectUnsupported(_ root: [String: Any]) throws {
@@ -159,9 +166,12 @@ extension ResponsesHandler {
         if let background = try requireBool(root, "background"), background {
             throw RejectionReason.unsupportedField("background:true")
         }
-        if let parallel = try requireBool(root, "parallel_tool_calls"), !parallel {
-            throw RejectionReason.unsupportedField("parallel_tool_calls:false")
-        }
+        // `parallel_tool_calls` asks how tool calls may be issued. This server
+        // never executes tools itself and always emits function-call items one
+        // after another, which is exactly what `false` asks for; `true` is never
+        // exceeded either. So only its type is enforced.
+        _ = try requireBool(root, "parallel_tool_calls")
+        try acceptCodexEnvelope(root)
         // Structured output. Plain `text.format.type == "text"` is the default
         // behaviour, not Structured Outputs, and must remain accepted.
         if let text = root["text"] {
@@ -179,6 +189,9 @@ extension ResponsesHandler {
                     throw RejectionReason.malformed("`text.format` must be an object with a string `type`")
                 }
 
+                // Accepting the object but ignoring its other keys would let a
+                // schema request look honoured; plain text carries no options.
+                try requireKeys(formatObject, within: ["type"], of: "text.format")
                 if formatType != "text" {
                     throw RejectionReason.unsupportedField("text.format")
                 }
@@ -205,6 +218,58 @@ extension ResponsesHandler {
         }
     }
 
+    /// The fixed, non-reasoning request envelope Codex CLI always sends. Each
+    /// field is strictly typed and then given an explicit local meaning; none is
+    /// honoured silently:
+    ///
+    /// - `client_metadata`: client-side tracing only, carries no request
+    ///   semantics, so it is validated and ignored.
+    /// - `prompt_cache_key`: names OpenAI's server-side prompt cache. This
+    ///   server keeps its own local cache keyed by prompt content, so the key is
+    ///   accepted and superseded rather than obeyed.
+    /// - `reasoning`: only the empty object. A local model produces no reasoning
+    ///   items, so `effort`/`summary` could not be honoured and are refused.
+    /// - `include`: only the reasoning-content entry Codex always sends; with no
+    ///   reasoning items there is nothing to return. Any other entry is refused.
+    private static func acceptCodexEnvelope(_ root: [String: Any]) throws {
+        if let metadata = root["client_metadata"], !(metadata is [String: Any]) {
+            throw RejectionReason.malformed("`client_metadata` must be a JSON object")
+        }
+        if let key = root["prompt_cache_key"], !(key is String) {
+            throw RejectionReason.malformed("`prompt_cache_key` must be a JSON string")
+        }
+        if let reasoning = root["reasoning"] {
+            guard let object = reasoning as? [String: Any] else {
+                throw RejectionReason.malformed("`reasoning` must be a JSON object")
+            }
+            // Empty, or only `summary: "auto"` — which is what Codex actually
+            // sends. `auto` leaves the choice to the server, and a local model
+            // emits no reasoning items, so producing none satisfies it. An
+            // explicit `effort`, or a summary style we cannot produce, is refused.
+            try requireKeys(object, within: ["summary"], of: "reasoning")
+            if let summary = object["summary"] {
+                guard let mode = summary as? String else {
+                    throw RejectionReason.malformed("`reasoning.summary` must be a JSON string")
+                }
+
+                guard mode == "auto" else {
+                    throw RejectionReason.unsupportedField("reasoning.summary")
+                }
+            }
+        }
+        if let include = root["include"] {
+            guard let items = include as? [Any] else {
+                throw RejectionReason.malformed("`include` must be a JSON array")
+            }
+
+            for item in items {
+                guard let entry = item as? String, entry == "reasoning.encrypted_content" else {
+                    throw RejectionReason.unsupportedField("include")
+                }
+            }
+        }
+    }
+
     private static func rejectUnforceableToolChoice(_ choice: Any) throws {
         if let string = choice as? String {
             switch string {
@@ -222,6 +287,38 @@ extension ResponsesHandler {
     }
 
     // MARK: input -> [Message]
+
+    /// The local chat template cannot consume two adjacent `system` turns — the
+    /// backend fails outright (reproducible on `/v1/chat/completions` too, so
+    /// this is a runtime limitation rather than something this adapter invents).
+    ///
+    /// The Responses API produces exactly that shape for every real client:
+    /// top-level `instructions` lowers to a system turn, and `developer` role
+    /// items lower to system turns as well, so Codex CLI always yields two or
+    /// more in a row. Concatenating their parts is a faithful lowering — layered
+    /// guidance in order, nothing dropped or reordered — and is what makes the
+    /// endpoint usable at all. The underlying runtime limitation is tracked
+    /// separately; it also affects the chat endpoint, which this cannot fix.
+    static func mergingAdjacentSystemTurns(_ messages: [Message]) -> [Message] {
+        var merged: [Message] = []
+        for message in messages {
+            if message.role == .system,
+               let previous = merged.last,
+               previous.role == .system,
+               previous.toolCalls.isEmpty, message.toolCalls.isEmpty
+            {
+                merged[merged.count - 1] = Message(
+                    role: .system,
+                    content: previous.content + message.content
+                )
+                continue
+            }
+
+            merged.append(message)
+        }
+
+        return merged
+    }
 
     private static func buildMessages(_ root: [String: Any]) throws -> [Message] {
         var messages: [Message] = []
@@ -269,6 +366,7 @@ extension ResponsesHandler {
 
     private static func buildMessageItem(_ object: [String: Any]) throws -> Message {
         try requireKeys(object, within: ["type", "role", "content", "id", "status"], of: "message item")
+        try requireItemMetadata(object, of: "message item")
         if let rawRole = object["role"], !(rawRole is String) {
             throw RejectionReason.malformed("message item `role` must be a JSON string")
         }
@@ -316,12 +414,12 @@ extension ResponsesHandler {
                         throw RejectionReason.unsupportedField("input_image.detail")
                     }
                 }
-                if let url = partObject["image_url"] as? String, let parsed = URL(string: url) {
-                    content.append(.imageURL(parsed))
-                }
-                else {
+                guard let url = partObject["image_url"] as? String, let parsed = URL(string: url) else {
                     throw RejectionReason.malformed("input_image requires a valid image_url")
                 }
+
+                try requireSupportedImageScheme(parsed)
+                content.append(.imageURL(parsed))
 
             default:
                 throw RejectionReason.unsupportedField("content part `\(partType)`")
@@ -332,6 +430,40 @@ extension ResponsesHandler {
         }
 
         return Message(role: role, content: content)
+    }
+
+    /// Only schemes the hosted API actually accepts. Anything else (notably
+    /// `file:`, but equally custom or relative references) is refused before it
+    /// can reach the image loader.
+    private static func requireSupportedImageScheme(_ url: URL) throws {
+        switch url.scheme?.lowercased() {
+        case "http",
+             "https":
+            return
+
+        case "data":
+            guard url.absoluteString.lowercased().hasPrefix("data:image/") else {
+                throw RejectionReason.unsupportedField("input_image.image_url data payload")
+            }
+
+            return
+
+        default:
+            throw RejectionReason.unsupportedField("input_image.image_url scheme")
+        }
+    }
+
+    /// Item envelope fields we accept but do not act on still have to be typed:
+    /// a numeric `status` silently ignored is indistinguishable from support.
+    private static func requireItemMetadata(_ object: [String: Any], of surface: String) throws {
+        for key in ["id", "status"] {
+            guard let value = object[key] else {
+                continue
+            }
+            guard value is String else {
+                throw RejectionReason.malformed("\(surface) `\(key)` must be a JSON string")
+            }
+        }
     }
 
     /// Structural allowlist for one object: any key outside the schema is a 400.
@@ -353,6 +485,7 @@ extension ResponsesHandler {
             within: ["type", "call_id", "name", "arguments", "id", "status"],
             of: "function_call item"
         )
+        try requireItemMetadata(object, of: "function_call item")
         guard let callID = object["call_id"] as? String, !callID.isEmpty,
               let name = object["name"] as? String, !name.isEmpty
         else {
@@ -377,6 +510,7 @@ extension ResponsesHandler {
     /// The client-executed tool result for a prior `function_call`.
     private static func buildFunctionCallOutputItem(_ object: [String: Any]) throws -> Message {
         try requireKeys(object, within: ["type", "call_id", "output", "id", "status"], of: "function_call_output item")
+        try requireItemMetadata(object, of: "function_call_output item")
         guard let callID = object["call_id"] as? String, !callID.isEmpty else {
             throw RejectionReason.malformed("function_call_output item requires `call_id`")
         }
@@ -430,11 +564,21 @@ extension ResponsesHandler {
         guard let value = root[key] else {
             return nil
         }
+
+        // `1e100` is integral but saturates through `intValue`; require a finite
+        // value that actually fits in Int before converting.
         guard let number = value as? NSNumber,
-              CFGetTypeID(number as CFTypeRef) != CFBooleanGetTypeID(),
-              number.doubleValue == number.doubleValue.rounded()
+              CFGetTypeID(number as CFTypeRef) != CFBooleanGetTypeID()
         else {
             throw RejectionReason.malformed("`\(key)` must be a JSON integer")
+        }
+
+        let double = number.doubleValue
+        guard double.isFinite,
+              double == double.rounded(),
+              double >= -9_007_199_254_740_992, double <= 9_007_199_254_740_992
+        else {
+            throw RejectionReason.malformed("`\(key)` must be an integer within the supported range")
         }
 
         return number.intValue
@@ -464,17 +608,42 @@ extension ResponsesHandler {
                 throw RejectionReason.malformed("tools must be objects")
             }
 
-            try requireKeys(
-                object,
-                within: ["type", "name", "description", "parameters", "strict"],
-                of: "tool"
-            )
+            // Check the tool type before its key allowlist: a hosted tool kind
+            // carries its own fields, and reporting an unexpected key there
+            // hides the real reason (the kind itself is unsupported).
             guard let type = object["type"] as? String else {
                 throw RejectionReason.malformed("tool requires a string `type`")
+            }
+            if type == "web_search" {
+                // Codex CLI 0.147.0 advertises this unconditionally; no client
+                // configuration removes it (`tools.web_search=false` only flips
+                // `external_web_access`). Refusing it outright would make the
+                // CLI unusable against this server, so the exact offline-only
+                // shape is accepted and then DROPPED before the model sees it.
+                //
+                // This is a deliberate, narrow compatibility DEGRADATION, not
+                // support: per OpenAI's reference, `external_web_access:false`
+                // does not disable search — it runs web search in an
+                // offline/cache-only mode over OpenAI's own index. Swama has no
+                // such index, so it performs no search at all and never emits a
+                // `web_search_call`. Any request that actually needs search
+                // capability is unsupported here.
+                try requireKeys(object, within: ["type", "external_web_access"], of: "web_search tool")
+                guard let offline = try requireBool(object, "external_web_access"), offline == false else {
+                    throw RejectionReason.unsupportedToolType("web_search")
+                }
+
+                continue
             }
             guard type == "function" else {
                 throw RejectionReason.unsupportedToolType(type)
             }
+
+            try requireKeys(
+                object,
+                within: ["type", "name", "description", "parameters", "strict"],
+                of: "function tool"
+            )
             guard let name = object["name"] as? String, !name.isEmpty else {
                 throw RejectionReason.malformed("function tool requires a name")
             }

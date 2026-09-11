@@ -78,6 +78,18 @@ public enum ResponsesHandler {
         }
     }
 
+    /// Identity used to reconcile an already-announced streamed tool call with
+    /// the final Core result. A non-nil `call_id` is authoritative; otherwise the
+    /// call is identified by name and arguments, and each announced call is
+    /// consumed at most once so a genuine repeat is still emitted.
+    static func isSameToolCall(_ announced: ToolCall, _ final: ToolCall) -> Bool {
+        if let announcedID = announced.id, let finalID = final.id {
+            return announcedID == finalID
+        }
+
+        return announced.name == final.name && announced.arguments == final.arguments
+    }
+
     /// Full typed lifecycle of one function-call output item; the assembler
     /// slot guarantees the terminal response reuses the same id and index.
     private static func emitFunctionCallLifecycle(
@@ -195,15 +207,19 @@ public enum ResponsesHandler {
 
             // The final Core result is authoritative for tool calls too: a call
             // that produced no callback event must still get its full item
-            // lifecycle and terminal presence (deduplicated by call_id).
-            let announcedCallIDs = await Set(outputs.records.compactMap { record -> String? in
+            // lifecycle and terminal presence. `ToolCall.id` is optional in Core,
+            // so reconciliation consumes announced calls one at a time instead of
+            // keying on a possibly-nil id — otherwise a nil-id call announced by
+            // the callback would be emitted a second time from the final result.
+            var unmatched = await outputs.records.compactMap { record -> ToolCall? in
                 if case let .functionCall(_, toolCall) = record {
-                    return toolCall.id
+                    return toolCall
                 }
                 return nil
-            })
+            }
             for toolCall in result.toolCalls {
-                if let callID = toolCall.id, announcedCallIDs.contains(callID) {
+                if let index = unmatched.firstIndex(where: { Self.isSameToolCall($0, toolCall) }) {
+                    unmatched.remove(at: index)
                     continue
                 }
                 try await emitFunctionCallLifecycle(
