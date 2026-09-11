@@ -114,6 +114,65 @@ struct HTTPToCoreTests {
         )])
     }
 
+    @Test func chatImageURLsUseOnlySupportedWireForms() throws {
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        let data = Data(#"""
+        {"model":"m","messages":[{"role":"user","content":[
+          {"type":"image_url","image_url":{"url":"https://example.com/image.png"}},
+          {"type":"image_url","image_url":{"url":"https://example.com/image%20name.png"}},
+          {"type":"image_url","image_url":{"url":"https://[::1]:65535/image.png"}},
+          {"type":"image_url","image_url":{"url":"data:image/png;base64,\#(png)"}},
+          {"type":"image_url","image_url":{"url":"data:image/svg+xml;base64,\#(png)"}},
+          {"type":"image_url","image_url":{"url":"data:image/vnd.example+json;base64,\#(png)"}}
+        ]}]}
+        """#.utf8)
+        let payload = try JSONDecoder().decode(CompletionsHandler.CompletionRequest.self, from: data)
+        let request = try CompletionsHandler.coreRequest(from: payload)
+
+        let expectedURL = try #require(URL(string: "https://example.com/image.png"))
+        let expectedEscapedURL = try #require(URL(string: "https://example.com/image%20name.png"))
+        let expectedIPv6URL = try #require(URL(string: "https://[::1]:65535/image.png"))
+        let expectedData = try #require(Data(base64Encoded: png))
+        #expect(request.messages[0].content == [
+            .imageURL(expectedURL),
+            .imageURL(expectedEscapedURL),
+            .imageURL(expectedIPv6URL),
+            .imageData(expectedData, mediaType: "image/png"),
+            .imageData(expectedData, mediaType: "image/svg+xml"),
+            .imageData(expectedData, mediaType: "image/vnd.example+json"),
+        ])
+
+        for value in [
+            "relative/image.png",
+            "file:///tmp/image.png",
+            "ftp://example.com/image.png",
+            "https://user:password@example.com/image.png",
+            "data:text/plain;base64,SGVsbG8=",
+            "data:image/png,not-base64",
+            "data:image/png;base64,not-base64",
+            "https://example.com/%zz",
+            "https://example.com/image.png\n",
+            "https://example.com:65536/image.png",
+            "https://example.com:999999999999999999999999/image.png",
+            "https://[::1]:999999999999999999999999/image.png",
+            "data:image/png/extra;base64,\(png)",
+            "data:image/png extra;base64,\(png)",
+        ] {
+            let encodedValue = try #require(String(data: JSONEncoder().encode(value), encoding: .utf8))
+            let wire = Data(#"""
+            {"model":"m","messages":[{"role":"user","content":[
+              {"type":"image_url","image_url":{"url":\#(encodedValue)}}
+            ]}]}
+            """#.utf8)
+            let invalid = try JSONDecoder().decode(CompletionsHandler.CompletionRequest.self, from: wire)
+            #expect(throws: CompletionsError.self, "must reject: \(value)") {
+                _ = try CompletionsHandler.coreRequest(from: invalid)
+            }
+        }
+
+        #expect(CompletionsError.invalidImageURL.localizedDescription == "Invalid image URL")
+    }
+
     @Test func nonStreamingHandlerUsesInjectedCoreAndPreservesWireResponse() async throws {
         let backend = HTTPStubBackend(
             generationResponse: .init(
