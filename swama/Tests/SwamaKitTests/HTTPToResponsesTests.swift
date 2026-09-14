@@ -282,19 +282,19 @@ struct HTTPToResponsesTests {
             #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"\#(url)"}]}]}"#
         }
         let rejected: [String] = [
-            payload("https://example.com/%zz.png"),          // invalid percent encoding
-            payload("https://example.com/a.png\n"),          // raw trailing newline
-            payload("https://example.com:99999/a.png"),      // port parses, out of range
-            payload("https://[::1]:99999/a.png"),            // bracketed IPv6, out of range
+            payload("https://example.com/%zz.png"), // invalid percent encoding
+            payload("https://example.com/a.png\n"), // raw trailing newline
+            payload("https://example.com:99999/a.png"), // port parses, out of range
+            payload("https://[::1]:99999/a.png"), // bracketed IPv6, out of range
             // Overflowing ports do NOT parse, so `components.port` is nil and the
             // range check passes by default; only the explicit-port scan rejects
             // these. Without them this suite cannot police that guard.
             payload("https://example.com:999999999999999999999999/a.png"),
             payload("https://[::1]:999999999999999999999999/a.png"),
-            payload("data:image/pn/g;base64,QQ=="),          // extra slash in subtype
-            payload("data:image/p g;base64,QQ=="),           // space in subtype
-            payload("data:image/png;base64,!!!!"),           // invalid base64
-            payload("data:image/png;base64,")                // empty base64
+            payload("data:image/pn/g;base64,QQ=="), // extra slash in subtype
+            payload("data:image/p g;base64,QQ=="), // space in subtype
+            payload("data:image/png;base64,!!!!"), // invalid base64
+            payload("data:image/png;base64,") // empty base64
         ]
         for body in rejected {
             #expect(throws: RejectionReason.self, "must reject: \(body)") {
@@ -329,25 +329,33 @@ struct HTTPToResponsesTests {
         // Controls: valid status, non-empty id and empty arrays are accepted.
         #expect(throws: Never.self) {
             _ = try ResponsesHandler.parse(bytes(
-                #"{"model":"m","input":[{"type":"message","role":"user","content":"x","status":"completed","id":"msg_1"}]}"#))
+                #"{"model":"m","input":[{"type":"message","role":"user","content":"x","status":"completed","id":"msg_1"}]}"#
+            ))
             _ = try ResponsesHandler.parse(bytes(
-                #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"t","annotations":[],"logprobs":[]}]}]}"#))
+                #"{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"t","annotations":[],"logprobs":[]}]}]}"#
+            ))
         }
     }
 
     @Test func parallelToolCallsIsEchoedFromTheRequestNotHardcoded() throws {
         let asked = try ResponsesHandler.parse(bytes(
-            #"{"model":"m","input":"x","parallel_tool_calls":false}"#))
+            #"{"model":"m","input":"x","parallel_tool_calls":false}"#
+        ))
         #expect(asked.parallelToolCalls == false)
         let scaffold = ResponsesHandler.baseResponse(
-            id: "resp_1", createdAt: 0, model: "m", parsed: asked, status: "completed")
+            id: "resp_1", createdAt: 0, model: "m", parsed: asked, status: "completed"
+        )
         #expect(scaffold["parallel_tool_calls"] as? Bool == false)
 
         let allowed = try ResponsesHandler.parse(bytes(
-            #"{"model":"m","input":"x","parallel_tool_calls":true}"#))
+            #"{"model":"m","input":"x","parallel_tool_calls":true}"#
+        ))
         #expect(allowed.parallelToolCalls == true)
         #expect(ResponsesHandler.baseResponse(
-            id: "r", createdAt: 0, model: "m", parsed: allowed, status: "completed")["parallel_tool_calls"] as? Bool == true)
+            id: "r", createdAt: 0, model: "m", parsed: allowed, status: "completed"
+        )["parallel_tool_calls"] as? Bool ==
+            true
+        )
 
         // Absent: this server never issues calls concurrently, so it reports false.
         let absent = try ResponsesHandler.parse(bytes(#"{"model":"m","input":"x"}"#))

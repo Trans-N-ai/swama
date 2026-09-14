@@ -127,7 +127,7 @@ extension ResponsesHandler {
             ),
             stream: stream,
             toolChoice: (root["tool_choice"] as? String) ?? "auto",
-            parallelToolCalls: (try? requireBool(root, "parallel_tool_calls")).flatMap { $0 } ?? false,
+            parallelToolCalls: (try? requireBool(root, "parallel_tool_calls")).flatMap(\.self) ?? false,
             maxOutputTokens: options.maxTokens,
             temperature: options.temperature,
             topP: options.topP,
@@ -250,6 +250,7 @@ extension ResponsesHandler {
             guard let object = reasoning as? [String: Any] else {
                 throw RejectionReason.malformed("`reasoning` must be a JSON object")
             }
+
             // Empty, or only `summary: "auto"` — which is what Codex actually
             // sends. `auto` leaves the choice to the server, and a local model
             // emits no reasoning items, so producing none satisfies it. An
@@ -259,7 +260,6 @@ extension ResponsesHandler {
                 guard let mode = summary as? String else {
                     throw RejectionReason.malformed("`reasoning.summary` must be a JSON string")
                 }
-
                 guard mode == "auto" else {
                     throw RejectionReason.unsupportedField("reasoning.summary")
                 }
@@ -439,6 +439,7 @@ extension ResponsesHandler {
                 guard let url = partObject["image_url"] as? String else {
                     throw RejectionReason.malformed("input_image requires a valid image_url")
                 }
+
                 // Same validator as /v1/chat/completions - see ImageInputParser.
                 // Responses previously checked only the scheme and so accepted
                 // malformed inputs that Chat already refused.
@@ -530,7 +531,11 @@ extension ResponsesHandler {
     /// The client-executed tool result for a prior `function_call`.
     private static func buildFunctionCallOutputItem(_ object: [String: Any]) throws -> Message {
         try requireKeys(object, within: ["type", "call_id", "output", "id", "status"], of: "function_call_output item")
-        try requireItemMetadata(object, of: "function_call_output item", statuses: ["in_progress", "completed", "incomplete"])
+        try requireItemMetadata(
+            object,
+            of: "function_call_output item",
+            statuses: ["in_progress", "completed", "incomplete"]
+        )
         guard let callID = object["call_id"] as? String, !callID.isEmpty else {
             throw RejectionReason.malformed("function_call_output item requires `call_id`")
         }
@@ -634,6 +639,7 @@ extension ResponsesHandler {
             guard let type = object["type"] as? String else {
                 throw RejectionReason.malformed("tool requires a string `type`")
             }
+
             if type == "web_search" {
                 // Codex CLI 0.147.0 advertises this unconditionally; no client
                 // configuration removes it (`tools.web_search=false` only flips
