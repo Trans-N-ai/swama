@@ -12,7 +12,7 @@
 ## ✨ Features
 
 - 🚀 **High Performance**: Built on Apple MLX framework, optimized for Apple Silicon
-- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/embeddings`, `/v1/audio/transcriptions`, and `/v1/audio/speech` (experimental) endpoint support with tool calling
+- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/responses` (honest subset, see the support matrix below), `/v1/embeddings`, `/v1/audio/transcriptions`, and `/v1/audio/speech` (experimental) endpoint support with tool calling
 - 📱 **Menu Bar App**: Elegant macOS native menu bar integration
 - 💻 **Command Line Tools**: Complete CLI support for model management and inference
 - 🖼️ **Multimodal Support**: Support for both text and image inputs
@@ -198,9 +198,74 @@ swama serve --host 0.0.0.0 --port 28100
 
 #### 🔌 OpenAI Compatible API
 
-Swama provides a fully OpenAI-compatible API endpoint, allowing you to use it with existing tools and integrations:
+Swama serves OpenAI-compatible endpoints (`/v1/models`, `/v1/chat/completions`,
+`/v1/responses`, `/v1/embeddings`, `/v1/audio/transcriptions`,
+`/v1/audio/speech`), allowing you to use it with existing tools and
+integrations. Compatibility is scoped to what a local runtime can honestly
+provide — see the endpoint notes below.
 
 Note: `/v1/audio/speech` is experimental.
+
+##### `/v1/responses` support matrix
+
+`POST /v1/responses` implements an honest, stateless subset of the OpenAI
+Responses API:
+
+- **Supported**: string or message-item `input`, `instructions`, `input_text`
+  and `input_image` parts, custom `function` tools including multi-turn
+  `function_call` / `function_call_output` items, `tool_choice` `"auto"`/`"none"`,
+  basic sampling (`temperature`, `top_p`, `max_output_tokens`), non-streaming
+  `Response` objects, and typed SSE streaming with monotonic `sequence_number`.
+- **Accepted with an explicit local meaning** (the fixed envelope Codex CLI
+  sends — validated, documented, never silently honoured):
+  - `client_metadata` — client-side tracing only; validated and ignored.
+  - `prompt_cache_key` — accepted as a hint and currently not used. Swama's
+    local cache reuses a KV prefix by comparing actual prompt tokens, and holds
+    one entry per model, so sessions interleaved against the same model evict
+    each other. This is **not** an equivalent of the hosted prompt cache.
+  - `reasoning` — the empty object, or `summary: "auto"` (what Codex sends).
+    `auto` leaves the choice to the server and a local model emits no reasoning
+    items, so producing none satisfies it.
+  - `include: ["reasoning.encrypted_content"]` — accepted; there are no
+    reasoning items to return.
+  - `parallel_tool_calls` — this server never executes tools and always emits
+    function-call items one after another, satisfying `false`.
+  - `tools[{"type":"web_search","external_web_access":false}]` — **accepted and
+    then dropped before the model sees it.** Codex CLI 0.147.0 advertises this
+    tool unconditionally and no client setting removes it (`tools.web_search =
+    false` only flips `external_web_access`), so refusing it would make the CLI
+    unusable against Swama. This is a deliberate, narrow **compatibility
+    degradation, not support**: per OpenAI's reference, `external_web_access:
+    false` does not disable search — it runs web search in an offline,
+    cache-only mode over OpenAI's own index. Swama has no such index, performs
+    no search whatsoever, and never emits a `web_search_call`. Any request that
+    genuinely needs search capability is not supported here. `true`, a missing
+    or non-boolean flag, any additional key (`filters`, `search_context_size`,
+    ...), and a `tool_choice` naming `web_search` all remain hard 400s.
+- **Rejected with an explicit 400 (never silently ignored)**: server-side state
+  (`store: true`, `previous_response_id`, `conversation`, `prompt`),
+  `background: true`, hosted/built-in and MCP tools, Structured Outputs
+  (`text.format` other than plain text, `response_format`),
+  `truncation: "auto"`, forced `tool_choice`, `reasoning.effort` and any
+  `reasoning.summary` other than `"auto"`, any other `include` entry,
+  `max_tool_calls`,
+  `service_tier`, `text.verbosity`, `tools[].strict: true`, hosted tool kinds
+  other than the exact offline `web_search` shape above (including `namespace` —
+  run Codex with `--disable multi_agent`), image URLs outside
+  `http`/`https`/`data:image/...`, every unlisted top-level field, and
+  wrong-typed known fields.
+- Responses are not stored: there is no retrieve/cancel/delete by response id.
+
+```bash
+# Responses API (honest subset)
+curl -X POST http://localhost:28100/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3",
+    "input": "Hello!",
+    "max_output_tokens": 200
+  }'
+```
 
 ```bash
 # Get available models

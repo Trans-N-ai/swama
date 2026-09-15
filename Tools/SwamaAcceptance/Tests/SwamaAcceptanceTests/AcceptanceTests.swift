@@ -411,7 +411,13 @@ struct AcceptanceTests {
 
     @Test func nonAudioHTTPHandlersUseCoreWithoutLegacyRuntimeImports() throws {
         let serverRoot = repositoryRoot.appendingPathComponent("swama/Sources/SwamaServer")
-        let coreHandlers = ["CompletionsHandler.swift", "EmbeddingsHandler.swift"]
+        let coreHandlers = [
+            "CompletionsHandler.swift",
+            "EmbeddingsHandler.swift",
+            "ResponsesHandler.swift",
+            "ResponsesHandler+Support.swift",
+            "ResponsesHandler+Wire.swift",
+        ]
         let forbidden: Set = ["MLX", "MLXLLM", "MLXLMCommon", "SwamaKit", "Tokenizers"]
 
         for name in coreHandlers {
