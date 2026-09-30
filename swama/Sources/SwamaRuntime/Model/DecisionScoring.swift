@@ -40,6 +40,7 @@ extension ModelRunner {
     /// for every question and discarded here; the chat PromptCacheStore is never touched.
     func scoreDecision(content: String, labels: [String], contextLimit: Int) async throws -> DecisionLogits {
         try Task.checkCancellation()
+        let boundaryTokens = await DecisionBoundaryCache.shared.tokens(for: container)
         let result = try await container.perform { context in
             let tokenizer = context.tokenizer
             let promptIDs: [Int]
@@ -70,10 +71,6 @@ extension ModelRunner {
                 throw DecisionScoringError.reasoningOpen
             }
 
-            let labelIDs = try decisionLabelIDs(promptIDs: promptIDs, labels: labels) { label in
-                tokenizer.encode(text: prompt + label, addSpecialTokens: false)
-            }
-
             try Task.checkCancellation()
             let cache = context.model.newCache(parameters: nil)
             let rawTokens = MLXArray(promptIDs)
@@ -96,6 +93,23 @@ extension ModelRunner {
             }
 
             let last = output.logits[0, -1, 0...].asType(.float32)
+            // Start the unchanged MLX graph before CPU label validation. The final
+            // synchronization is required on both success and failure before leaving
+            // ModelContainer.perform; no MLXArray escapes this isolated operation.
+            asyncEval(last)
+            let labelIDs: [Int]
+            do {
+                let labelContext = decisionLabelContext(
+                    prompt: prompt, promptIDs: promptIDs, labels: labels, boundaryTokens: boundaryTokens
+                ) { tokenizer.encode(text: $0, addSpecialTokens: false) }
+                labelIDs = try decisionLabelIDs(promptIDs: labelContext.tokenIDs, labels: labels) { label in
+                    tokenizer.encode(text: labelContext.text + label, addSpecialTokens: false)
+                }
+            }
+            catch {
+                eval(last)
+                throw error
+            }
             eval(last)
             let values = last.asArray(Float.self).map(Double.init)
             guard !values.isEmpty, values.allSatisfy({ !$0.isNaN && $0 != .infinity }),
@@ -190,4 +204,110 @@ package func decisionPredictsReasoning(logits: [Double], reasoningTokenIDs: [Int
     }
 
     return reasoningTokenIDs.contains { logits.indices.contains($0) && logits[$0] == maximum }
+}
+
+/// Use an added-token boundary only for tokenizer layouts whose final text segment is
+/// independent of the preceding message. All unsupported or inconsistent cases retain
+/// the original full-prompt validation. The first label also cross-checks the shortcut.
+func decisionLabelContext(
+    prompt: String, promptIDs: [Int], labels: [String], boundaryTokens: [Int: String],
+    encode: (String) -> [Int]
+) -> (text: String, tokenIDs: [Int]) {
+    guard let position = promptIDs.lastIndex(where: { boundaryTokens[$0] != nil }),
+          let marker = boundaryTokens[promptIDs[position]],
+          !boundaryTokens.values.contains(where: { $0 != marker && $0.contains(marker) }),
+          let range = prompt.range(of: marker, options: .backwards),
+          let first = labels.first
+    else {
+        return (prompt, promptIDs)
+    }
+
+    let suffix = String(prompt[range.upperBound...])
+    let suffixIDs = Array(promptIDs.dropFirst(position + 1))
+    guard encode(suffix) == suffixIDs,
+          encode(prompt + first) == Array(promptIDs.prefix(position + 1)) + encode(suffix + first)
+    else {
+        return (prompt, promptIDs)
+    }
+
+    return (suffix, suffixIDs)
+}
+
+/// Added tokens are split off before NFC and the Split/ByteLevel pre-tokenizers run.
+/// Reject stripping, first-segment prefix insertion, ambiguous metadata and unknown layouts.
+func decisionBoundaryTokens(from data: Data) -> [Int: String] {
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let normalizer = object["normalizer"] as? [String: Any], normalizer["type"] as? String == "NFC",
+          let pre = object["pre_tokenizer"] as? [String: Any], pre["type"] as? String == "Sequence",
+          let parts = pre["pretokenizers"] as? [[String: Any]], parts.count == 2,
+          parts[0]["type"] as? String == "Split", parts[1]["type"] as? String == "ByteLevel",
+          parts[1]["add_prefix_space"] as? Bool == false,
+          let tokens = object["added_tokens"] as? [[String: Any]]
+    else {
+        return [:]
+    }
+
+    var result = [Int: String]()
+    var texts = Set<String>()
+    for token in tokens {
+        guard token["lstrip"] as? Bool == false, token["rstrip"] as? Bool == false,
+              let id = token["id"] as? Int, let text = token["content"] as? String,
+              !text.isEmpty, result[id] == nil, texts.insert(text).inserted
+        else {
+            return [:]
+        }
+
+        result[id] = text
+    }
+    return result
+}
+
+private func decisionBoundaryMetadata(_ configuration: ModelConfiguration) -> [Int: String] {
+    let directory: URL
+    if let source = configuration.tokenizerSource {
+        guard case let .directory(value) = source else {
+            return [:]
+        }
+
+        directory = value
+    }
+    else {
+        guard case let .directory(value) = configuration.id else {
+            return [:]
+        }
+
+        directory = value
+    }
+    guard let data = try? Data(contentsOf: directory.appendingPathComponent("tokenizer.json")) else { return [:] }
+
+    return decisionBoundaryTokens(from: data)
+}
+
+/// Runners are created per request; cache metadata against the shared model container.
+/// Weak ownership never keeps model weights alive after the model pool evicts them.
+private actor DecisionBoundaryCache {
+    static let shared: DecisionBoundaryCache = .init()
+    private struct Entry {
+        weak var container: ModelContainer?
+        let tokens: [Int: String]
+    }
+
+    private var entries: [ObjectIdentifier: Entry] = [:]
+    func tokens(for container: ModelContainer) async -> [Int: String] {
+        let key = ObjectIdentifier(container)
+        if let entry = entries[key], entry.container === container {
+            return entry.tokens
+        }
+        let configuration = await container.configuration
+        if let entry = entries[key], entry.container === container {
+            return entry.tokens
+        }
+        let tokens = decisionBoundaryMetadata(configuration)
+        entries = entries.filter { $0.value.container != nil }
+        if entries.count >= 8, let evictedKey = entries.keys.first {
+            entries.removeValue(forKey: evictedKey)
+        }
+        entries[key] = Entry(container: container, tokens: tokens)
+        return tokens
+    }
 }
