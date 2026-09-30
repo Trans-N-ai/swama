@@ -119,8 +119,80 @@ struct DecisionAPITests {
                 #expect(lhs.labelMass == rhs.labelMass)
                 #expect(lhs.choice == rhs.choice)
                 #expect(lhs.score == rhs.score)
+                #expect(lhs.confidence == rhs.confidence)
             }
         }
+    }
+
+    @Test func confidenceMatchesPinnedSGLangFixtures() throws {
+        // Reference values from SystemOne at eb9c9ee9, including its midpoint denominator,
+        // first-maximum tie policy, and zero floor for dispersed ordinal answers.
+        let fixtures: [([Double], Double, Double)] = [
+            ([0.5, 0.5], 0, 0),
+            ([1.0 / 3, 1.0 / 3, 1.0 / 3], 0, 0),
+            ([1, 0, 0], 1, 1),
+            ([0, 1, 0], 1, 1),
+            ([0.7, 0.2, 0.1], 0.55, 0.4),
+            ([0.1, 0.2, 0.4, 0.2, 0.1], 0.25, 1.0 / 3),
+            ([0.6, 0.2, 0.1, 0.05, 0.05], 0.5, 0.375),
+            ([0.4, 0.4, 0.1, 0.1], 0.2, 0.1),
+            ([0.1, 0.1, 0.4, 0.4], 0.2, 0.3),
+            ([0.34, 0, 0.33, 0, 0.33], 0.175, 0)
+        ]
+        for (probabilities, expectedChoice, expectedScore) in fixtures {
+            let labels = probabilities.indices.map(String.init)
+            for (question, expected) in [
+                (
+                    DecisionQuestion.choice(id: "q", question: "Pick", options: labels.map { .init(name: $0) }),
+                    expectedChoice
+                ),
+                (DecisionQuestion.score(id: "q", question: "Rate", levels: labels), expectedScore)
+            ] {
+                let answer = try question.decisionAnswer(
+                    logProbs: probabilities.map { log($0 * 0.6) },
+                    temperature: 1,
+                    promptTokenIDs: nil,
+                    labelTokenIDs: nil
+                )
+                let confidence = try #require(answer.confidence)
+                #expect(abs(confidence - expected) < 1e-12)
+                #expect((0 ... 1).contains(confidence))
+            }
+        }
+    }
+
+    @Test func confidenceTracksTemperatureButDoesNotClaimLabelCoverage() throws {
+        let question = DecisionQuestion.choice(id: "q", question: "Pick", options: [
+            .init(name: "a"), .init(name: "b"), .init(name: "c")
+        ])
+        let logProbs = [0.7, 0.2, 0.1].map { log($0 * 0.01) }
+        let normal = try question.decisionAnswer(
+            logProbs: logProbs,
+            temperature: 1,
+            promptTokenIDs: nil,
+            labelTokenIDs: nil
+        )
+        let sharp = try question.decisionAnswer(
+            logProbs: logProbs,
+            temperature: 0.5,
+            promptTokenIDs: nil,
+            labelTokenIDs: nil
+        )
+        #expect(abs(normal.confidence! - 0.55) < 1e-12)
+        #expect(abs(sharp.confidence! - 0.8611111111111112) < 1e-12)
+        #expect(normal.labelMass == sharp.labelMass)
+        #expect(abs(normal.labelMass - 0.01) < 1e-12)
+        let certain = try question.decisionAnswer(
+            logProbs: [log(0.001), -.infinity, -.infinity],
+            temperature: 1,
+            promptTokenIDs: nil,
+            labelTokenIDs: nil
+        )
+        #expect(certain.confidence == 1)
+        #expect(abs(certain.labelMass - 0.001) < 1e-12)
+        let binary = try DecisionQuestion.yesNo(id: "q", question: "True?").decisionAnswer(
+            logProbs: [log(0.8), log(0.2)], temperature: 1, promptTokenIDs: nil, labelTokenIDs: nil)
+        #expect(binary.confidence == nil)
     }
 
     @Test func rejectsOpenReasoningPrefixes() {

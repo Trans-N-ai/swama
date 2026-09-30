@@ -71,6 +71,7 @@ public struct DecisionAnswer: Hashable, Sendable {
         labelMass: Double,
         choice: String? = nil,
         score: Double? = nil,
+        confidence: Double? = nil,
         promptTokenIDs: [Int]? = nil,
         labelTokenIDs: [Int]? = nil
     ) {
@@ -79,6 +80,7 @@ public struct DecisionAnswer: Hashable, Sendable {
         self.labelMass = labelMass
         self.choice = choice
         self.score = score
+        self.confidence = confidence
         self.promptTokenIDs = promptTokenIDs
         self.labelTokenIDs = labelTokenIDs
     }
@@ -88,6 +90,8 @@ public struct DecisionAnswer: Hashable, Sendable {
     public let labelMass: Double
     public let choice: String?
     public let score: Double?
+    /// Concentration among candidate labels, not a calibrated probability of correctness.
+    public let confidence: Double?
     public let promptTokenIDs: [Int]?
     public let labelTokenIDs: [Int]?
 }

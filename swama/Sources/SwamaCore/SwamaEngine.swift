@@ -440,6 +440,7 @@ private extension RuntimeDecisionAnswer {
             labelMass: labelMass,
             choice: choice,
             score: score,
+            confidence: confidence,
             promptTokenIDs: promptTokenIDs,
             labelTokenIDs: labelTokenIDs
         )

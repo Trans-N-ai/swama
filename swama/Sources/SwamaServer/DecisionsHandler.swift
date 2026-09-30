@@ -46,6 +46,9 @@ enum DecisionsHandler {
                 if let choice = answer.choice {
                     value["choice"] = choice
                 }
+                if let confidence = answer.confidence {
+                    value["confidence"] = confidence
+                }
                 if let score = answer.score {
                     value["score"] = score
                 }

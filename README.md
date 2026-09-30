@@ -291,6 +291,31 @@ parts are unsupported. Use string inputs when comparing exact prompts across ser
 because structured JSON is canonicalized by Swama. Even identical low-precision
 weights can produce probability differences across backends and prefill layouts.
 
+For `choice` and `score`, Swama additionally returns `confidence` in `[0, 1]`.
+This is a local extension to the Decisions response, using the formulas from
+[SGLang's SystemOne implementation](https://github.com/sgl-project/sglang/blob/eb9c9ee99d47bf4c526a06cd84da59cd9cf4e2a5/python/sglang/srt/entrypoints/systemone/serving.py#L242-L258).
+It measures concentration among the candidates, **not the probability that the
+answer is correct**. It does not change the prompt, probabilities, score, or
+`label_mass`. The `yes_no` response continues to return its two probabilities
+without a separate confidence field.
+
+Let `q` be the returned candidate probabilities normalized to sum to 1, `n` the
+number of candidates, and `m` the first index with maximum probability. For scores,
+use the original `levels` order (probability keys `"0"`, `"1"`, …), not JSON object
+iteration order:
+
+- Choice: `clamp((n * max(q) - 1) / (n - 1), 0, 1)`.
+- Score: `max(0, 1 - sum(q[i] * abs(i - m)) / U)`, where
+  `U = sum(abs(i - (n - 1) / 2)) / n`. This uses absolute distance and the
+  uniform distribution's midpoint, not variance or a denominator centered on `m`.
+
+For example, three choice probabilities `[0.7, 0.2, 0.1]` give confidence `0.55`;
+uniform probabilities give `0`, and a one-hot distribution gives `1`. Lowering
+`temperature` can increase confidence while leaving `label_mass` unchanged.
+A high confidence can coexist with tiny label mass. Downstream routing should
+consider both, fix the temperature used for thresholds, and validate accuracy
+on representative application data; neither value guarantees correctness.
+
 ```bash
 curl -X POST http://localhost:28100/v1/decisions \
   -H "Content-Type: application/json" \

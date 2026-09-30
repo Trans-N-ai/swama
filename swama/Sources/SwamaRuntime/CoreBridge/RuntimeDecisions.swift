@@ -121,6 +121,7 @@ package struct RuntimeDecisionAnswer: Sendable {
     package let labelMass: Double
     package let choice: String?
     package let score: Double?
+    package let confidence: Double?
     package let promptTokenIDs: [Int]?
     package let labelTokenIDs: [Int]?
 }
@@ -164,21 +165,34 @@ func decisionAnswer(
 
     let names = question.names
     let named = Dictionary(uniqueKeysWithValues: zip(names, probabilities))
+    // SGLang SystemOne confidence, pinned to eb9c9ee99d47bf4c526a06cd84da59cd9cf4e2a5.
+    // Normalize only for this derived value; preserve the reported probabilities and label mass.
+    let probabilityTotal = probabilities.reduce(0, +)
+    let q = probabilities.map { $0 / probabilityTotal }
+    let count = Double(q.count)
+    let top = q.indices.reduce(0) { q[$1] > q[$0] ? $1 : $0 }
     let choice: String?
     let score: Double?
+    let confidence: Double?
     switch question {
     case .choice:
         let maxIndex = probabilities.indices.reduce(0) { probabilities[$1] > probabilities[$0] ? $1 : $0 }
         choice = names[maxIndex]
         score = nil
+        confidence = min(1, max(0, (count * q[top] - 1) / (count - 1)))
 
     case .score:
         choice = nil
         score = probabilities.enumerated().reduce(0) { $0 + Double($1.offset) * $1.element }
+        let spread = q.enumerated().reduce(0) { $0 + $1.element * abs(Double($1.offset - top)) }
+        let midpoint = (count - 1) / 2
+        let uniformSpread = q.indices.reduce(0.0) { $0 + abs(Double($1) - midpoint) } / count
+        confidence = max(0, 1 - spread / uniformSpread)
 
     case .yesNo:
         choice = nil
         score = nil
+        confidence = nil
     }
     return .init(
         type: question.type,
@@ -186,6 +200,7 @@ func decisionAnswer(
         labelMass: mass,
         choice: choice,
         score: score,
+        confidence: confidence,
         promptTokenIDs: promptTokenIDs,
         labelTokenIDs: labelTokenIDs
     )
