@@ -91,6 +91,18 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
                 }
             }
 
+        case (.POST, "/v1/decisions"):
+            let channel = context.channel
+            channel.eventLoop.execute {
+                Task {
+                    // Reuse the clearable task holder so keep-alive connections do not retain
+                    // completed decision tasks until the connection eventually closes.
+                    try? await CompletionsHandler.runCancellingOnClose(channel: channel) {
+                        await DecisionsHandler.handle(requestHead: request, body: bodyBuffer, channel: channel)
+                    }
+                }
+            }
+
         case (.POST, "/v1/embeddings"):
             let channel = context.channel
             channel.eventLoop.execute {

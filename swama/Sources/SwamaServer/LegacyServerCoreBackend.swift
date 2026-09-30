@@ -110,6 +110,51 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
         }
     }
 
+    func decide(_ request: DecisionRequest) async throws -> DecisionResponse {
+        let modelName = ModelAliasResolver.resolve(name: request.model.rawValue)
+        let contextLimit = await ContextLimitConfig.shared.currentLimit()
+        var answers = [String: DecisionAnswer]()
+        var promptTokens = 0
+        do {
+            for question in request.questions {
+                try Task.checkCancellation()
+                let prompt = question.decisionPrompt(input: request.input)
+                let labels = question.decisionLabels
+                let scored = try await modelPool.run(modelName: modelName) { runner in
+                    try await runner.scoreDecision(content: prompt, labels: labels, contextLimit: contextLimit)
+                }
+                answers[question.id] = try question.decisionAnswer(
+                    logProbs: scored.labelLogProbs,
+                    temperature: request.temperature,
+                    promptTokenIDs: request.returnPromptTokenIDs ? scored.promptTokenIDs : nil,
+                    labelTokenIDs: request.returnPromptTokenIDs ? scored.labelTokenIDs : nil
+                )
+                promptTokens += scored.promptTokenIDs.count
+            }
+            try Task.checkCancellation()
+            return .init(
+                model: request.model,
+                answers: answers,
+                usage: .init(promptTokens: promptTokens, completionTokens: 0)
+            )
+        }
+        catch is CancellationError {
+            throw CancellationError()
+        }
+        catch let error as DecisionScoringError {
+            let code: SwamaError.Code =
+                switch error {
+                case .contextLimitExceeded: .contextLimitExceeded
+                case .invalidLogits: .backendFailure
+                default: .invalidRequest
+                }
+            throw SwamaError(code: code, message: error.localizedDescription, model: request.model)
+        }
+        catch {
+            throw mapError(error, model: request.model, fallback: .backendFailure)
+        }
+    }
+
     func models() async throws -> [SwamaCore.ModelInfo] {
         ModelManager.models()
             .filter { model in

@@ -13,6 +13,7 @@
 
 - 🚀 **High Performance**: Built on Apple MLX framework, optimized for Apple Silicon
 - 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/responses` (honest subset, see the support matrix below), `/v1/embeddings`, `/v1/audio/transcriptions`, and `/v1/audio/speech` (experimental) endpoint support with tool calling
+- 🎯 **Decision scoring**: SGLang-style `/v1/decisions` scores choices, ratings, and yes/no answers without generating text
 - 📱 **Menu Bar App**: Elegant macOS native menu bar integration
 - 💻 **Command Line Tools**: Complete CLI support for model management and inference
 - 🖼️ **Multimodal Support**: Support for both text and image inputs
@@ -266,6 +267,65 @@ curl -X POST http://localhost:28100/v1/responses \
     "max_output_tokens": 200
   }'
 ```
+
+##### `/v1/decisions` (SGLang prompt format 1)
+
+`POST /v1/decisions` scores a finite set of answers without generating text.
+It accepts `choice` (2–26 named options), `score` (2–10 levels), and `yes_no`
+questions. Each answer includes probabilities conditional on its labels and
+`label_mass`, the total probability of those labels against the full
+vocabulary. A low `label_mass` means the model may prefer an answer outside the
+requested set. The response has `prompt_format_version: 1`; a request pinning
+another version is rejected.
+
+This endpoint uses SGLang's public prompt wording and response fields. Swama
+requires an explicit local `model` because it can serve more than one model.
+The local chat tokenizer must preserve the rendered prompt and encode every
+answer label as one distinct token at the answer position. The request passes
+`enable_thinking: false` to the template; requesting it on is rejected. Templates
+may ignore this flag. Open reasoning prefixes and a recognized single-token
+`<think>` or `[THINK]` opener at the vocabulary maximum are rejected. This check
+does not certify every reasoning format or guarantee the model follows
+instructions. `chat_template_kwargs` other than that fixed toggle are currently
+unsupported. Each question starts with a
+fresh KV cache, independent of the chat prompt cache. Inputs are textual:
+objects and arrays render as compact JSON with sorted keys; image and audio
+parts are unsupported. Use string inputs when comparing exact prompts across servers,
+because structured JSON is canonicalized by Swama. Even identical low-precision
+weights can produce probability differences across backends and prefill layouts.
+
+For `choice` and `score`, Swama additionally returns `confidence` in `[0, 1]`.
+This is a local extension to the Decisions response, using the formulas from
+[SGLang's SystemOne implementation](https://github.com/sgl-project/sglang/blob/eb9c9ee99d47bf4c526a06cd84da59cd9cf4e2a5/python/sglang/srt/entrypoints/systemone/serving.py#L242-L258).
+It measures concentration among the candidates, **not the probability that the
+answer is correct**. It does not change the prompt, probabilities, score, or
+`label_mass`. The `yes_no` response continues to return its two probabilities
+without a separate confidence field.
+
+Let `q` be the returned candidate probabilities normalized to sum to 1, `n` the
+number of candidates, and `m` the first index with maximum probability. For scores,
+use the original `levels` order (probability keys `"0"`, `"1"`, …), not JSON object
+iteration order:
+
+- Choice: `clamp((n * max(q) - 1) / (n - 1), 0, 1)`.
+- Score: `max(0, 1 - sum(q[i] * abs(i - m)) / U)`, where
+  `U = sum(abs(i - (n - 1) / 2)) / n`. This uses absolute distance and the
+  uniform distribution's midpoint, not variance or a denominator centered on `m`.
+
+For example, three choice probabilities `[0.7, 0.2, 0.1]` give confidence `0.55`;
+uniform probabilities give `0`, and a one-hot distribution gives `1`. Lowering
+`temperature` can increase confidence while leaving `label_mass` unchanged.
+A high confidence can coexist with tiny label mass. Downstream routing should
+consider both, fix the temperature used for thresholds, and validate accuracy
+on representative application data; neither value guarantees correctness.
+
+```bash
+curl -X POST http://localhost:28100/v1/decisions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mlx-community/Qwen3.5-0.8B-MLX-4bit","input":"My invoice charged me twice.","questions":[{"id":"team","type":"choice","question":"Which team should handle this?","options":[{"name":"billing"},{"name":"technical"},{"name":"sales"}]}]}'
+```
+
+##### Other endpoint examples
 
 ```bash
 # Get available models

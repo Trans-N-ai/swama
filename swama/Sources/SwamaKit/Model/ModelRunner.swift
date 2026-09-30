@@ -395,7 +395,7 @@ public actor ModelRunner {
 
     // MARK: Private
 
-    private let container: ModelContainer
+    let container: ModelContainer
     private let promptCacheStore: PromptCacheStore
 }
 
