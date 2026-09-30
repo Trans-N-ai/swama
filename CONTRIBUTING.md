@@ -1,73 +1,44 @@
 # Contributing to Swama
 
-Thank you for your interest in contributing to Swama! We welcome contributions from the community.
+Pull requests are currently limited to repository collaborators. Bug reports and feature requests from everyone are
+welcome in [Issues](https://github.com/Trans-N-ai/swama/issues); security problems go through [SECURITY.md](SECURITY.md)
+instead.
 
-## Getting Started
+## Reporting an issue
 
-1. Fork the repository
-2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/swama.git`
-3. Create a feature branch: `git checkout -b feature/amazing-feature`
+Please include the Swama version (`swama --version`), macOS version, Mac model, the command or request you ran, what you
+expected, what happened, and any error output. `swama logs` prints the diagnostics log, which usually helps.
 
-## Development Setup
+## Development setup
 
-### Prerequisites
-
-- macOS 14.0 or later
-- Apple Silicon (M1/M2/M3/M4)
-- Xcode 15.0+ 
-- Swift 6.1+
-
-### Building
+- Apple Silicon Mac, macOS 15.4 or later
+- Xcode with the Swift 6.2 toolchain
+- [SwiftFormat](https://github.com/nicklockwood/SwiftFormat) 0.56.2 (the version CI pins)
 
 ```bash
-# Build CLI tool
+# CLI and libraries (Swift package in swama/)
 cd swama
 swift build -c release
+swift test
 
-# Build macOS app
-cd swama-macos/Swama
+# macOS app — it bundles the CLI from swama/.build/arm64-apple-macosx/release/swama-bin
+mv .build/release/swama .build/release/swama-bin
+cd ../swama-macos/Swama
 xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 ```
 
-### Testing
+## Before opening a pull request
 
-```bash
-# Run tests
-swift test
-```
-
-## Code Style
-
-- Follow Swift API Design Guidelines
-- Use meaningful variable and function names
-- Add comments for complex logic
-- Ensure code is properly formatted
-
-## Submitting Changes
-
-1. Ensure your code builds without warnings
-2. Add tests for new features
-3. Update documentation if needed
-4. Commit your changes with clear commit messages
-5. Push to your fork and submit a pull request
-
-## Pull Request Guidelines
-
-- Provide a clear description of the changes
-- Reference any related issues
-- Ensure all tests pass
-- Keep pull requests focused on a single feature or fix
-
-## Reporting Issues
-
-When reporting issues, please include:
-
-- macOS version
-- Hardware (Apple Silicon model)
-- Steps to reproduce
-- Expected vs actual behavior
-- Error messages or logs
+- `swiftformat . --lint` passes from the repository root (configuration in `.swiftformat`).
+- `Tools/Versioning/version.sh check` passes. Version bumps go in their own pull request; see
+  [Tools/Versioning/README.md](Tools/Versioning/README.md).
+- `swift test` passes locally. CI currently runs only the format and version checks — the test job is disabled — so
+  running the tests is on you.
+- New behaviour has tests, and user-facing changes update all three READMEs (`README.md`, `README_CN.md`,
+  `README_JA.md`).
+- Keep each pull request to one change, describe what changed and how you verified it, and reference related issues.
+- A pull request needs an approving review from someone other than its author before it is merged.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree that your contributions are licensed under the MIT License.

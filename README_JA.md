@@ -1,406 +1,152 @@
 # Swama
 
 [![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
-[![macOS](https://img.shields.io/badge/macOS-15.0+-blue.svg)](https://www.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-15.4+-blue.svg)](https://www.apple.com/macos/)
 [![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > [English](README.md) | [中文](README_CN.md) | 日本語
 
-**Swama** は、macOS専用に設計され、AppleのMLXフレームワーク上に構築されたピュアSwiftで書かれた高性能機械学習ランタイムです。ローカルLLM（大規模言語モデル）およびVLM（視覚言語モデル）推論のための強力で使いやすいソリューションを提供します。
+**Swama** は Apple Silicon Mac 向けのローカル AI ランタイムです。Swift で書かれ、Apple の [MLX](https://github.com/ml-explore/mlx-swift) の上に構築されています。
+言語・画像・埋め込み・音声認識・音声合成モデルを Mac 上で動かし、OpenAI 互換 API、コマンドラインツール、メニューバーアプリとして提供します。
 
-## ✨ 特徴
+- **OpenAI 互換 API**：チャット補完（ストリーミング、ツール呼び出し、画像入力）、Responses のステートレスなサブセット、埋め込み、音声文字起こし、音声合成（実験的）。
+- **決定スコアリング**：SGLang 形式の `/v1/decisions` で、テキストを生成せずに選択式・評価・はい／いいえの各選択肢をスコアリングします。
+- **モデルエイリアス**：`swama run qwen3.5 "…"` で、初回利用時に Hugging Face から自動ダウンロードします。
+- **メニューバーアプリ**：サーバーをバックグラウンドで実行し、`swama` コマンドのインストールとコンテキスト上限の設定ができます。
 
-- 🚀 **高性能**: Apple MLXフレームワーク上に構築、Apple Silicon向けに最適化
-- 🔌 **OpenAI互換API**: 標準の `/v1/chat/completions`、`/v1/embeddings`、`/v1/audio/transcriptions`、および `/v1/audio/speech`（experimental）エンドポイントをサポート、Tool Calling対応
-- 📱 **メニューバーアプリ**: エレガントなmacOSネイティブメニューバー統合
-- 💻 **コマンドラインツール**: モデル管理と推論のための完全なCLIサポート
-- 🖼️ **マルチモーダルサポート**: テキストと画像の両方の入力をサポート
-- 🎤 **ローカル音声文字起こし**: Qwen3-ASR など MLX 音声認識モデル内蔵（クラウド不要）
-- 🔍 **テキスト埋め込み**: セマンティック検索とRAGアプリケーション用の組み込み埋め込み生成
-- 📦 **スマートモデル管理**: 自動ダウンロード、キャッシュ、バージョン管理
-- 🔄 **ストリーミングレスポンス**: リアルタイムストリーミングテキスト生成をサポート
-- 🌍 **HuggingFace統合**: HuggingFace Hubからの直接モデルダウンロード
+## 動作環境
 
-## 🏗️ アーキテクチャ
+- Apple Silicon Mac、macOS 15.4 以降
+- ソースからビルドする場合のみ：Swift 6.2 ツールチェーンを含む Xcode
 
-Swamaはモジュラーアーキテクチャ設計を採用しています：
+## インストール
 
-- **SwamaKit**: すべてのビジネスロジックを含むコアフレームワークライブラリ
-- **Swama CLI**: 完全なモデル管理と推論機能を提供するコマンドラインツール
-- **Swama.app**: グラフィカルインターフェースとバックグラウンドサービスを備えたmacOSメニューバーアプリケーション
-
-## 📋 システム要件
-
-- macOS 15.0以降 (Sequoia)
-- Apple Silicon (M1/M2/M3/M4)
-- Xcode 16.0+ (コンパイル用)
-- Swift 6.2+
-
-## 🛠️ インストール
-
-### 🍺 Homebrew（推奨）
+**Homebrew**
 
 ```bash
 brew install swama
 ```
 
-### 📱 ビルド済みアプリのダウンロード
+**アプリのダウンロード**：[Releases](https://github.com/Trans-N-ai/swama/releases) から `Swama.dmg` を取得し、`Swama.app` をアプリケーションフォルダにドラッグして開きます。
+初回起動が macOS にブロックされた場合は、**システム設定 › プライバシーとセキュリティ** で許可してください。その後メニューバーの **Install Command Line Tool…** で `swama` を PATH に追加します。
 
-1. **最新リリースをダウンロード**
-   - [Releases](https://github.com/Trans-N-ai/swama/releases) ページにアクセス
-   - 最新リリースから `Swama.dmg` をダウンロード
-
-2. **アプリのインストール**
-   - `Swama.dmg` をダブルクリックしてディスクイメージをマウント
-   - `Swama.app` を `Applications` フォルダにドラッグ
-   - アプリケーションまたはSpotlightからSwamaを起動
-   
-   **注意**: 初回起動時、macOS がセキュリティ警告を表示する場合があります。この場合：
-   - **システム環境設定 > セキュリティとプライバシー > 一般** に移動
-   - Swama アプリメッセージの横にある **「このまま開く」** をクリック
-   - またはアプリを右クリックしてコンテキストメニューから **「開く」** を選択
-
-3. **コマンドラインツールのインストール**
-   - メニューバーから Swama を開く
-   - 「Install Command Line Tool…」をクリックして `swama` コマンドを PATH に追加
-
-### 🔧 ソースからビルド（上級者向け）
-
-ソースからビルドしたい開発者向け：
+**ソースからビルド**
 
 ```bash
-# リポジトリをクローン
 git clone https://github.com/Trans-N-ai/swama.git
-cd swama
-
-# CLI ツールをビルド
-cd swama
+cd swama/swama
 swift build -c release
-mv .build/release/swama .build/release/swama-bin
+mv .build/release/swama .build/release/swama-bin   # アプリはこの名前で CLI を同梱します
 
-# macOS アプリをビルド（Xcode が必要）
 cd ../swama-macos/Swama
 xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 ```
 
-## 🚀 クイックスタート
-
-Swama.app をインストール後、メニューバーアプリまたはコマンドラインを使用できます：
-
-### 1. モデルエイリアスを使った即座の推論
+## クイックスタート
 
 ```bash
-# 長いモデル名の代わりに短いエイリアスを使用 - 必要に応じて自動ダウンロード！
-swama run qwen3 "こんにちは、AI"
-swama run llama3.2 "ジョークを教えて"
-swama run gemma3 "この画像には何が写っていますか？" -i /path/to/image.jpg
-
-# 従来の方法（同様に動作）
-swama run mlx-community/Llama-3.2-1B-Instruct-4bit "こんにちは、元気ですか？"
-
-# ダウンロード済みモデルの一覧表示
-swama list
+swama run qwen3.5 "こんにちは！"                    # 初回利用時に自動ダウンロード
+swama run qwen3.5 "この画像には何が写っていますか？" -i photo.jpg
+swama serve --host 127.0.0.1 --port 28100          # API サーバー
 ```
-
-**✨ スマート機能:**
-- **モデルエイリアス**: 長いURLの代わりに `qwen3`、`llama3.2`、`deepseek-r1`、`gpt-oss` などの使いやすい名前を使用
-- **自動ダウンロード**: 初回使用時に自動でモデルをダウンロード - 事前に `pull` する必要なし！
-- **キャッシュ管理**: ダウンロードしたモデルは将来の使用のためにキャッシュされます
-
-### 2. 利用可能なモデルエイリアス
-
-#### 言語モデル (LLM)
-
-| エイリアス | 完全なモデル名 | サイズ | 説明 |
-|-------|-----------------|------|-------------|
-| `qwen3` | `mlx-community/Qwen3-8B-4bit` | 4.3 GB | Qwen3 8B (デフォルト) |
-| `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | 938.4 MB | Qwen3 1.7B (軽量) |
-| `qwen3-30b` | `mlx-community/Qwen3-30B-A3B-4bit` | 16.0 GB | Qwen3 30B (大規模) |
-| `qwen3-32b` | `mlx-community/Qwen3-32B-4bit` | 17.2 GB | Qwen3 32B (超大規模) |
-| `qwen3-235b` | `mlx-community/Qwen3-235B-A22B-4bit` | 123.2 GB | Qwen3 235B (超大規模) |
-| `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (デフォルト) |
-| `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | 876.3 MB | Llama 3.2 1B (最速) |
-| `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | 約 32 GB | DeepSeek R1 (推論モデル) |
-| `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-8bit` | 8.6 GB | DeepSeek R1 (Qwen3-8Bベース) |
-| `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
-| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | 約 20 GB | GPT-OSS 20B (21B パラメータ、3.6B アクティブ) |
-| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | 約 120 GB | GPT-OSS 120B (117B パラメータ、5.1B アクティブ) |
-
-#### 視覚言語モデル (VLM)
-
-| エイリアス | 完全なモデル名 | サイズ | 説明 |
-|-------|-----------------|------|-------------|
-| `qwen3.5` | `mlx-community/Qwen3.5-35B-A3B-4bit` | 約 21 GB | Qwen3.5 35B-A3B (デフォルト) |
-| `qwen3.5-0.8b` | `mlx-community/Qwen3.5-0.8B-4bit` | 約 0.6 GB | Qwen3.5 0.8B |
-| `qwen3.5-2b` | `mlx-community/Qwen3.5-2B-4bit` | 約 1.4 GB | Qwen3.5 2B |
-| `qwen3.5-4b` | `mlx-community/Qwen3.5-4B-4bit` | 約 2.4 GB | Qwen3.5 4B |
-| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 約 6.0 GB | Qwen3.5 9B |
-| `qwen3.5-27b` | `mlx-community/Qwen3.5-27B-4bit` | 約 16 GB | Qwen3.5 27B |
-| `qwen3.5-35b-a3b` | `mlx-community/Qwen3.5-35B-A3B-4bit` | 約 21 GB | Qwen3.5 35B-A3B |
-| `qwen3.5-122b-a10b` | `mlx-community/Qwen3.5-122B-A10B-4bit` | 約 68 GB | Qwen3.5 122B-A10B |
-| `qwen3.5-397b-a17b` | `mlx-community/Qwen3.5-397B-A17B-4bit` | 約 220 GB | Qwen3.5 397B-A17B |
-| `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 4B (デフォルト VLM) |
-| `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B (大規模 VLM) |
-| `qwen3-vl` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 約 4 GB | Qwen3-VL 4B (デフォルト VLM) |
-| `qwen3-vl-2b` | `mlx-community/Qwen3-VL-2B-Instruct-4bit` | 約 2 GB | Qwen3-VL 2B (軽量) |
-| `qwen3-vl-8b` | `mlx-community/Qwen3-VL-8B-Instruct-4bit` | 約 8 GB | Qwen3-VL 8B (バランス型) |
-
-#### 音声モデル (音声認識)
-
-| エイリアス | 完全なモデル名 | サイズ | 説明 |
-|-------|-----------------|------|-------------|
-| `qwen3-asr` | `mlx-community/Qwen3-ASR-0.6B-4bit` | - | Qwen3-ASR 0.6B（多言語、デフォルト） |
-| `qwen3-asr-1.7b` | `mlx-community/Qwen3-ASR-1.7B-bf16` | 3.8 GB | Qwen3-ASR 1.7B（多言語、高精度） |
-| `glm-asr` | `mlx-community/GLM-ASR-Nano-2512-4bit` | - | GLM-ASR Nano |
-| `sensevoice` | `mlx-community/SenseVoiceSmall` | - | SenseVoice Small |
-| `parakeet` | `mlx-community/parakeet-tdt-0.6b-v3` | - | Parakeet TDT 0.6B |
-| `voxtral` | `mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16` | - | Voxtral Mini 4B（リアルタイム） |
-| `cohere-transcribe` | `beshkenadze/cohere-transcribe-03-2026-mlx-fp16` | - | Cohere Transcribe |
-| `whisper-base` | `mlx-community/whisper-base-4bit` | - | ネイティブ Whisper（4/8-bit、fp16 エイリアスあり） |
-| `moss-transcribe-diarize` | `OpenMOSS-Team/MOSS-Transcribe-Diarize` | - | 文字起こしと話者分離 |
-| `nemotron-asr` | `mlx-community/nemotron-3.5-asr-streaming-0.6b-8bit` | - | Nemotron 3.5 ストリーミング ASR |
-| `canary` | `Mediform/canary-1b-v2-mlx-q8` | - | Canary 1B v2 |
-| `moonshine` | `UsefulSensors/moonshine-tiny` | - | Moonshine Tiny |
-| `wav2vec2` | `facebook/wav2vec2-base-960h` | - | Wav2Vec2 CTC |
-
-> FireRedASR2 もサポート —— 完全な HuggingFace repo id をモデル名として指定してください。
-
-#### テキスト読み上げモデル (TTS)
-
-| エイリアス | 完全なモデル名 | サイズ | 説明 |
-|-------|-----------------|------|-------------|
-| `qwen3-tts` | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit` | - | Qwen3-TTS 0.6B |
-| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-bf16` | - | Orpheus 3B（マルチボイス） |
-| `marvis` | `Marvis-AI/marvis-tts-250m-v0.2-MLX-8bit` | - | Marvis TTS 250M（マルチボイス） |
-| `chatterbox` | `mlx-community/chatterbox-turbo-4bit` | - | Chatterbox Turbo |
-| `vyvo` | `mlx-community/VyvoTTS-EN-Beta-4bit` | - | VyvoTTS（英語） |
-| `fish-speech` | `mlx-community/fish-audio-s2-pro-8bit` | - | Fish-Speech S2 Pro |
-| `soprano` | `mlx-community/Soprano-80M-bf16` | - | Soprano 80M |
-| `pocket-tts` | `mlx-community/pocket-tts` | - | Pocket-TTS |
-| `moss-tts` | `OpenMOSS-Team/MOSS-TTS` | - | MOSS-TTS |
-| `moss-ttsd` | `OpenMOSS-Team/MOSS-TTSD-v1.0` | - | MOSS 対話 TTS |
-| `moss-tts-local` | `OpenMOSS-Team/MOSS-TTS-Local-Transformer` | - | MOSS Local Transformer TTS |
-| `echo-tts` | `mlx-community/echo-tts-base` | - | Echo-TTS |
-| `kokoro` | `mlx-community/Kokoro-82M-bf16` | - | Kokoro 多言語 82M |
-| `kitten-tts` | `mlx-community/kitten-tts-mini-0.8` | - | KittenTTS Mini |
-| `irodori-tts` | `mlx-community/Irodori-TTS-600M-v3-VoiceDesign-8bit` | - | 日本語 VoiceDesign TTS |
-| `omnivoice` | `mlx-community/OmniVoice-bf16` | - | 多言語ボイスデザイン TTS |
-
-### 3. APIサービスの開始
 
 ```bash
-# またはモデルを指定せずに開始（API経由で切り替え可能）
-swama serve --host 0.0.0.0 --port 28100
+curl http://localhost:28100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3.5", "messages": [{"role": "user", "content": "こんにちは！"}]}'
 ```
 
-### 4. API使用
+`swama serve` はデフォルトで `0.0.0.0` にバインドするため、同じネットワーク上の他のマシンからも API にアクセスできます。ローカルのみで使う場合は `--host 127.0.0.1` を指定してください。
 
-#### 🔌 OpenAI互換API
+## モデル
 
-SwamaはOpenAI互換のAPIエンドポイント（`/v1/responses` の対応範囲は英語READMEのサポートマトリクスを参照）を提供し、既存のツールや統合と一緒に使用できます：
+Hugging Face 上の MLX モデルはフル ID でそのまま使えます（例：`mlx-community/Qwen3.5-9B-4bit`）。よく使うモデルには短いエイリアスがあります：
 
-注：`/v1/audio/speech` は experimental です。
+| 種類 | エイリアス（先頭がデフォルト） |
+| --- | --- |
+| 言語 | `qwen3.5`（35B-A3B）、`qwen3.5-0.8b` / `-2b` / `-4b` / `-9b` / `-27b` / `-122b-a10b` / `-397b-a17b`、`qwen3`、`qwen3-1.7b` / `-30b` / `-32b` / `-235b`、`qwen2.5`、`llama3.2`、`llama3.2-1b`、`llama3.3`、`gpt-oss`、`gpt-oss-120b`、`deepseek-r1`、`deepseek-r1-8b`、`deepseek-coder`、`smollm` |
+| 画像 | `qwen3.5`（Qwen3.5 は全サイズで画像入力に対応）、`gemma3`、`gemma3-1b` / `-12b` / `-27b`、`qwen3-vl`、`qwen3-vl-2b` / `-8b` / `-32b` / `-30b` / `-235b`、`-thinking` 版 |
+| 音声認識 | `qwen3-asr`、`qwen3-asr-1.7b`、`whisper`（large-v3-turbo）と `whisper-tiny` / `-base` / `-small` / `-medium` / `-large`、`parakeet`、`sensevoice`、`glm-asr`、`voxtral`、`canary`、`moonshine`、`nemotron-asr`、`cohere-transcribe`、`moss-transcribe-diarize`、`wav2vec2`、`mms-asr` |
+| 音声合成（実験的） | `kokoro`、`orpheus`、`qwen3-tts`、`marvis`、`chatterbox`、`vyvo`、`fish-speech`、`soprano`、`pocket-tts`、`echo-tts`、`kitten-tts`、`irodori-tts`、`omnivoice`、`moss-tts`、`moss-ttsd`、`moss-tts-local` |
+
+エイリアスとモデルの完全な対応表は [`ModelAliases.swift`](swama/Sources/SwamaKit/Model/ModelAliases.swift) にあります。FireRedASR2 もフルリポジトリ ID で利用できます。
+既知の問題：2.4.0 での検証では `gemma3`（4B）と `qwen3-vl`（4B）が読み込めません（Gemma については [#23](https://github.com/Trans-N-ai/swama/issues/23) と関連している可能性があります）。画像入力には `qwen3.5` を使ってください。
+
+## API
+
+サーバーはデフォルトでポート 28100 で待ち受けます（`--port` または `SWAMA_PORT` で変更）。
+
+| エンドポイント | 説明 |
+| --- | --- |
+| `GET /v1/models` | ダウンロード済みのモデル |
+| `POST /v1/chat/completions` | ストリーミング（`"stream": true`）、ツール呼び出し、画像モデルへの `image_url` 入力 |
+| `POST /v1/responses` | ステートレスなサブセット。対応範囲は[英語 README のサポートマトリクス](README.md#api)を参照 |
+| `POST /v1/decisions` | テキストを生成せずに選択式・評価・はい／いいえをスコアリング。説明は[英語 README](README.md#api)を参照 |
+| `POST /v1/embeddings` | 埋め込みモデル（例：`mlx-community/embeddinggemma-300m-4bit`） |
+| `POST /v1/audio/transcriptions` | multipart アップロード、ローカル音声認識 |
+| `POST /v1/audio/speech` | 音声合成（実験的） |
 
 ```bash
-# 利用可能なモデルの取得
-curl http://localhost:28100/v1/models
+# 画像入力
+curl http://localhost:28100/v1/chat/completions -H "Content-Type: application/json" -d '{
+  "model": "qwen3.5",
+  "messages": [{"role": "user", "content": [
+    {"type": "text", "text": "何が見えますか？"},
+    {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}]}]}'
 
-# エイリアスを使ったチャット補完（必要に応じて自動ダウンロード）
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3",
-    "messages": [
-      {"role": "user", "content": "こんにちは！"}
-    ],
-    "temperature": 0.7,
-    "max_tokens": 100
-  }'
+# ツール呼び出し
+curl http://localhost:28100/v1/chat/completions -H "Content-Type: application/json" -d '{
+  "model": "qwen3.5",
+  "messages": [{"role": "user", "content": "東京の天気は？"}],
+  "tools": [{"type": "function", "function": {"name": "get_weather",
+    "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}}}]}'
 
-# DeepSeek R1を使ったストリーミングレスポンス
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-r1",
-    "messages": [
-      {"role": "user", "content": "段階的に解決してください：240の15%はいくつですか？"}
-    ],
-    "stream": true
-  }'
+# 埋め込み
+curl http://localhost:28100/v1/embeddings -H "Content-Type: application/json" \
+  -d '{"model": "mlx-community/embeddinggemma-300m-4bit", "input": ["Hello world"]}'
 
-# テキスト埋め込みの生成
-curl -X POST http://localhost:28100/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": ["Hello world", "Text embeddings"],
-    "model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
-  }'
+# 文字起こし
+curl http://localhost:28100/v1/audio/transcriptions -F "file=@audio.wav" -F "model=qwen3-asr"
 
-# 音声ファイルの文字起こし（ローカル処理）
-curl -X POST http://localhost:28100/v1/audio/transcriptions \
-  -F "file=@audio.wav" \
-  -F "model=qwen3-asr" \
-  -F "response_format=json"
-
-# テキスト読み上げ（TTS、experimental）
-curl -X POST http://localhost:28100/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "orpheus",
-    "input": "Hello from Swama TTS",
-    "voice": "tara",
-    "response_format": "wav"
-  }' --output speech.wav
-
-# TTSモデル: qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts, kokoro, kitten-tts, irodori-tts, omnivoice, moss-ttsd, moss-tts-local
-# 音色対応モデル: orpheus, marvis, qwen3-tts, vyvo, kokoro, kitten-tts, irodori-tts, omnivoice
-# Orpheus音色: dan, jess, leo, mia, tara, zac, zoe
-# Marvis音色: conversational_a, conversational_b
-# Qwen3-TTS / VyvoTTS 音色: en-us-1
-# Kokoroデフォルト音色: af_heart、KittenTTSデフォルト音色: Bella
-
-# ツール呼び出し（関数呼び出し）
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3",
-    "messages": [{"role": "user", "content": "東京の天気はどうですか？"}],
-    "tools": [
-      {
-        "type": "function",
-        "function": {
-          "name": "get_weather",
-          "description": "現在の天気を取得",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "location": {"type": "string", "description": "都市名"}
-            },
-            "required": ["location"]
-          }
-        }
-      }
-    ],
-    "tool_choice": "auto"
-  }'
-
-# マルチモーダルサポート（視覚言語モデル）
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemma3",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {"type": "text", "text": "この画像に何が写っていますか？"},
-          {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}
-        ]
-      }
-    ]
-  }'
+# 音声合成
+curl http://localhost:28100/v1/audio/speech -H "Content-Type: application/json" \
+  -d '{"model": "kokoro", "input": "Hello from Swama", "response_format": "wav"}' --output speech.wav
 ```
 
-## 📚 コマンドリファレンス
+ボイス：Orpheus `dan` `jess` `leo` `mia` `tara` `zac` `zoe`、Marvis `conversational_a` `conversational_b`、
+Qwen3-TTS と VyvoTTS `en-us-1`、Kokoro のデフォルトは `af_heart`、KittenTTS は `Bella`。
 
-### モデル管理
+## コマンドライン
 
-```bash
-# モデルのダウンロード（エイリアスと完全な名前の両方をサポート）
-swama pull qwen3                    # エイリアスを使用
-swama pull qwen3-asr                # 音声認識モデルをダウンロード
-swama pull mlx-community/Qwen3-8B-4bit  # 完全な名前を使用
+| コマンド | 用途 |
+| --- | --- |
+| `swama run <model> <prompt>` | 単発の生成。`-i` 画像（複数可）、`-t` 温度、`--top-p`、`-n` 最大トークン数、`--repetition-penalty`、`--no-stream` |
+| `swama serve` | API サーバーを起動（`--host`、`--port`）。コマンドを省略した場合もこれが実行されます |
+| `swama pull <model>` | モデルまたはエイリアスをダウンロード |
+| `swama list [--format json]` | ダウンロード済みのモデル |
+| `swama rm <model>` | ダウンロード済みのモデルを削除 |
+| `swama transcribe <audio>` | 音声をテキストに（`-m` モデル、`-l` 言語、`-f simple\|json\|verbose`） |
+| `swama create <path> -n <name>` | 手元のモデルディレクトリを名前で登録 |
+| `swama logs [--follow]` | JSONL 診断ログを読む |
+| `swama menubar` | メニューバーアプリとして実行 |
 
-# ローカルモデルと利用可能なエイリアスの一覧表示
-swama list [--format json]
+`run` と `serve` は `--context-limit`（デフォルト 16384 トークン）に対応しています。
 
-# 推論の実行（ローカルでモデルが見つからない場合は自動ダウンロード）
-swama run qwen3 "あなたのプロンプト"              # エイリアスを使用 - 自動ダウンロード！
-swama run deepseek-coder "Python関数を書いて"  # 別のエイリアス
-swama run <完全なモデル名> <プロンプト> [オプション]      # 完全な名前を使用
+環境変数：`SWAMA_PORT`（サーバーポート）、`SWAMA_MODELS`（モデルディレクトリ、デフォルト `~/.swama/models`）、`SWAMA_CONTEXT_LIMIT`、
+`SWAMA_REGISTRY`（`HUGGING_FACE` または `MODEL_SCOPE`）、`SWAMA_PROMPT_CACHE=0`（プロンプトキャッシュを無効化）、
+`SWAMA_DIAGNOSTICS_PATH`（診断ログの場所）、`SWAMA_DIAGNOSTICS_DISABLED=1`（診断ログを無効化）。
 
-# 音声ファイルの文字起こし
-swama transcribe audio.wav --model qwen3-asr --language ja
-```
+## 開発
 
-### サーバー
+Swift パッケージは `swama/`（`swift build`、`swift test`）、macOS アプリは `swama-macos/` にあります。手順は [CONTRIBUTING.md](CONTRIBUTING.md)、
+脆弱性の報告は [SECURITY.md](SECURITY.md) を参照してください。
 
-```bash
-# APIサーバーの開始
-swama serve [--host HOST] [--port PORT]
-```
+[mlx-swift](https://github.com/ml-explore/mlx-swift)、[mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm)、
+[mlx-audio-swift](https://github.com/Blaizzy/mlx-audio-swift)、[swift-transformers](https://github.com/huggingface/swift-transformers)、
+[swift-nio](https://github.com/apple/swift-nio)、[swift-argument-parser](https://github.com/apple/swift-argument-parser) を利用しています。
 
-### オプション
+## ライセンス
 
-- `--temperature <value>`: サンプリング温度（0.0-2.0）
-- `--top-p <value>`: Nucleus samplingパラメータ（0.0-1.0）
-- `--max-tokens <number>`: 生成する最大トークン数
-- `--repetition-penalty <value>`: 繰り返しペナルティ係数
-
-## 🔧 開発
-
-### 依存関係
-
-- [swift-nio](https://github.com/apple/swift-nio) - 高性能ネットワーキングフレームワーク
-- [swift-argument-parser](https://github.com/apple/swift-argument-parser) - コマンドライン引数解析
-- [mlx-swift](https://github.com/ml-explore/mlx-swift) - Apple MLX Swiftバインディング
-- [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) - MLX Swift言語モデル
-- [mlx-audio-swift](https://github.com/Blaizzy/mlx-audio-swift) - MLX Swift音声（STT/TTS：Qwen3-ASR、GLM-ASR、SenseVoice、Parakeet、Qwen3-TTS など）
-
-### ビルド
-
-```bash
-# 開発ビルド
-swift build
-
-# リリースビルド
-swift build -c release
-
-# テストの実行
-swift test
-
-# Xcodeプロジェクトの生成
-swift package generate-xcodeproj
-```
-
-## 🤝 貢献
-
-コミュニティからの貢献を歓迎しています！以下の手順に従ってください：
-
-1. このリポジトリをフォーク
-2. 機能ブランチを作成（`git checkout -b feature/amazing-feature`）
-3. 変更をコミット（`git commit -m 'Add some amazing feature'`）
-4. ブランチにプッシュ（`git push origin feature/amazing-feature`）
-5. プルリクエストを開く
-
-### 開発ガイドライン
-
-- Swiftコーディングスタイルガイドラインに従う
-- 新機能にはテストを追加
-- 関連ドキュメントを更新
-- すべてのテストが通ることを確認
-
-## 📝 ライセンス
-
-このプロジェクトはMITライセンスの下でライセンスされています - 詳細は[LICENSE](LICENSE)ファイルを参照してください。
-
-## 🙏 謝辞
-
-- 優れた機械学習フレームワークを提供してくれた[Apple MLX](https://github.com/ml-explore/mlx)チーム
-- 高性能ネットワーキングサポートを提供する[Swift NIO](https://github.com/apple/swift-nio)
-- すべての貢献者とコミュニティメンバー
-
-## 📞 サポート
-
-- 📝 [Issue Tracker](https://github.com/Trans-N-ai/swama/issues)
-- 💬 [ディスカッション](https://github.com/Trans-N-ai/swama/discussions)
-- 📧 Email: info@trans-n.ai
-
-## 🗺️ ロードマップ
-
-- TODO
-
----
-
-**Swama** - macOSユーザーに最高のローカルAI体験を提供 🚀
+MIT。詳細は [LICENSE](LICENSE) を参照してください。質問やバグ報告：[Issues](https://github.com/Trans-N-ai/swama/issues) ·
+[Discussions](https://github.com/Trans-N-ai/swama/discussions)。
