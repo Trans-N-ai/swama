@@ -70,7 +70,7 @@ Hugging Face 上の MLX モデルはフル ID でそのまま使えます（例�
 | 音声合成（実験的） | `kokoro`、`orpheus`、`qwen3-tts`、`marvis`、`chatterbox`、`vyvo`、`fish-speech`、`soprano`、`pocket-tts`、`echo-tts`、`kitten-tts`、`irodori-tts`、`omnivoice`、`moss-tts`、`moss-ttsd`、`moss-tts-local` |
 
 エイリアスとモデルの完全な対応表は [`ModelAliases.swift`](swama/Sources/SwamaKit/Model/ModelAliases.swift) にあります。FireRedASR2 もフルリポジトリ ID で利用できます。
-既知の問題：2.4.0 での検証では `gemma3`（4B）と `qwen3-vl`（4B）が読み込めません（[#23](https://github.com/Trans-N-ai/swama/issues/23)）。画像入力には `qwen3.5` を使ってください。
+既知の問題：2.4.0 での検証では `gemma3`（4B）と `qwen3-vl`（4B）が読み込めません（Gemma については [#23](https://github.com/Trans-N-ai/swama/issues/23) と関連している可能性があります）。画像入力には `qwen3.5` を使ってください。
 
 ## API
 
@@ -132,7 +132,8 @@ Qwen3-TTS と VyvoTTS `en-us-1`、Kokoro のデフォルトは `af_heart`、Kitt
 `run` と `serve` は `--context-limit`（デフォルト 16384 トークン）に対応しています。
 
 環境変数：`SWAMA_PORT`（サーバーポート）、`SWAMA_MODELS`（モデルディレクトリ、デフォルト `~/.swama/models`）、`SWAMA_CONTEXT_LIMIT`、
-`SWAMA_REGISTRY`（`HUGGING_FACE` または `MODEL_SCOPE`）、`SWAMA_PROMPT_CACHE=0`（プロンプトキャッシュを無効化）。
+`SWAMA_REGISTRY`（`HUGGING_FACE` または `MODEL_SCOPE`）、`SWAMA_PROMPT_CACHE=0`（プロンプトキャッシュを無効化）、
+`SWAMA_DIAGNOSTICS_PATH`（診断ログの場所）、`SWAMA_DIAGNOSTICS_DISABLED=1`（診断ログを無効化）。
 
 ## 開発
 

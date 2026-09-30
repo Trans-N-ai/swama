@@ -77,8 +77,8 @@ also have short aliases:
 The complete alias → model mapping is in
 [`ModelAliases.swift`](swama/Sources/SwamaKit/Model/ModelAliases.swift). FireRedASR2 is also supported by its full
 repository id.
-Known issue: in our testing on 2.4.0, `gemma3` (4B) and `qwen3-vl` (4B) fail to load
-([#23](https://github.com/Trans-N-ai/swama/issues/23)); use `qwen3.5` for image input.
+Known issue: in our testing on 2.4.0, `gemma3` (4B) and `qwen3-vl` (4B) fail to load (for Gemma, possibly related to
+[#23](https://github.com/Trans-N-ai/swama/issues/23)); use `qwen3.5` for image input.
 
 ## API
 
@@ -181,7 +181,7 @@ Qwen3-TTS and VyvoTTS `en-us-1`; Kokoro defaults to `af_heart`, KittenTTS to `Be
 
 Environment variables: `SWAMA_PORT` (server port), `SWAMA_MODELS` (model directory, default `~/.swama/models`),
 `SWAMA_CONTEXT_LIMIT`, `SWAMA_REGISTRY` (`HUGGING_FACE` or `MODEL_SCOPE`), `SWAMA_PROMPT_CACHE=0` (disable prompt
-caching).
+caching), `SWAMA_DIAGNOSTICS_PATH` (diagnostics log location), `SWAMA_DIAGNOSTICS_DISABLED=1` (turn the log off).
 
 ## Development
 

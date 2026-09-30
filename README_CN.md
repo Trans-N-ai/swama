@@ -70,7 +70,7 @@ Hugging Face 上的任何 MLX 模型都可以用完整 ID 使用（例如 `mlx-c
 | 语音合成（实验性） | `kokoro`、`orpheus`、`qwen3-tts`、`marvis`、`chatterbox`、`vyvo`、`fish-speech`、`soprano`、`pocket-tts`、`echo-tts`、`kitten-tts`、`irodori-tts`、`omnivoice`、`moss-tts`、`moss-ttsd`、`moss-tts-local` |
 
 完整的别名 → 模型对照见 [`ModelAliases.swift`](swama/Sources/SwamaKit/Model/ModelAliases.swift)。FireRedASR2 也受支持，请使用完整仓库 ID。
-已知问题：我们在 2.4.0 上测试时，`gemma3`（4B）和 `qwen3-vl`（4B）无法加载（[#23](https://github.com/Trans-N-ai/swama/issues/23)），图片输入请用 `qwen3.5`。
+已知问题：我们在 2.4.0 上测试时，`gemma3`（4B）和 `qwen3-vl`（4B）无法加载（Gemma 的问题可能与 [#23](https://github.com/Trans-N-ai/swama/issues/23) 有关），图片输入请用 `qwen3.5`。
 
 ## API
 
@@ -132,7 +132,8 @@ Qwen3-TTS 和 VyvoTTS `en-us-1`；Kokoro 默认 `af_heart`，KittenTTS 默认 `B
 `run` 和 `serve` 支持 `--context-limit`（默认 16384 token）。
 
 环境变量：`SWAMA_PORT`（服务端口）、`SWAMA_MODELS`（模型目录，默认 `~/.swama/models`）、`SWAMA_CONTEXT_LIMIT`、
-`SWAMA_REGISTRY`（`HUGGING_FACE` 或 `MODEL_SCOPE`）、`SWAMA_PROMPT_CACHE=0`（关闭提示缓存）。
+`SWAMA_REGISTRY`（`HUGGING_FACE` 或 `MODEL_SCOPE`）、`SWAMA_PROMPT_CACHE=0`（关闭提示缓存）、
+`SWAMA_DIAGNOSTICS_PATH`（诊断日志位置）、`SWAMA_DIAGNOSTICS_DISABLED=1`（关闭诊断日志）。
 
 ## 开发
 
