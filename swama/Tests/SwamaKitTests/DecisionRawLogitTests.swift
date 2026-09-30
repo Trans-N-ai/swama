@@ -16,7 +16,11 @@ import Testing
 )
 struct DecisionRawLogitTests {
     @Test func matchesUpstreamIteratorAndUncachedForward() async throws {
-        let name = "mlx-community/Qwen3.5-0.8B-MLX-4bit"
+        let baselineModel = "mlx-community/Qwen3.5-0.8B-MLX-4bit"
+        // An explicit other checkpoint runs only the native Swift controls; the Python golden
+        // values below belong exclusively to the baseline checkpoint and must never be reused.
+        let name = ProcessInfo.processInfo.environment["SWAMA_DECISION_CONTROL_MODEL"] ?? baselineModel
+        let hasPythonReference = name == baselineModel
         let path = FileManager.default
             .homeDirectoryForCurrentUser
             .appendingPathComponent(".swama/models/\(name)/config.json")
@@ -81,12 +85,14 @@ struct DecisionRawLogitTests {
             }
             let evidence: [String: Any] = [
                 "case": kind,
+                "model": name,
                 "dtype": control.2,
                 "score_logprobs": scored.labelLogProbs,
                 "iterator_logprobs": control.0,
                 "uncached_logprobs": control.1,
                 "raw_logits": control.3,
-                "python_raw_logits": pythonLogits
+                "python_raw_logits": hasPythonReference ? pythonLogits : [],
+                "python_reference_available": hasPythonReference
             ]
             try print("DECISION_CONTROL " +
                 String(
@@ -104,22 +110,24 @@ struct DecisionRawLogitTests {
             for (actual, reference) in zip(scored.labelLogProbs, control.1) {
                 #expect(abs(actual - reference) < 1e-5)
             }
-            // Conditional probabilities are invariant to a shared logit shift. Compare centered
-            // logits, then separately retain the absolute shift and full-vocabulary label_mass.
-            // The score fixture differs by [0.125, 0.125, 0, 0.125, 0.25] before centering;
-            // subtracting the shared 0.125 leaves [0, 0, -0.125, 0, 0.125], one bf16 step.
-            let actualMean = control.3.reduce(0, +) / Double(control.3.count)
-            let referenceMean = pythonLogits.reduce(0, +) / Double(pythonLogits.count)
-            for (actual, reference) in zip(control.3, pythonLogits) {
-                let ulp = pow(2.0, floor(log2(abs(reference))) - 7)
-                #expect(abs((actual - actualMean) - (reference - referenceMean)) <= ulp + 1e-12)
+            if hasPythonReference {
+                // Conditional probabilities are invariant to a shared logit shift. Compare centered
+                // logits, then separately retain the absolute shift and full-vocabulary label_mass.
+                // The score fixture differs by [0.125, 0.125, 0, 0.125, 0.25] before centering;
+                // subtracting the shared 0.125 leaves [0, 0, -0.125, 0, 0.125], one bf16 step.
+                let actualMean = control.3.reduce(0, +) / Double(control.3.count)
+                let referenceMean = pythonLogits.reduce(0, +) / Double(pythonLogits.count)
+                for (actual, reference) in zip(control.3, pythonLogits) {
+                    let ulp = pow(2.0, floor(log2(abs(reference))) - 7)
+                    #expect(abs((actual - actualMean) - (reference - referenceMean)) <= ulp + 1e-12)
+                }
+                if kind == "score" {
+                    #expect(abs(expectedScore(control.3) - expectedScore(pythonLogits)) <= 0.05)
+                }
+                let actualWinner = control.3.indices.max { control.3[$0] < control.3[$1] }
+                let referenceWinner = pythonLogits.indices.max { pythonLogits[$0] < pythonLogits[$1] }
+                #expect(actualWinner == referenceWinner)
             }
-            if kind == "score" {
-                #expect(abs(expectedScore(control.3) - expectedScore(pythonLogits)) <= 0.05)
-            }
-            let actualWinner = control.3.indices.max { control.3[$0] < control.3[$1] }
-            let referenceWinner = pythonLogits.indices.max { pythonLogits[$0] < pythonLogits[$1] }
-            #expect(actualWinner == referenceWinner)
         }
         await ModelPool.shared.clearCache()
     }

@@ -281,10 +281,13 @@ another version is rejected.
 This endpoint uses SGLang's public prompt wording and response fields. Swama
 requires an explicit local `model` because it can serve more than one model.
 The local chat tokenizer must preserve the rendered prompt and encode every
-answer label as one distinct token at the answer position. Thinking is forced
-off through `enable_thinking: false`; requesting it on is rejected. A model
-with a detected open reasoning prefix is rejected. `chat_template_kwargs` other
-than that fixed toggle are currently unsupported. Each question starts with a
+answer label as one distinct token at the answer position. The request passes
+`enable_thinking: false` to the template; requesting it on is rejected. Templates
+may ignore this flag. Open reasoning prefixes and a recognized single-token
+`<think>` or `[THINK]` opener at the vocabulary maximum are rejected. This check
+does not certify every reasoning format or guarantee the model follows
+instructions. `chat_template_kwargs` other than that fixed toggle are currently
+unsupported. Each question starts with a
 fresh KV cache, independent of the chat prompt cache. Inputs are textual:
 objects and arrays render as compact JSON with sorted keys; image and audio
 parts are unsupported. Use string inputs when comparing exact prompts across servers,

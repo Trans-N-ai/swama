@@ -1150,11 +1150,11 @@ struct AcceptanceTests {
         let compiler = try report.object("compiler_public_api")
         #expect(try compiler.string("status") == "ready")
         #expect(try compiler.boolean("passed"))
-        #expect(try compiler.integer("symbol_count") == 160)
-        #expect(try compiler.array("symbols").count == 160)
+        #expect(try compiler.integer("symbol_count") == 198)
+        #expect(try compiler.array("symbols").count == 198)
         #expect(try compiler.array("violations").isEmpty)
         #expect(try compiler.string("manifest_sha256")
-            == "9cc4b4759e3c104f8832a0eb9a5369d85141b1c817217e0df42aec1405c5ba39"
+            == "3d6babb142dd78cd2796a2cfde8ad7f99c2e94c19f2dc4634bc8fa7a5b52bd61"
         )
         let dependencies = try report.object("core_target_dependencies")
         #expect(try dependencies.string("status") == "ready")
@@ -1388,7 +1388,10 @@ struct AcceptanceTests {
         ]))
     }
 
-    @Test func runtimeStaysPrivateAndCoreManifestMatchesV1() throws {
+    /// Core V1 is extended additively: 160 -> 198 symbols, exactly six Decision types and
+    /// SwamaEngine.decide. The reviewed symbol-level delta removes/changes no prior symbols.
+    /// This is a new manifest baseline, not a new Core major version or prompt-format version.
+    @Test func runtimeStaysPrivateAndCoreManifestMatchesDecisionsBaseline() throws {
         let paths = try WorkspacePaths.discover(explicit: repositoryRoot.path)
         let contract = try AcceptanceContract.load(from: paths.contract).coreGuards
         let developerDirectory = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
@@ -1413,11 +1416,11 @@ struct AcceptanceTests {
             contract: contract
         )
         #expect(try core.boolean("passed"))
-        #expect(try core.integer("symbol_count") == 160)
-        #expect(try core.array("symbols").count == 160)
+        #expect(try core.integer("symbol_count") == 198)
+        #expect(try core.array("symbols").count == 198)
         #expect(try core.array("violations").isEmpty)
         #expect(try core.string("manifest_sha256")
-            == "9cc4b4759e3c104f8832a0eb9a5369d85141b1c817217e0df42aec1405c5ba39"
+            == "3d6babb142dd78cd2796a2cfde8ad7f99c2e94c19f2dc4634bc8fa7a5b52bd61"
         )
     }
 

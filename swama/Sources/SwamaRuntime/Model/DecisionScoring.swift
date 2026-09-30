@@ -9,6 +9,7 @@ enum DecisionScoringError: Error, LocalizedError {
     case missingChatTemplate
     case lossyTemplate
     case reasoningOpen
+    case reasoningPredicted
     case invalidLabel(String)
     case contextLimitExceeded
     case invalidLogits
@@ -18,6 +19,7 @@ enum DecisionScoringError: Error, LocalizedError {
         case .missingChatTemplate: "Decision scoring requires a chat template."
         case .lossyTemplate: "The rendered chat prompt does not round-trip through this tokenizer."
         case .reasoningOpen: "The chat template leaves a reasoning block open at the answer position."
+        case .reasoningPredicted: "The model predicts a reasoning opener instead of a direct answer."
         case let .invalidLabel(label): "The answer label '\(label)' is not one distinct token after the chat prompt."
         case .contextLimitExceeded: "The decision prompt exceeds the configured context limit."
         case .invalidLogits: "The model returned invalid next-token logits."
@@ -107,6 +109,22 @@ extension ModelRunner {
                 throw DecisionScoringError.invalidLogits
             }
 
+            // A clean template prefix does not prove the model obeyed enable_thinking=false.
+            // Only recognize exact single-token openers, never a tokenizer's unknown-token fallback.
+            let reasoningIDs = ["<think>", "[THINK]"].compactMap { marker -> Int? in
+                let encoded = tokenizer.encode(text: marker, addSpecialTokens: false)
+                guard encoded.count == 1,
+                      tokenizer.decode(tokenIds: encoded, skipSpecialTokens: false) == marker
+                else {
+                    return nil
+                }
+
+                return encoded[0]
+            }
+            guard !decisionPredictsReasoning(logits: values, reasoningTokenIDs: reasoningIDs) else {
+                throw DecisionScoringError.reasoningPredicted
+            }
+
             let total = values.reduce(0) { $0 + exp($1 - maximum) }
             let logNormalizer = maximum + log(total)
             guard logNormalizer.isFinite else {
@@ -162,4 +180,14 @@ package func decisionHasOpenReasoning(_ prefix: String) -> Bool {
         }
     }
     return false
+}
+
+/// Reject a recognized reasoning opener tied for the vocabulary's highest logit.
+/// Low label mass by itself is not a proof of reasoning or an application accuracy threshold.
+package func decisionPredictsReasoning(logits: [Double], reasoningTokenIDs: [Int]) -> Bool {
+    guard let maximum = logits.max(), maximum.isFinite else {
+        return false
+    }
+
+    return reasoningTokenIDs.contains { logits.indices.contains($0) && logits[$0] == maximum }
 }

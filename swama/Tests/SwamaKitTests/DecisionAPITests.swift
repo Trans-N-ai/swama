@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SwamaCore
 @testable import SwamaKit
@@ -141,12 +142,21 @@ struct DecisionAPITests {
         ]
         for (probabilities, expectedChoice, expectedScore) in fixtures {
             let labels = probabilities.indices.map(String.init)
-            for (question, expected) in [
+            for (question, runtimeQuestion, expected) in [
                 (
                     DecisionQuestion.choice(id: "q", question: "Pick", options: labels.map { .init(name: $0) }),
+                    RuntimeDecisionQuestion.choice(
+                        id: "q",
+                        question: "Pick",
+                        options: labels.map { .init(name: $0, description: nil) }
+                    ),
                     expectedChoice
                 ),
-                (DecisionQuestion.score(id: "q", question: "Rate", levels: labels), expectedScore)
+                (
+                    DecisionQuestion.score(id: "q", question: "Rate", levels: labels),
+                    RuntimeDecisionQuestion.score(id: "q", question: "Rate", levels: labels),
+                    expectedScore
+                )
             ] {
                 let answer = try question.decisionAnswer(
                     logProbs: probabilities.map { log($0 * 0.6) },
@@ -157,7 +167,44 @@ struct DecisionAPITests {
                 let confidence = try #require(answer.confidence)
                 #expect(abs(confidence - expected) < 1e-12)
                 #expect((0 ... 1).contains(confidence))
+                // Exercise the actual Core runtime path against the oracle, not only n=2 parity.
+                // At n=2 absolute distance and squared distance are indistinguishable.
+                let runtimeAnswer = try SwamaRuntime.decisionAnswer(
+                    question: runtimeQuestion,
+                    logProbs: probabilities.map { log($0 * 0.6) },
+                    temperature: 1,
+                    promptTokenIDs: nil,
+                    labelTokenIDs: nil
+                )
+                let runtimeConfidence = try #require(runtimeAnswer.confidence)
+                #expect(abs(runtimeConfidence - expected) < 1e-12)
+                #expect(runtimeAnswer.probabilities == answer.probabilities)
+                #expect(runtimeQuestion.content(input: "context") == question.decisionPrompt(input: "context"))
+                #expect(runtimeQuestion.labels == question.decisionLabels)
             }
+        }
+    }
+
+    @Test func decisionAdapterSourcesStayPinned() throws {
+        let package = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        // These adapters have different boundary types; changes require both semantic parity
+        // and an explicit reviewed source-baseline update, like RuntimeLineageTests.
+        for (path, expected) in [
+            (
+                "Sources/SwamaRuntime/CoreBridge/RuntimeDecisions.swift",
+                "8c70eef27b9da3ed6f191870df190ee4444728d8f7a9220f9118f7292a56b60b"
+            ),
+            (
+                "Sources/SwamaServer/DecisionCalculation.swift",
+                "14e979bf272cd0b880797d5d05b0a011f81c8750e7177c08e851a7aa6b60f40e"
+            )
+        ] {
+            let bytes = try Data(contentsOf: package.appendingPathComponent(path))
+            let actual = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+            #expect(actual == expected, "Decision adapter drift: \(path)")
         }
     }
 
@@ -193,6 +240,19 @@ struct DecisionAPITests {
         let binary = try DecisionQuestion.yesNo(id: "q", question: "True?").decisionAnswer(
             logProbs: [log(0.8), log(0.2)], temperature: 1, promptTokenIDs: nil, labelTokenIDs: nil)
         #expect(binary.confidence == nil)
+    }
+
+    @Test func rejectsPredictedReasoningWithoutRejectingLowLabelMassAlone() {
+        for (logits, ids, expected) in [
+            ([10.0, -30, -32], [0], true),
+            ([10.0, 10, -32], [1], true),
+            ([10.0, -30, -32], [1], false),
+            ([10.0, -30, -32], [], false),
+            ([10.0, -30, -32], [-1, 3], false)
+        ] {
+            #expect(SwamaKit.decisionPredictsReasoning(logits: logits, reasoningTokenIDs: ids) == expected)
+            #expect(SwamaRuntime.decisionPredictsReasoning(logits: logits, reasoningTokenIDs: ids) == expected)
+        }
     }
 
     @Test func rejectsOpenReasoningPrefixes() {

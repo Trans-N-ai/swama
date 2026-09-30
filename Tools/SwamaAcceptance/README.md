@@ -127,3 +127,20 @@ invalid evidence (`UNKNOWN`), not a passing comparison. Tool-call `arguments`
 are canonical JSON objects in both streamed events and terminal responses.
 Runtime production of all three routes remains explicitly unmet until the
 consumer adapter PRs land.
+
+### Decisions public API baseline
+
+The Decisions addition remains an additive extension of Core V1. The compiler-derived
+manifest grows from 160 to 198 symbols: 38 additions from `DecisionOption`,
+`DecisionQuestion`, `DecisionRequest`, `DecisionKind`, `DecisionAnswer`,
+`DecisionResponse`, and `SwamaEngine.decide(_:)`. No existing symbol is removed or
+changes its declaration, referenced modules, or relationships. This does not change
+the transport's prompt format version 1 or introduce a new Core major version.
+
+The accepted manifest hash moves from
+`9cc4b4759e3c104f8832a0eb9a5369d85141b1c817217e0df42aec1405c5ba39` to
+`3d6babb142dd78cd2796a2cfde8ad7f99c2e94c19f2dc4634bc8fa7a5b52bd61`.
+The new test name explicitly identifies the Decisions baseline. Future changes still
+require reviewing the symbol-level delta before updating the count/hash; an arbitrary
+compiler output must not be copied into the pin. This baseline was produced with
+Apple Swift 6.3.3 (Xcode 26.6), under the harness's existing Swift 6.3 toolchain contract.
