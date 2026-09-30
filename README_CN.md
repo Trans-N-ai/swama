@@ -46,7 +46,7 @@ xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 
 ```bash
 swama run qwen3.5 "你好！"                          # 首次使用时自动下载
-swama run gemma3 "图片里有什么？" -i photo.jpg
+swama run qwen3.5 "图片里有什么？" -i photo.jpg
 swama serve --host 127.0.0.1 --port 28100          # 启动 API 服务
 ```
 
@@ -70,6 +70,7 @@ Hugging Face 上的任何 MLX 模型都可以用完整 ID 使用（例如 `mlx-c
 | 语音合成（实验性） | `kokoro`、`orpheus`、`qwen3-tts`、`marvis`、`chatterbox`、`vyvo`、`fish-speech`、`soprano`、`pocket-tts`、`echo-tts`、`kitten-tts`、`irodori-tts`、`omnivoice`、`moss-tts`、`moss-ttsd`、`moss-tts-local` |
 
 完整的别名 → 模型对照见 [`ModelAliases.swift`](swama/Sources/SwamaKit/Model/ModelAliases.swift)。FireRedASR2 也受支持，请使用完整仓库 ID。
+已知问题：我们在 2.4.0 上测试时，`gemma3`（4B）和 `qwen3-vl`（4B）无法加载（[#23](https://github.com/Trans-N-ai/swama/issues/23)），图片输入请用 `qwen3.5`。
 
 ## API
 
@@ -87,7 +88,7 @@ Hugging Face 上的任何 MLX 模型都可以用完整 ID 使用（例如 `mlx-c
 ```bash
 # 图片输入
 curl http://localhost:28100/v1/chat/completions -H "Content-Type: application/json" -d '{
-  "model": "gemma3",
+  "model": "qwen3.5",
   "messages": [{"role": "user", "content": [
     {"type": "text", "text": "你看到了什么？"},
     {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}]}]}'

@@ -46,7 +46,7 @@ xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 
 ```bash
 swama run qwen3.5 "こんにちは！"                    # 初回利用時に自動ダウンロード
-swama run gemma3 "この画像には何が写っていますか？" -i photo.jpg
+swama run qwen3.5 "この画像には何が写っていますか？" -i photo.jpg
 swama serve --host 127.0.0.1 --port 28100          # API サーバー
 ```
 
@@ -70,6 +70,7 @@ Hugging Face 上の MLX モデルはフル ID でそのまま使えます（例�
 | 音声合成（実験的） | `kokoro`、`orpheus`、`qwen3-tts`、`marvis`、`chatterbox`、`vyvo`、`fish-speech`、`soprano`、`pocket-tts`、`echo-tts`、`kitten-tts`、`irodori-tts`、`omnivoice`、`moss-tts`、`moss-ttsd`、`moss-tts-local` |
 
 エイリアスとモデルの完全な対応表は [`ModelAliases.swift`](swama/Sources/SwamaKit/Model/ModelAliases.swift) にあります。FireRedASR2 もフルリポジトリ ID で利用できます。
+既知の問題：2.4.0 での検証では `gemma3`（4B）と `qwen3-vl`（4B）が読み込めません（[#23](https://github.com/Trans-N-ai/swama/issues/23)）。画像入力には `qwen3.5` を使ってください。
 
 ## API
 
@@ -87,7 +88,7 @@ Hugging Face 上の MLX モデルはフル ID でそのまま使えます（例�
 ```bash
 # 画像入力
 curl http://localhost:28100/v1/chat/completions -H "Content-Type: application/json" -d '{
-  "model": "gemma3",
+  "model": "qwen3.5",
   "messages": [{"role": "user", "content": [
     {"type": "text", "text": "何が見えますか？"},
     {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}]}]}'

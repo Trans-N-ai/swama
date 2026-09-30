@@ -49,7 +49,7 @@ xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 
 ```bash
 swama run qwen3.5 "Hello!"                          # downloads on first use
-swama run gemma3 "What's in this image?" -i photo.jpg
+swama run qwen3.5 "What's in this image?" -i photo.jpg
 swama serve --host 127.0.0.1 --port 28100          # API server
 ```
 
@@ -77,6 +77,8 @@ also have short aliases:
 The complete alias → model mapping is in
 [`ModelAliases.swift`](swama/Sources/SwamaKit/Model/ModelAliases.swift). FireRedASR2 is also supported by its full
 repository id.
+Known issue: in our testing on 2.4.0, `gemma3` (4B) and `qwen3-vl` (4B) fail to load
+([#23](https://github.com/Trans-N-ai/swama/issues/23)); use `qwen3.5` for image input.
 
 ## API
 
@@ -94,7 +96,7 @@ The server listens on port 28100 by default (`--port` or `SWAMA_PORT` to change 
 ```bash
 # Image input
 curl http://localhost:28100/v1/chat/completions -H "Content-Type: application/json" -d '{
-  "model": "gemma3",
+  "model": "qwen3.5",
   "messages": [{"role": "user", "content": [
     {"type": "text", "text": "What do you see?"},
     {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}]}]}'
