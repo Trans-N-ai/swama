@@ -91,6 +91,15 @@ public final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
                 }
             }
 
+        case (.POST, "/v1/decisions"):
+            let channel = context.channel
+            channel.eventLoop.execute {
+                let task = Task {
+                    await DecisionsHandler.handle(requestHead: request, body: bodyBuffer, channel: channel)
+                }
+                channel.closeFuture.whenComplete { _ in task.cancel() }
+            }
+
         case (.POST, "/v1/embeddings"):
             let channel = context.channel
             channel.eventLoop.execute {

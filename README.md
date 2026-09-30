@@ -13,6 +13,7 @@
 
 - 🚀 **High Performance**: Built on Apple MLX framework, optimized for Apple Silicon
 - 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/responses` (honest subset, see the support matrix below), `/v1/embeddings`, `/v1/audio/transcriptions`, and `/v1/audio/speech` (experimental) endpoint support with tool calling
+- 🎯 **Decision scoring**: SGLang-style `/v1/decisions` scores choices, ratings, and yes/no answers without generating text
 - 📱 **Menu Bar App**: Elegant macOS native menu bar integration
 - 💻 **Command Line Tools**: Complete CLI support for model management and inference
 - 🖼️ **Multimodal Support**: Support for both text and image inputs
@@ -266,6 +267,37 @@ curl -X POST http://localhost:28100/v1/responses \
     "max_output_tokens": 200
   }'
 ```
+
+##### `/v1/decisions` (SGLang prompt format 1)
+
+`POST /v1/decisions` scores a finite set of answers without generating text.
+It accepts `choice` (2–26 named options), `score` (2–10 levels), and `yes_no`
+questions. Each answer includes probabilities conditional on its labels and
+`label_mass`, the total probability of those labels against the full
+vocabulary. A low `label_mass` means the model may prefer an answer outside the
+requested set. The response has `prompt_format_version: 1`; a request pinning
+another version is rejected.
+
+This endpoint uses SGLang's public prompt wording and response fields. Swama
+requires an explicit local `model` because it can serve more than one model.
+The local chat tokenizer must preserve the rendered prompt and encode every
+answer label as one distinct token at the answer position. Thinking is forced
+off through `enable_thinking: false`; requesting it on is rejected. A model
+with a detected open reasoning prefix is rejected. `chat_template_kwargs` other
+than that fixed toggle are currently unsupported. Each question starts with a
+fresh KV cache, independent of the chat prompt cache. Inputs are textual:
+objects and arrays render as compact JSON with sorted keys; image and audio
+parts are unsupported. Use string inputs when comparing exact prompts across servers,
+because structured JSON is canonicalized by Swama. Even identical low-precision
+weights can produce probability differences across backends and prefill layouts.
+
+```bash
+curl -X POST http://localhost:28100/v1/decisions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mlx-community/Qwen3.5-0.8B-MLX-4bit","input":"My invoice charged me twice.","questions":[{"id":"team","type":"choice","question":"Which team should handle this?","options":[{"name":"billing"},{"name":"technical"},{"name":"sales"}]}]}'
+```
+
+##### Other endpoint examples
 
 ```bash
 # Get available models

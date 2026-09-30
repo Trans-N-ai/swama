@@ -338,6 +338,13 @@ package enum RuntimeCoreErrorCode: String {
 package struct RuntimeCoreError: Error {
     package let code: RuntimeCoreErrorCode
     package let model: String?
+    package let message: String?
+
+    package init(code: RuntimeCoreErrorCode, model: String?, message: String? = nil) {
+        self.code = code
+        self.model = model
+        self.message = message
+    }
 }
 
 // MARK: - RuntimeCoreEngine
@@ -432,6 +439,56 @@ package actor RuntimeCoreEngine {
         }
         catch {
             throw mapError(error, model: request.model, fallback: .embeddingFailed)
+        }
+    }
+
+    package func decide(_ request: RuntimeDecisionRequest) async throws -> RuntimeDecisionResult {
+        try validateModelID(request.model)
+        try rejectUnsupportedAudioModel(request.model)
+        let limit: Int =
+            if let defaultContextLimit {
+                defaultContextLimit
+            }
+            else {
+                await ContextLimitConfig.shared.currentLimit()
+            }
+        var answers = [String: RuntimeDecisionAnswer]()
+        var promptTokens = 0
+        do {
+            for question in request.questions {
+                try Task.checkCancellation()
+                let content = question.content(input: request.input)
+                let labels = question.labels
+                let scored = try await pool.run(modelName: request.model) { runner in
+                    try await runner.scoreDecision(content: content, labels: labels, contextLimit: limit)
+                }
+                let answer = try decisionAnswer(
+                    question: question,
+                    logProbs: scored.labelLogProbs,
+                    temperature: request.temperature,
+                    promptTokenIDs: request.returnPromptTokenIDs ? scored.promptTokenIDs : nil,
+                    labelTokenIDs: request.returnPromptTokenIDs ? scored.labelTokenIDs : nil
+                )
+                answers[question.id] = answer
+                promptTokens += scored.promptTokenIDs.count
+            }
+            try Task.checkCancellation()
+            return .init(model: request.model, answers: answers, promptTokens: promptTokens)
+        }
+        catch is CancellationError {
+            throw CancellationError()
+        }
+        catch let error as DecisionScoringError {
+            let code: RuntimeCoreErrorCode =
+                switch error {
+                case .contextLimitExceeded: .contextLimitExceeded
+                case .invalidLogits: .backendFailure
+                default: .invalidRequest
+                }
+            throw RuntimeCoreError(code: code, model: request.model, message: error.localizedDescription)
+        }
+        catch {
+            throw mapError(error, model: request.model, fallback: .backendFailure)
         }
     }
 

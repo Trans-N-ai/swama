@@ -61,6 +61,24 @@ public actor SwamaEngine {
         }
     }
 
+    public func decide(_ request: DecisionRequest) async throws -> DecisionResponse {
+        try validate(request)
+        do {
+            let response = try await backend.decide(request)
+            try Task.checkCancellation()
+            return response
+        }
+        catch is CancellationError {
+            throw CancellationError()
+        }
+        catch let error as SwamaError {
+            throw error
+        }
+        catch {
+            throw SwamaError(code: .backendFailure, message: "The local decision backend failed.", model: request.model)
+        }
+    }
+
     public func models() async throws -> [ModelInfo] {
         try await backend.models()
     }
@@ -153,6 +171,64 @@ public actor SwamaEngine {
         }
     }
 
+    private func validate(_ request: DecisionRequest) throws {
+        try validate(request.model)
+        guard !request.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !request.questions.isEmpty,
+              request.temperature.isFinite,
+              request.temperature > 0
+        else {
+            throw invalidRequest(
+                "Decision input, questions, and positive finite temperature are required.",
+                model: request.model
+            )
+        }
+
+        var ids = Set<String>()
+        for question in request.questions {
+            let id = question.id
+            guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  ids.insert(id).inserted
+            else {
+                throw invalidRequest("Decision question IDs must be non-empty and unique.", model: request.model)
+            }
+
+            switch question {
+            case let .choice(_, text, options):
+                let names = options.map(\.name)
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      (2 ... 26).contains(options.count),
+                      names.allSatisfy({ Self.validOptionName($0) }),
+                      Set(names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).folding(
+                          options: .caseInsensitive,
+                          locale: nil
+                      ) }).count == names.count
+                else {
+                    throw invalidRequest("Choice questions require 2–26 distinct, valid options.", model: request.model)
+                }
+
+            case let .score(_, text, levels):
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      (2 ... 10).contains(levels.count),
+                      levels.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+                else {
+                    throw invalidRequest("Score questions require 2–10 non-empty levels.", model: request.model)
+                }
+
+            case let .yesNo(_, text, _, _):
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw invalidRequest("Yes/no questions require text.", model: request.model)
+                }
+            }
+        }
+    }
+
+    private static func validOptionName(_ name: String) -> Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !name.unicodeScalars
+            .contains { CharacterSet.controlCharacters.contains($0) || $0 == "\u{2028}" || $0 == "\u{2029}" }
+    }
+
     private func validate(_ model: ModelID) throws {
         guard RuntimeCoreEngine.isValidModelID(model.rawValue) else {
             throw invalidRequest("Model identifier is invalid.", model: nil)
@@ -202,11 +278,18 @@ package protocol SwamaEngineBackend: Sendable {
     ) async throws -> GenerationResponse
 
     func embed(_ request: EmbeddingRequest) async throws -> EmbeddingResponse
+    func decide(_ request: DecisionRequest) async throws -> DecisionResponse
     func models() async throws -> [ModelInfo]
     func fetch(_ model: ModelID) async throws -> ModelID
     func remove(_ model: ModelID) async throws
     func clearCache(for model: ModelID) async
     func clearCache() async
+}
+
+package extension SwamaEngineBackend {
+    func decide(_ request: DecisionRequest) async throws -> DecisionResponse {
+        throw SwamaError(code: .backendFailure, message: "Decision scoring is unavailable.", model: request.model)
+    }
 }
 
 // MARK: - RuntimeEngineBackend
@@ -241,6 +324,19 @@ private struct RuntimeEngineBackend: SwamaEngineBackend {
                 inputs: request.inputs
             ))
             .coreValue
+        }
+        catch is CancellationError {
+            throw CancellationError()
+        }
+        catch let error as RuntimeCoreError {
+            throw error.coreValue
+        }
+    }
+
+    func decide(_ request: DecisionRequest) async throws -> DecisionResponse {
+        do {
+            let result = try await runtime.decide(request.runtimeValue)
+            return result.coreValue
         }
         catch is CancellationError {
             throw CancellationError()
@@ -293,6 +389,59 @@ private extension GenerationRequest {
             messages: messages.map(\.runtimeValue),
             options: options.runtimeValue,
             tools: tools.map(\.runtimeValue)
+        )
+    }
+}
+
+private extension DecisionRequest {
+    var runtimeValue: RuntimeDecisionRequest {
+        .init(
+            model: model.rawValue,
+            input: input,
+            questions: questions.map(\.runtimeValue),
+            temperature: temperature,
+            returnPromptTokenIDs: returnPromptTokenIDs
+        )
+    }
+}
+
+private extension DecisionQuestion {
+    var runtimeValue: RuntimeDecisionQuestion {
+        switch self {
+        case let .choice(id, question, options):
+            .choice(id: id, question: question, options: options.map {
+                .init(name: $0.name, description: $0.description)
+            })
+
+        case let .score(id, question, levels):
+            .score(id: id, question: question, levels: levels)
+
+        case let .yesNo(id, question, yes, no):
+            .yesNo(id: id, question: question, yes: yes, no: no)
+        }
+    }
+}
+
+private extension RuntimeDecisionResult {
+    var coreValue: DecisionResponse {
+        .init(
+            model: .init(model),
+            answers: answers.mapValues(\.coreValue),
+            usage: .init(promptTokens: promptTokens, completionTokens: 0)
+        )
+    }
+}
+
+private extension RuntimeDecisionAnswer {
+    var coreValue: DecisionAnswer {
+        .init(
+            type: DecisionKind(rawValue: type)!,
+            probabilities: probabilities,
+            labelMass: labelMass,
+            choice: choice,
+            score: score,
+            promptTokenIDs: promptTokenIDs,
+            labelTokenIDs: labelTokenIDs
         )
     }
 }
@@ -521,7 +670,7 @@ private extension RuntimeCoreError {
             }
         return .init(
             code: coreCode,
-            message: coreCode.safeMessage,
+            message: message ?? coreCode.safeMessage,
             model: model.map { ModelID($0) }
         )
     }

@@ -124,6 +124,7 @@ let package = Package(
         .testTarget(
             name: "SwamaKitTests",
             dependencies: [
+                "SwamaRuntime",
                 "SwamaCore",
                 "SwamaKit",
                 "SwamaServer",
