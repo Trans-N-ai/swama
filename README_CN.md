@@ -1,417 +1,148 @@
 # Swama
 
 [![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
-[![macOS](https://img.shields.io/badge/macOS-15.0+-blue.svg)](https://www.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-15.4+-blue.svg)](https://www.apple.com/macos/)
 [![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> [English](README.md) |  中文版本 | [日本語](README_JA.md) 
+> [English](README.md) | 中文 | [日本語](README_JA.md)
 
-**Swama** 是一个用纯 Swift 编写的高性能机器学习运行时，专为 macOS 设计，基于 Apple 的 MLX 框架。它为本地 LLM（大语言模型）和 VLM（视觉语言模型）推理提供了强大且易用的解决方案。
+**Swama** 是面向 Apple Silicon Mac 的本地 AI 运行时，用 Swift 编写，基于 Apple 的 [MLX](https://github.com/ml-explore/mlx-swift)。
+它在你的 Mac 上运行语言、视觉、嵌入、语音识别和语音合成模型，并通过 OpenAI 兼容 API、命令行工具和菜单栏应用提供服务。
 
-## ✨ 特性
+- **OpenAI 兼容 API**：聊天补全（流式、工具调用、图片输入）、Responses 的无状态子集、嵌入、音频转录，以及语音合成（实验性）。
+- **模型别名**：`swama run qwen3.5 "…"` 首次使用时自动从 Hugging Face 下载。
+- **菜单栏应用**：在后台运行服务、安装 `swama` 命令、设置上下文长度上限。
 
-- 🚀 **高性能**: 基于 Apple MLX 框架，针对 Apple Silicon 优化
-- 🔌 **OpenAI 兼容 API**: 提供标准的 `/v1/chat/completions`、`/v1/embeddings`、`/v1/audio/transcriptions` 和 `/v1/audio/speech`（experimental）端点，支持工具调用
-- 📱 **菜单栏应用**: 优雅的 macOS 原生菜单栏集成
-- 💻 **命令行工具**: 完整的 CLI 支持用于模型管理和推理
-- 🖼️ **多模态支持**: 同时支持文本和图像输入
-- 🎤 **本地音频转录**: 基于 Qwen3-ASR 等 MLX 语音识别模型（无需云服务）
-- 🔍 **文本嵌入**: 内置嵌入生成功能，支持语义搜索和 RAG 应用
-- 📦 **智能模型管理**: 自动下载、缓存和版本管理
-- 🔄 **流式响应**: 支持实时流式文本生成
-- 🌍 **HuggingFace 集成**: 直接从 HuggingFace Hub 下载模型
+## 系统要求
 
-## 🏗️ 架构
+- Apple Silicon Mac，macOS 15.4 或更高
+- 仅从源码构建时需要：带 Swift 6.2 工具链的 Xcode
 
-Swama 采用模块化架构设计：
+## 安装
 
-- **SwamaKit**: 核心框架库，包含所有业务逻辑
-- **Swama CLI**: 命令行工具，提供完整的模型管理和推理功能
-- **Swama.app**: macOS 菜单栏应用，提供图形界面和后台服务
-
-## 📋 系统要求
-
-- macOS 15.0 或更高版本 (Sequoia)
-- Apple Silicon (M1/M2/M3/M4)
-- Xcode 16.0+ (用于编译)
-- Swift 6.2+
-
-## 🛠️ 安装
-
-### 🍺 Homebrew（推荐）
+**Homebrew**
 
 ```bash
 brew install swama
 ```
 
-### 📱 下载预构建应用
+**下载应用**：从 [Releases](https://github.com/Trans-N-ai/swama/releases) 下载 `Swama.dmg`，把 `Swama.app` 拖进“应用程序”并打开。
+如果 macOS 阻止首次启动，请在**系统设置 › 隐私与安全性**中允许。之后在菜单栏选择 **Install Command Line Tool…**，把 `swama` 加入 PATH。
 
-1. **下载最新版本**
-   - 访问 [Releases](https://github.com/Trans-N-ai/swama/releases) 页面
-   - 从最新版本中下载 `Swama.dmg`
-
-2. **安装应用**
-   - 双击 `Swama.dmg` 挂载磁盘镜像
-   - 将 `Swama.app` 拖拽到 `Applications` 文件夹
-   - 从应用程序或聚焦搜索启动 Swama
-   
-   **注意**: 首次启动时，macOS 可能会显示安全警告。如果出现此情况：
-   - 前往 **系统偏好设置 > 安全性与隐私 > 通用**
-   - 点击 Swama 应用信息旁边的 **"仍要打开"**
-   - 或右键点击应用并从菜单中选择 **"打开"**
-
-3. **安装命令行工具**
-   - 从菜单栏打开 Swama
-   - 点击"Install Command Line Tool…"将 `swama` 命令添加到 PATH
-
-### 🔧 从源码构建（高级用户）
-
-适合想要从源码构建的开发者：
+**从源码构建**
 
 ```bash
-# 克隆仓库
 git clone https://github.com/Trans-N-ai/swama.git
-cd swama
-
-# 构建 CLI 工具
-cd swama
+cd swama/swama
 swift build -c release
-mv .build/release/swama .build/release/swama-bin
+mv .build/release/swama .build/release/swama-bin   # 应用以这个文件名打包 CLI
 
-# 构建 macOS 应用（需要 Xcode）
 cd ../swama-macos/Swama
 xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 ```
 
-## 🚀 快速开始
-
-安装 Swama.app 后，您可以使用菜单栏应用或命令行：
-
-### 1. 使用模型别名即时推理
+## 快速开始
 
 ```bash
-# 使用简短的别名而不是完整模型名 - 需要时自动下载！
-swama run qwen3 "你好，AI"
-swama run llama3.2 "给我讲个笑话"
-swama run gemma3 "这张图片里有什么？" -i /path/to/image.jpg
-
-# 传统方式（同样有效）
-swama run mlx-community/Llama-3.2-1B-Instruct-4bit "Hello, how are you?"
-
-# 查看已下载的模型
-swama list
+swama run qwen3.5 "你好！"                          # 首次使用时自动下载
+swama run gemma3 "图片里有什么？" -i photo.jpg
+swama serve --host 127.0.0.1 --port 28100          # 启动 API 服务
 ```
 
-**✨ 智能特性:**
-- **模型别名**: 使用友好的名称如 `qwen3`、`llama3.2`、`deepseek-r1`、`gpt-oss` 而不是长链接
-- **自动下载**: 首次使用时自动下载模型 - 无需先执行 `pull`！
-- **缓存管理**: 下载的模型会被缓存以供后续使用
-
-### 2. 可用的模型别名
-
-#### 语言模型 (LLM)
-
-| 别名 | 完整模型名 | 大小 | 描述 |
-|-------|-----------------|------|-------------|
-| `qwen3` | `mlx-community/Qwen3-8B-4bit` | 4.3 GB | Qwen3 8B (默认) |
-| `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | 938.4 MB | Qwen3 1.7B (轻量级) |
-| `qwen3-30b` | `mlx-community/Qwen3-30B-A3B-4bit` | 16.0 GB | Qwen3 30B (高容量) |
-| `qwen3-32b` | `mlx-community/Qwen3-32B-4bit` | 17.2 GB | Qwen3 32B (超大规模) |
-| `qwen3-235b` | `mlx-community/Qwen3-235B-A22B-4bit` | 123.2 GB | Qwen3 235B (万亿参数级) |
-| `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (默认) |
-| `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | 876.3 MB | Llama 3.2 1B (最快) |
-| `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | 约 32 GB | DeepSeek R1 (推理模型) |
-| `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-8bit` | 8.6 GB | DeepSeek R1 基于 Qwen3-8B |
-| `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
-| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | 约 20 GB | GPT-OSS 20B (21B 参数，3.6B 活跃) |
-| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | 约 120 GB | GPT-OSS 120B (117B 参数，5.1B 活跃) |
-
-#### 视觉语言模型 (VLM)
-
-| 别名 | 完整模型名 | 大小 | 描述 |
-|-------|-----------------|------|-------------|
-| `qwen3.5` | `mlx-community/Qwen3.5-35B-A3B-4bit` | 约 21 GB | Qwen3.5 35B-A3B（默认） |
-| `qwen3.5-0.8b` | `mlx-community/Qwen3.5-0.8B-4bit` | 约 0.6 GB | Qwen3.5 0.8B |
-| `qwen3.5-2b` | `mlx-community/Qwen3.5-2B-4bit` | 约 1.4 GB | Qwen3.5 2B |
-| `qwen3.5-4b` | `mlx-community/Qwen3.5-4B-4bit` | 约 2.4 GB | Qwen3.5 4B |
-| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 约 6.0 GB | Qwen3.5 9B |
-| `qwen3.5-27b` | `mlx-community/Qwen3.5-27B-4bit` | 约 16 GB | Qwen3.5 27B |
-| `qwen3.5-35b-a3b` | `mlx-community/Qwen3.5-35B-A3B-4bit` | 约 21 GB | Qwen3.5 35B-A3B |
-| `qwen3.5-122b-a10b` | `mlx-community/Qwen3.5-122B-A10B-4bit` | 约 68 GB | Qwen3.5 122B-A10B |
-| `qwen3.5-397b-a17b` | `mlx-community/Qwen3.5-397B-A17B-4bit` | 约 220 GB | Qwen3.5 397B-A17B |
-| `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 4B (默认 VLM) |
-| `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B (大规模 VLM) |
-| `qwen3-vl` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 约 4 GB | Qwen3-VL 4B (默认 VLM) |
-| `qwen3-vl-2b` | `mlx-community/Qwen3-VL-2B-Instruct-4bit` | 约 2 GB | Qwen3-VL 2B (轻量级) |
-| `qwen3-vl-8b` | `mlx-community/Qwen3-VL-8B-Instruct-4bit` | 约 8 GB | Qwen3-VL 8B (均衡) |
-
-#### 音频模型 (语音识别)
-
-| 别名 | 完整模型名 | 大小 | 描述 |
-|-------|-----------------|------|-------------|
-| `qwen3-asr` | `mlx-community/Qwen3-ASR-0.6B-4bit` | - | Qwen3-ASR 0.6B（多语言，默认） |
-| `qwen3-asr-1.7b` | `mlx-community/Qwen3-ASR-1.7B-bf16` | 3.8 GB | Qwen3-ASR 1.7B（多语言，更高精度） |
-| `glm-asr` | `mlx-community/GLM-ASR-Nano-2512-4bit` | - | GLM-ASR Nano |
-| `sensevoice` | `mlx-community/SenseVoiceSmall` | - | SenseVoice Small |
-| `parakeet` | `mlx-community/parakeet-tdt-0.6b-v3` | - | Parakeet TDT 0.6B |
-| `voxtral` | `mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16` | - | Voxtral Mini 4B（实时） |
-| `cohere-transcribe` | `beshkenadze/cohere-transcribe-03-2026-mlx-fp16` | - | Cohere Transcribe |
-| `whisper-base` | `mlx-community/whisper-base-4bit` | - | 原生 Whisper（另有 4/8-bit 和 fp16 别名） |
-| `moss-transcribe-diarize` | `OpenMOSS-Team/MOSS-Transcribe-Diarize` | - | 转录与说话人分离 |
-| `nemotron-asr` | `mlx-community/nemotron-3.5-asr-streaming-0.6b-8bit` | - | Nemotron 3.5 流式 ASR |
-| `canary` | `Mediform/canary-1b-v2-mlx-q8` | - | Canary 1B v2 |
-| `moonshine` | `UsefulSensors/moonshine-tiny` | - | Moonshine Tiny |
-| `wav2vec2` | `facebook/wav2vec2-base-960h` | - | Wav2Vec2 CTC |
-
-> 同时支持 FireRedASR2 —— 用完整的 HuggingFace repo id 作为模型名即可。
-
-#### 文本转语音模型 (TTS)
-
-| 别名 | 完整模型名 | 大小 | 描述 |
-|-------|-----------------|------|-------------|
-| `qwen3-tts` | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit` | - | Qwen3-TTS 0.6B |
-| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-bf16` | - | Orpheus 3B（多音色） |
-| `marvis` | `Marvis-AI/marvis-tts-250m-v0.2-MLX-8bit` | - | Marvis TTS 250M（多音色） |
-| `chatterbox` | `mlx-community/chatterbox-turbo-4bit` | - | Chatterbox Turbo |
-| `vyvo` | `mlx-community/VyvoTTS-EN-Beta-4bit` | - | VyvoTTS（英语） |
-| `fish-speech` | `mlx-community/fish-audio-s2-pro-8bit` | - | Fish-Speech S2 Pro |
-| `soprano` | `mlx-community/Soprano-80M-bf16` | - | Soprano 80M |
-| `pocket-tts` | `mlx-community/pocket-tts` | - | Pocket-TTS |
-| `moss-tts` | `OpenMOSS-Team/MOSS-TTS` | - | MOSS-TTS |
-| `moss-ttsd` | `OpenMOSS-Team/MOSS-TTSD-v1.0` | - | MOSS 对话 TTS |
-| `moss-tts-local` | `OpenMOSS-Team/MOSS-TTS-Local-Transformer` | - | MOSS Local Transformer TTS |
-| `echo-tts` | `mlx-community/echo-tts-base` | - | Echo-TTS |
-| `kokoro` | `mlx-community/Kokoro-82M-bf16` | - | Kokoro 多语言 82M |
-| `kitten-tts` | `mlx-community/kitten-tts-mini-0.8` | - | KittenTTS Mini |
-| `irodori-tts` | `mlx-community/Irodori-TTS-600M-v3-VoiceDesign-8bit` | - | 日语 VoiceDesign TTS |
-| `omnivoice` | `mlx-community/OmniVoice-bf16` | - | 多语言音色设计 TTS |
-
-### 3. 启动 API 服务
-
 ```bash
-# 或不指定模型启动（可通过 API 切换）
-swama serve --host 0.0.0.0 --port 28100
-```
-
-### 4. API 使用
-
-#### 🔌 OpenAI 兼容 API
-
-Swama 提供 OpenAI 兼容的 API 端点（含 `/v1/responses` 的诚实子集，详见英文 README 的支持矩阵），允许您将其与现有工具和集成一起使用：
-
-注意：`/v1/audio/speech` 为 experimental。
-
-```bash
-# 获取可用模型
-curl http://localhost:28100/v1/models
-
-# 使用别名的聊天补全（需要时自动下载）
-curl -X POST http://localhost:28100/v1/chat/completions \
+curl http://localhost:28100/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3",
-    "messages": [
-      {"role": "user", "content": "你好！"}
-    ],
-    "temperature": 0.7,
-    "max_tokens": 100
-  }'
-
-# 使用 DeepSeek R1 的流式响应
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-r1",
-    "messages": [
-      {"role": "user", "content": "逐步解决这个问题：240 的 15% 是多少？"}
-    ],
-    "stream": true
-  }'
-
-# 生成文本嵌入
-curl -X POST http://localhost:28100/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": ["Hello world", "Text embeddings"],
-    "model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
-  }'
-
-# 音频文件转录（本地处理）
-curl -X POST http://localhost:28100/v1/audio/transcriptions \
-  -F "file=@audio.wav" \
-  -F "model=qwen3-asr" \
-  -F "response_format=json"
-
-# 文本转语音（TTS，experimental）
-curl -X POST http://localhost:28100/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "orpheus",
-    "input": "Hello from Swama TTS",
-    "voice": "tara",
-    "response_format": "wav"
-  }' --output speech.wav
-
-# TTS 模型：qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts, kokoro, kitten-tts, irodori-tts, omnivoice, moss-ttsd, moss-tts-local
-# 支持音色的模型：orpheus, marvis, qwen3-tts, vyvo, kokoro, kitten-tts, irodori-tts, omnivoice
-# Orpheus 音色：dan, jess, leo, mia, tara, zac, zoe
-# Marvis 音色：conversational_a, conversational_b
-# Qwen3-TTS / VyvoTTS 音色：en-us-1
-# Kokoro 默认音色：af_heart；KittenTTS 默认音色：Bella
-
-# 工具调用（函数调用）
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3",
-    "messages": [{"role": "user", "content": "东京的天气如何？"}],
-    "tools": [
-      {
-        "type": "function",
-        "function": {
-          "name": "get_weather",
-          "description": "获取当前天气",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "location": {"type": "string", "description": "城市名称"}
-            },
-            "required": ["location"]
-          }
-        }
-      }
-    ],
-    "tool_choice": "auto"
-  }'
-
-# 多模态支持（视觉语言模型）
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemma3",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {"type": "text", "text": "你在这张图片中看到了什么？"},
-          {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}
-        ]
-      }
-    ]
-  }'
+  -d '{"model": "qwen3.5", "messages": [{"role": "user", "content": "你好！"}]}'
 ```
 
-## 📚 命令参考
+`swama serve` 默认绑定 `0.0.0.0`，同一网络里的其他机器也能访问 API。只想本机使用时请加 `--host 127.0.0.1`。
 
-### 模型管理
+## 模型
+
+Hugging Face 上的任何 MLX 模型都可以用完整 ID 使用（例如 `mlx-community/Qwen3.5-9B-4bit`）。常用模型有简短别名：
+
+| 类型 | 别名（第一个为默认） |
+| --- | --- |
+| 语言 | `qwen3.5`（35B-A3B）、`qwen3.5-0.8b` / `-2b` / `-4b` / `-9b` / `-27b` / `-122b-a10b` / `-397b-a17b`、`qwen3`、`qwen3-1.7b` / `-30b` / `-32b` / `-235b`、`qwen2.5`、`llama3.2`、`llama3.2-1b`、`llama3.3`、`gpt-oss`、`gpt-oss-120b`、`deepseek-r1`、`deepseek-r1-8b`、`deepseek-coder`、`smollm` |
+| 视觉 | `qwen3.5`（所有 Qwen3.5 尺寸都能看图）、`gemma3`、`gemma3-1b` / `-12b` / `-27b`、`qwen3-vl`、`qwen3-vl-2b` / `-8b` / `-32b` / `-30b` / `-235b`、`-thinking` 变体 |
+| 语音识别 | `qwen3-asr`、`qwen3-asr-1.7b`、`whisper`（large-v3-turbo）及 `whisper-tiny` / `-base` / `-small` / `-medium` / `-large`、`parakeet`、`sensevoice`、`glm-asr`、`voxtral`、`canary`、`moonshine`、`nemotron-asr`、`cohere-transcribe`、`moss-transcribe-diarize`、`wav2vec2`、`mms-asr` |
+| 语音合成（实验性） | `kokoro`、`orpheus`、`qwen3-tts`、`marvis`、`chatterbox`、`vyvo`、`fish-speech`、`soprano`、`pocket-tts`、`echo-tts`、`kitten-tts`、`irodori-tts`、`omnivoice`、`moss-tts`、`moss-ttsd`、`moss-tts-local` |
+
+完整的别名 → 模型对照见 [`ModelAliases.swift`](swama/Sources/SwamaKit/Model/ModelAliases.swift)。FireRedASR2 也受支持，请使用完整仓库 ID。
+
+## API
+
+服务默认监听 28100 端口（用 `--port` 或 `SWAMA_PORT` 修改）。
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /v1/models` | 已下载的模型 |
+| `POST /v1/chat/completions` | 流式（`"stream": true`）、工具调用、视觉模型的 `image_url` 输入 |
+| `POST /v1/responses` | 无状态子集，支持范围见[英文 README 的支持矩阵](README.md#api) |
+| `POST /v1/embeddings` | 嵌入模型，例如 `mlx-community/embeddinggemma-300m-4bit` |
+| `POST /v1/audio/transcriptions` | multipart 上传，本地语音识别 |
+| `POST /v1/audio/speech` | 语音合成（实验性） |
 
 ```bash
-# 下载模型（支持别名和完整名称）
-swama pull qwen3                    # 使用别名
-swama pull qwen3-asr                # 下载语音识别模型
-swama pull mlx-community/Qwen3-8B-4bit  # 使用完整名称
+# 图片输入
+curl http://localhost:28100/v1/chat/completions -H "Content-Type: application/json" -d '{
+  "model": "gemma3",
+  "messages": [{"role": "user", "content": [
+    {"type": "text", "text": "你看到了什么？"},
+    {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}]}]}'
 
-# 列出本地模型和可用别名
-swama list [--format json]
+# 工具调用
+curl http://localhost:28100/v1/chat/completions -H "Content-Type: application/json" -d '{
+  "model": "qwen3.5",
+  "messages": [{"role": "user", "content": "东京天气怎么样？"}],
+  "tools": [{"type": "function", "function": {"name": "get_weather",
+    "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}}}]}'
 
-# 运行推理（如果本地未找到模型会自动下载）
-swama run qwen3 "你的提示词"              # 使用别名 - 自动下载！
-swama run deepseek-coder "写一个Python函数"  # 另一个别名
-swama run <完整模型名> <提示词> [选项]      # 使用完整名称
+# 嵌入
+curl http://localhost:28100/v1/embeddings -H "Content-Type: application/json" \
+  -d '{"model": "mlx-community/embeddinggemma-300m-4bit", "input": ["Hello world"]}'
 
-# 转录音频文件
-swama transcribe audio.wav --model qwen3-asr --language zh
+# 转录
+curl http://localhost:28100/v1/audio/transcriptions -F "file=@audio.wav" -F "model=qwen3-asr"
+
+# 语音合成
+curl http://localhost:28100/v1/audio/speech -H "Content-Type: application/json" \
+  -d '{"model": "kokoro", "input": "Hello from Swama", "response_format": "wav"}' --output speech.wav
 ```
 
-### 服务器
+音色：Orpheus `dan` `jess` `leo` `mia` `tara` `zac` `zoe`；Marvis `conversational_a` `conversational_b`；
+Qwen3-TTS 和 VyvoTTS `en-us-1`；Kokoro 默认 `af_heart`，KittenTTS 默认 `Bella`。
 
-```bash
-# 启动 API 服务器
-swama serve [--host HOST] [--port PORT]
-```
+## 命令行
 
-### 模型别名
+| 命令 | 用途 |
+| --- | --- |
+| `swama run <model> <prompt>` | 单次生成。`-i` 图片（可多次）、`-t` 温度、`--top-p`、`-n` 最大 token 数、`--repetition-penalty`、`--no-stream` |
+| `swama serve` | 启动 API 服务（`--host`、`--port`），不带命令时默认执行它 |
+| `swama pull <model>` | 下载模型或别名 |
+| `swama list [--format json]` | 已下载的模型 |
+| `swama rm <model>` | 删除已下载的模型 |
+| `swama transcribe <audio>` | 语音转文字（`-m` 模型、`-l` 语言、`-f simple\|verbose`） |
+| `swama create <path> -n <name>` | 把已有的模型目录注册成一个名字 |
+| `swama logs [--follow]` | 读取 JSONL 诊断日志 |
+| `swama menubar` | 以菜单栏应用运行 |
 
-Swama 支持流行模型的便捷别名。使用这些简短名称而不是完整的模型 URL：
+`run` 和 `serve` 支持 `--context-limit`（默认 16384 token）。
 
-```bash
-# 不同模型系列的示例
-swama run qwen3 "解释机器学习"           # Qwen3 8B
-swama run llama3.2-1b "快速问题：什么是AI？"  # Llama 3.2 1B (最快)
-swama run deepseek-r1 "逐步思考：2+2*3"    # DeepSeek R1 (推理型)
-```
+环境变量：`SWAMA_PORT`（服务端口）、`SWAMA_MODELS`（模型目录，默认 `~/.swama/models`）、`SWAMA_CONTEXT_LIMIT`、
+`SWAMA_REGISTRY`（`HUGGING_FACE` 或 `MODEL_SCOPE`）、`SWAMA_PROMPT_CACHE=0`（关闭提示缓存）。
 
-### 选项
+## 开发
 
-- `--temperature <value>`: 采样温度 (0.0-2.0)
-- `--top-p <value>`: 核采样参数 (0.0-1.0)
-- `--max-tokens <number>`: 最大生成令牌数
-- `--repetition-penalty <value>`: 重复惩罚因子
+Swift 包在 `swama/`（`swift build`、`swift test`），macOS 应用在 `swama-macos/`。流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，
+漏洞报告见 [SECURITY.md](SECURITY.md)。
 
-## 🔧 开发
+基于 [mlx-swift](https://github.com/ml-explore/mlx-swift)、[mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm)、
+[mlx-audio-swift](https://github.com/Blaizzy/mlx-audio-swift)、[swift-transformers](https://github.com/huggingface/swift-transformers)、
+[swift-nio](https://github.com/apple/swift-nio) 和 [swift-argument-parser](https://github.com/apple/swift-argument-parser)。
 
-### 依赖项
+## 许可证
 
-- [swift-nio](https://github.com/apple/swift-nio) - 高性能网络框架
-- [swift-argument-parser](https://github.com/apple/swift-argument-parser) - 命令行参数解析
-- [mlx-swift](https://github.com/ml-explore/mlx-swift) - Apple MLX Swift 绑定
-- [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) - MLX Swift 语言模型
-- [mlx-audio-swift](https://github.com/Blaizzy/mlx-audio-swift) - MLX Swift 音频（STT/TTS：Qwen3-ASR、GLM-ASR、SenseVoice、Parakeet、Qwen3-TTS 等）
-
-### 构建
-
-```bash
-# 开发构建
-swift build
-
-# 发布构建
-swift build -c release
-
-# 运行测试
-swift test
-
-# 生成 Xcode 项目
-swift package generate-xcodeproj
-```
-
-## 🤝 贡献
-
-我们欢迎社区贡献！请参考以下步骤：
-
-1. Fork 此仓库
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 开启 Pull Request
-
-### 开发指南
-
-- 遵循 Swift 代码风格指南
-- 为新功能添加测试
-- 更新相关文档
-- 确保所有测试通过
-
-## 📝 许可证
-
-本项目基于 MIT 许可证开源 - 查看 [LICENSE](LICENSE) 文件了解详情。
-
-## 🙏 致谢
-
-- [Apple MLX](https://github.com/ml-explore/mlx) 团队提供的优秀机器学习框架
-- [Swift NIO](https://github.com/apple/swift-nio) 提供的高性能网络支持
-- 所有贡献者和社区成员
-
-## 📞 支持
-
-- 📝 [问题反馈](https://github.com/Trans-N-ai/swama/issues)
-- 💬 [讨论区](https://github.com/Trans-N-ai/swama/discussions)
-- 📧 邮件: info@trans-n.ai
-
-## 🗺️ 路线图
-
-- TODO
-
----
-
-**Swama** - 为 macOS 用户带来最佳的本地 AI 体验 🚀
+MIT，详见 [LICENSE](LICENSE)。问题和 bug 报告：[Issues](https://github.com/Trans-N-ai/swama/issues) ·
+[Discussions](https://github.com/Trans-N-ai/swama/discussions)。

@@ -1,541 +1,196 @@
 # Swama
 
 [![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
-[![macOS](https://img.shields.io/badge/macOS-15.0+-blue.svg)](https://www.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-15.4+-blue.svg)](https://www.apple.com/macos/)
 [![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > English | [中文](README_CN.md) | [日本語](README_JA.md)
 
-**Swama** is a high-performance machine learning runtime written in pure Swift, designed specifically for macOS and built on Apple's MLX framework. It provides a powerful and easy-to-use solution for local LLM (Large Language Model) and VLM (Vision Language Model) inference.
+**Swama** is a local AI runtime for Apple Silicon Macs, written in Swift on Apple's [MLX](https://github.com/ml-explore/mlx-swift).
+It runs language, vision, embedding, speech-recognition and text-to-speech models on your Mac and serves them through an
+OpenAI-compatible API, a command-line tool and a menu bar app.
 
-## ✨ Features
+- **OpenAI-compatible API**: chat completions (streaming, tool calling, image input), a stateless subset of Responses,
+  embeddings, audio transcription and text-to-speech (experimental).
+- **Model aliases**: `swama run qwen3.5 "…"` downloads the model from Hugging Face on first use.
+- **Menu bar app**: runs the server in the background, installs the `swama` command and sets the context limit.
 
-- 🚀 **High Performance**: Built on Apple MLX framework, optimized for Apple Silicon
-- 🔌 **OpenAI Compatible API**: Standard `/v1/chat/completions`, `/v1/responses` (honest subset, see the support matrix below), `/v1/embeddings`, `/v1/audio/transcriptions`, and `/v1/audio/speech` (experimental) endpoint support with tool calling
-- 🎯 **Decision scoring**: SGLang-style `/v1/decisions` scores choices, ratings, and yes/no answers without generating text
-- 📱 **Menu Bar App**: Elegant macOS native menu bar integration
-- 💻 **Command Line Tools**: Complete CLI support for model management and inference
-- 🖼️ **Multimodal Support**: Support for both text and image inputs
-- 🎤 **Local Audio Transcription**: Built-in speech recognition powered by Qwen3-ASR and other MLX ASR models (no cloud required)
-- 🔍 **Text Embeddings**: Built-in embedding generation for semantic search and RAG applications
-- 📦 **Smart Model Management**: Automatic downloading, caching, and version management
-- 🔄 **Streaming Responses**: Real-time streaming text generation support
-- 🌍 **HuggingFace Integration**: Direct model downloads from HuggingFace Hub
+## Requirements
 
-## 🏗️ Architecture
+- Apple Silicon Mac, macOS 15.4 or later
+- Building from source only: Xcode with the Swift 6.2 toolchain
 
-Swama features a modular architecture design:
+## Install
 
-- **SwamaKit**: Core framework library containing all business logic
-- **Swama CLI**: Command-line tool providing complete model management and inference functionality
-- **Swama.app**: macOS menu bar application with graphical interface and background services
-
-## 📋 System Requirements
-
-- macOS 15.0 or later (Sequoia)
-- Apple Silicon (M1/M2/M3/M4)
-- Xcode 16.0+ (for compilation)
-- Swift 6.2+
-
-## 🛠️ Installation
-
-### 🍺 Homebrew (Recommended)
+**Homebrew**
 
 ```bash
 brew install swama
 ```
 
-### 📱 Download Pre-built App
+**App download**: get `Swama.dmg` from [Releases](https://github.com/Trans-N-ai/swama/releases), drag `Swama.app` into
+Applications and open it. If macOS blocks the first launch, allow it under **System Settings › Privacy & Security**.
+Then choose **Install Command Line Tool…** in the menu bar to add `swama` to your PATH.
 
-1. **Download the latest release**
-   - Go to [Releases](https://github.com/Trans-N-ai/swama/releases)
-   - Download `Swama.dmg` from the latest release
-
-2. **Install the app**
-   - Double-click `Swama.dmg` to mount the disk image
-   - Drag `Swama.app` to the `Applications` folder
-   - Launch Swama from Applications or Spotlight
-   
-   **Note**: On first launch, macOS may show a security warning. If this happens:
-   - Go to **System Preferences > Security & Privacy > General**
-   - Click **"Open Anyway"** next to the Swama app message
-   - Or right-click the app and select **"Open"** from the context menu
-
-3. **Install CLI tools**
-   - Open Swama from the menu bar
-   - Click "Install Command Line Tool…" to add `swama` command to your PATH
-
-### 🔧 Build from Source (Advanced)
-
-For developers who want to build from source:
+**From source**
 
 ```bash
-# Clone the repository
 git clone https://github.com/Trans-N-ai/swama.git
-cd swama
-
-# Build CLI tool
-cd swama
+cd swama/swama
 swift build -c release
-mv .build/release/swama .build/release/swama-bin
+mv .build/release/swama .build/release/swama-bin   # the app bundles the CLI under this name
 
-# Build macOS app (requires Xcode)
 cd ../swama-macos/Swama
 xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 ```
 
-## 🚀 Quick Start
-
-After installing Swama.app, you can use either the menu bar app or command line:
-
-### 1. Instant Inference with Model Aliases
+## Quick start
 
 ```bash
-# Use short aliases instead of full model names - auto-downloads if needed!
-swama run qwen3 "Hello, AI"
-swama run llama3.2 "Tell me a joke"
-swama run gemma3 "What's in this image?" -i /path/to/image.jpg
-
-# Traditional way (also works)
-swama run mlx-community/Llama-3.2-1B-Instruct-4bit "Hello, how are you?"
-
-# List downloaded models
-swama list
+swama run qwen3.5 "Hello!"                          # downloads on first use
+swama run gemma3 "What's in this image?" -i photo.jpg
+swama serve --host 127.0.0.1 --port 28100          # API server
 ```
-
-**✨ Smart Features:**
-- **Model Aliases**: Use friendly names like `qwen3`, `llama3.2`, `deepseek-r1`, `gpt-oss` instead of long URLs
-- **Auto-Download**: Models are automatically downloaded on first use - no need to `pull` first!
-- **Cache Management**: Downloaded models are cached for future use
-
-### 2. Available Model Aliases
-
-#### Language Models (LLM)
-
-| Alias | Full Model Name | Size | Description |
-|-------|-----------------|------|-------------|
-| `qwen3` | `mlx-community/Qwen3-8B-4bit` | 4.3 GB | Qwen3 8B (default) |
-| `qwen3-1.7b` | `mlx-community/Qwen3-1.7B-4bit` | 938.4 MB | Qwen3 1.7B (lightweight) |
-| `qwen3-30b` | `mlx-community/Qwen3-30B-A3B-4bit` | 16.0 GB | Qwen3 30B (high-capacity) |
-| `qwen3-32b` | `mlx-community/Qwen3-32B-4bit` | 17.2 GB | Qwen3 32B (ultra-scale) |
-| `qwen3-235b` | `mlx-community/Qwen3-235B-A22B-4bit` | 123.2 GB | Qwen3 235B (trillion-scale) |
-| `llama3.2` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | 1.7 GB | Llama 3.2 3B (default) |
-| `llama3.2-1b` | `mlx-community/Llama-3.2-1B-Instruct-4bit` | 876.3 MB | Llama 3.2 1B (fastest) |
-| `deepseek-r1` | `mlx-community/DeepSeek-R1-0528-4bit` | ~32 GB | DeepSeek R1 (reasoning model) |
-| `deepseek-r1-8b` | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-8bit` | 8.6 GB | DeepSeek R1 based on Qwen3-8B |
-| `qwen2.5` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | 4.0 GB | Qwen 2.5 7B |
-| `gpt-oss` | `lmstudio-community/gpt-oss-20b-MLX-8bit` | ~20 GB | GPT-OSS 20B (21B params, 3.6B active) |
-| `gpt-oss-120b` | `lmstudio-community/gpt-oss-120b-MLX-8bit` | ~120 GB | GPT-OSS 120B (117B params, 5.1B active) |
-
-#### Vision Language Models (VLM)
-
-| Alias | Full Model Name | Size | Description |
-|-------|-----------------|------|-------------|
-| `qwen3.5` | `mlx-community/Qwen3.5-35B-A3B-4bit` | ~21 GB | Qwen3.5 35B-A3B (default) |
-| `qwen3.5-0.8b` | `mlx-community/Qwen3.5-0.8B-4bit` | ~0.6 GB | Qwen3.5 0.8B |
-| `qwen3.5-2b` | `mlx-community/Qwen3.5-2B-4bit` | ~1.4 GB | Qwen3.5 2B |
-| `qwen3.5-4b` | `mlx-community/Qwen3.5-4B-4bit` | ~2.4 GB | Qwen3.5 4B |
-| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | ~6.0 GB | Qwen3.5 9B |
-| `qwen3.5-27b` | `mlx-community/Qwen3.5-27B-4bit` | ~16 GB | Qwen3.5 27B |
-| `qwen3.5-35b-a3b` | `mlx-community/Qwen3.5-35B-A3B-4bit` | ~21 GB | Qwen3.5 35B-A3B |
-| `qwen3.5-122b-a10b` | `mlx-community/Qwen3.5-122B-A10B-4bit` | ~68 GB | Qwen3.5 122B-A10B |
-| `qwen3.5-397b-a17b` | `mlx-community/Qwen3.5-397B-A17B-4bit` | ~220 GB | Qwen3.5 397B-A17B |
-| `gemma3` | `mlx-community/gemma-3-4b-it-4bit` | 3.2 GB | Gemma 3 4B (default VLM) |
-| `gemma3-27b` | `mlx-community/gemma-3-27b-it-4bit` | 15.7 GB | Gemma 3 27B (large-scale VLM) |
-| `qwen3-vl` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | ~4 GB | Qwen3-VL 4B (default VLM) |
-| `qwen3-vl-2b` | `mlx-community/Qwen3-VL-2B-Instruct-4bit` | ~2 GB | Qwen3-VL 2B (lightweight) |
-| `qwen3-vl-8b` | `mlx-community/Qwen3-VL-8B-Instruct-4bit` | ~8 GB | Qwen3-VL 8B (balanced) |
-
-#### Audio Models (Speech Recognition)
-
-| Alias | Full Model Name | Size | Description |
-|-------|-----------------|------|-------------|
-| `qwen3-asr` | `mlx-community/Qwen3-ASR-0.6B-4bit` | - | Qwen3-ASR 0.6B (multilingual, default) |
-| `qwen3-asr-1.7b` | `mlx-community/Qwen3-ASR-1.7B-bf16` | 3.8 GB | Qwen3-ASR 1.7B (multilingual, higher accuracy) |
-| `glm-asr` | `mlx-community/GLM-ASR-Nano-2512-4bit` | - | GLM-ASR Nano |
-| `sensevoice` | `mlx-community/SenseVoiceSmall` | - | SenseVoice Small |
-| `parakeet` | `mlx-community/parakeet-tdt-0.6b-v3` | - | Parakeet TDT 0.6B |
-| `voxtral` | `mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16` | - | Voxtral Mini 4B (realtime) |
-| `cohere-transcribe` | `beshkenadze/cohere-transcribe-03-2026-mlx-fp16` | - | Cohere Transcribe |
-| `whisper-base` | `mlx-community/whisper-base-4bit` | - | Native Whisper (4/8-bit and fp16 aliases available) |
-| `moss-transcribe-diarize` | `OpenMOSS-Team/MOSS-Transcribe-Diarize` | - | Transcription with speaker diarization |
-| `nemotron-asr` | `mlx-community/nemotron-3.5-asr-streaming-0.6b-8bit` | - | Nemotron 3.5 streaming ASR |
-| `canary` | `Mediform/canary-1b-v2-mlx-q8` | - | Canary 1B v2 |
-| `moonshine` | `UsefulSensors/moonshine-tiny` | - | Moonshine Tiny |
-| `wav2vec2` | `facebook/wav2vec2-base-960h` | - | Wav2Vec2 CTC |
-
-> FireRedASR2 is also supported — pass its full HuggingFace repo id as the model name.
-
-#### Text-to-Speech Models (experimental)
-
-| Alias | Full Model Name | Size | Description |
-|-------|-----------------|------|-------------|
-| `qwen3-tts` | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit` | - | Qwen3-TTS 0.6B |
-| `orpheus` | `mlx-community/orpheus-3b-0.1-ft-bf16` | - | Orpheus 3B (multi-voice) |
-| `marvis` | `Marvis-AI/marvis-tts-250m-v0.2-MLX-8bit` | - | Marvis TTS 250M (multi-voice) |
-| `chatterbox` | `mlx-community/chatterbox-turbo-4bit` | - | Chatterbox Turbo |
-| `vyvo` | `mlx-community/VyvoTTS-EN-Beta-4bit` | - | VyvoTTS (English) |
-| `fish-speech` | `mlx-community/fish-audio-s2-pro-8bit` | - | Fish-Speech S2 Pro |
-| `soprano` | `mlx-community/Soprano-80M-bf16` | - | Soprano 80M |
-| `pocket-tts` | `mlx-community/pocket-tts` | - | Pocket-TTS |
-| `moss-tts` | `OpenMOSS-Team/MOSS-TTS` | - | MOSS-TTS |
-| `moss-ttsd` | `OpenMOSS-Team/MOSS-TTSD-v1.0` | - | MOSS dialogue TTS |
-| `moss-tts-local` | `OpenMOSS-Team/MOSS-TTS-Local-Transformer` | - | MOSS local-transformer TTS |
-| `echo-tts` | `mlx-community/echo-tts-base` | - | Echo-TTS |
-| `kokoro` | `mlx-community/Kokoro-82M-bf16` | - | Kokoro multilingual 82M |
-| `kitten-tts` | `mlx-community/kitten-tts-mini-0.8` | - | KittenTTS Mini |
-| `irodori-tts` | `mlx-community/Irodori-TTS-600M-v3-VoiceDesign-8bit` | - | Japanese VoiceDesign TTS |
-| `omnivoice` | `mlx-community/OmniVoice-bf16` | - | Multilingual voice-design TTS |
-
-### 3. Start API Service
 
 ```bash
-# Or start without specifying model (can switch via API)
-swama serve --host 0.0.0.0 --port 28100
+curl http://localhost:28100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3.5", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-### 4. API Usage
+`swama serve` binds to `0.0.0.0` by default, which makes the API reachable from other machines on your network.
+Pass `--host 127.0.0.1` to keep it local.
 
-#### 🔌 OpenAI Compatible API
+## Models
 
-Swama serves OpenAI-compatible endpoints (`/v1/models`, `/v1/chat/completions`,
-`/v1/responses`, `/v1/embeddings`, `/v1/audio/transcriptions`,
-`/v1/audio/speech`), allowing you to use it with existing tools and
-integrations. Compatibility is scoped to what a local runtime can honestly
-provide — see the endpoint notes below.
+Any MLX model on Hugging Face can be used by its full id (for example `mlx-community/Qwen3.5-9B-4bit`). Common models
+also have short aliases:
 
-Note: `/v1/audio/speech` is experimental.
+| Kind | Aliases (default first) |
+| --- | --- |
+| Language | `qwen3.5` (35B-A3B), `qwen3.5-0.8b` / `-2b` / `-4b` / `-9b` / `-27b` / `-122b-a10b` / `-397b-a17b`, `qwen3`, `qwen3-1.7b` / `-30b` / `-32b` / `-235b`, `qwen2.5`, `llama3.2`, `llama3.2-1b`, `llama3.3`, `gpt-oss`, `gpt-oss-120b`, `deepseek-r1`, `deepseek-r1-8b`, `deepseek-coder`, `smollm` |
+| Vision | `qwen3.5` (all Qwen3.5 sizes accept images), `gemma3`, `gemma3-1b` / `-12b` / `-27b`, `qwen3-vl`, `qwen3-vl-2b` / `-8b` / `-32b` / `-30b` / `-235b`, `-thinking` variants |
+| Speech recognition | `qwen3-asr`, `qwen3-asr-1.7b`, `whisper` (large-v3-turbo) and `whisper-tiny` / `-base` / `-small` / `-medium` / `-large`, `parakeet`, `sensevoice`, `glm-asr`, `voxtral`, `canary`, `moonshine`, `nemotron-asr`, `cohere-transcribe`, `moss-transcribe-diarize`, `wav2vec2`, `mms-asr` |
+| Text-to-speech (experimental) | `kokoro`, `orpheus`, `qwen3-tts`, `marvis`, `chatterbox`, `vyvo`, `fish-speech`, `soprano`, `pocket-tts`, `echo-tts`, `kitten-tts`, `irodori-tts`, `omnivoice`, `moss-tts`, `moss-ttsd`, `moss-tts-local` |
 
-##### `/v1/responses` support matrix
+The complete alias → model mapping is in
+[`ModelAliases.swift`](swama/Sources/SwamaKit/Model/ModelAliases.swift). FireRedASR2 is also supported by its full
+repository id.
 
-`POST /v1/responses` implements an honest, stateless subset of the OpenAI
-Responses API:
+## API
 
-- **Supported**: string or message-item `input`, `instructions`, `input_text`
-  and `input_image` parts, custom `function` tools including multi-turn
-  `function_call` / `function_call_output` items, `tool_choice` `"auto"`/`"none"`,
-  basic sampling (`temperature`, `top_p`, `max_output_tokens`), non-streaming
-  `Response` objects, and typed SSE streaming with monotonic `sequence_number`.
-- **Accepted with an explicit local meaning** (the fixed envelope Codex CLI
-  sends — validated, documented, never silently honoured):
+The server listens on port 28100 by default (`--port` or `SWAMA_PORT` to change it).
+
+| Endpoint | Notes |
+| --- | --- |
+| `GET /v1/models` | Downloaded models |
+| `POST /v1/chat/completions` | Streaming (`"stream": true`), tool calling, `image_url` input for vision models |
+| `POST /v1/responses` | Stateless subset — see below |
+| `POST /v1/embeddings` | Embedding models such as `mlx-community/embeddinggemma-300m-4bit` |
+| `POST /v1/audio/transcriptions` | Multipart upload, local speech recognition |
+| `POST /v1/audio/speech` | Text-to-speech (experimental) |
+
+```bash
+# Image input
+curl http://localhost:28100/v1/chat/completions -H "Content-Type: application/json" -d '{
+  "model": "gemma3",
+  "messages": [{"role": "user", "content": [
+    {"type": "text", "text": "What do you see?"},
+    {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}]}]}'
+
+# Tool calling
+curl http://localhost:28100/v1/chat/completions -H "Content-Type: application/json" -d '{
+  "model": "qwen3.5",
+  "messages": [{"role": "user", "content": "What is the weather in Tokyo?"}],
+  "tools": [{"type": "function", "function": {"name": "get_weather",
+    "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}}}]}'
+
+# Embeddings
+curl http://localhost:28100/v1/embeddings -H "Content-Type: application/json" \
+  -d '{"model": "mlx-community/embeddinggemma-300m-4bit", "input": ["Hello world"]}'
+
+# Transcription
+curl http://localhost:28100/v1/audio/transcriptions -F "file=@audio.wav" -F "model=qwen3-asr"
+
+# Text-to-speech
+curl http://localhost:28100/v1/audio/speech -H "Content-Type: application/json" \
+  -d '{"model": "kokoro", "input": "Hello from Swama", "response_format": "wav"}' --output speech.wav
+```
+
+Voices: Orpheus `dan` `jess` `leo` `mia` `tara` `zac` `zoe`; Marvis `conversational_a` `conversational_b`;
+Qwen3-TTS and VyvoTTS `en-us-1`; Kokoro defaults to `af_heart`, KittenTTS to `Bella`.
+
+<details>
+<summary><b><code>/v1/responses</code> support matrix</b></summary>
+
+`POST /v1/responses` implements an honest, stateless subset of the OpenAI Responses API.
+
+- **Supported**: string or message-item `input`, `instructions`, `input_text` and `input_image` parts, custom `function`
+  tools including multi-turn `function_call` / `function_call_output` items, `tool_choice` `"auto"`/`"none"`, basic
+  sampling (`temperature`, `top_p`, `max_output_tokens`), non-streaming `Response` objects, and typed SSE streaming
+  with monotonic `sequence_number`.
+- **Accepted with an explicit local meaning** (the fixed envelope Codex CLI sends — validated, documented, never
+  silently honoured):
   - `client_metadata` — client-side tracing only; validated and ignored.
-  - `prompt_cache_key` — accepted as a hint and currently not used. Swama's
-    local cache reuses a KV prefix by comparing actual prompt tokens, and holds
-    one entry per model, so sessions interleaved against the same model evict
-    each other. This is **not** an equivalent of the hosted prompt cache.
-  - `reasoning` — the empty object, or `summary: "auto"` (what Codex sends).
-    `auto` leaves the choice to the server and a local model emits no reasoning
-    items, so producing none satisfies it.
-  - `include: ["reasoning.encrypted_content"]` — accepted; there are no
-    reasoning items to return.
-  - `parallel_tool_calls` — this server never executes tools and always emits
-    function-call items one after another, satisfying `false`.
-  - `tools[{"type":"web_search","external_web_access":false}]` — **accepted and
-    then dropped before the model sees it.** Codex CLI 0.147.0 advertises this
-    tool unconditionally and no client setting removes it (`tools.web_search =
-    false` only flips `external_web_access`), so refusing it would make the CLI
-    unusable against Swama. This is a deliberate, narrow **compatibility
-    degradation, not support**: per OpenAI's reference, `external_web_access:
-    false` does not disable search — it runs web search in an offline,
-    cache-only mode over OpenAI's own index. Swama has no such index, performs
-    no search whatsoever, and never emits a `web_search_call`. Any request that
-    genuinely needs search capability is not supported here. `true`, a missing
-    or non-boolean flag, any additional key (`filters`, `search_context_size`,
-    ...), and a `tool_choice` naming `web_search` all remain hard 400s.
-- **Rejected with an explicit 400 (never silently ignored)**: server-side state
-  (`store: true`, `previous_response_id`, `conversation`, `prompt`),
-  `background: true`, hosted/built-in and MCP tools, Structured Outputs
-  (`text.format` other than plain text, `response_format`),
-  `truncation: "auto"`, forced `tool_choice`, `reasoning.effort` and any
-  `reasoning.summary` other than `"auto"`, any other `include` entry,
-  `max_tool_calls`,
-  `service_tier`, `text.verbosity`, `tools[].strict: true`, hosted tool kinds
-  other than the exact offline `web_search` shape above (including `namespace` —
-  run Codex with `--disable multi_agent`), image URLs outside
-  `http`/`https`/`data:image/...`, every unlisted top-level field, and
-  wrong-typed known fields.
+  - `prompt_cache_key` — accepted as a hint and currently not used. Swama's local cache reuses a KV prefix by comparing
+    actual prompt tokens, and holds one entry per model, so sessions interleaved against the same model evict each
+    other. This is **not** an equivalent of the hosted prompt cache.
+  - `reasoning` — the empty object, or `summary: "auto"` (what Codex sends). `auto` leaves the choice to the server and
+    a local model emits no reasoning items, so producing none satisfies it.
+  - `include: ["reasoning.encrypted_content"]` — accepted; there are no reasoning items to return.
+  - `parallel_tool_calls` — this server never executes tools and always emits function-call items one after another,
+    satisfying `false`.
+  - `tools[{"type":"web_search","external_web_access":false}]` — **accepted and then dropped before the model sees
+    it.** Codex CLI 0.147.0 advertises this tool unconditionally and no client setting removes it
+    (`tools.web_search = false` only flips `external_web_access`), so refusing it would make the CLI unusable against
+    Swama. This is a deliberate, narrow **compatibility degradation, not support**: per OpenAI's reference,
+    `external_web_access: false` does not disable search — it runs web search in an offline, cache-only mode over
+    OpenAI's own index. Swama has no such index, performs no search whatsoever, and never emits a `web_search_call`.
+    Any request that genuinely needs search capability is not supported here. `true`, a missing or non-boolean flag,
+    any additional key (`filters`, `search_context_size`, ...), and a `tool_choice` naming `web_search` all remain
+    hard 400s.
+- **Rejected with an explicit 400 (never silently ignored)**: server-side state (`store: true`,
+  `previous_response_id`, `conversation`, `prompt`), `background: true`, hosted/built-in and MCP tools, Structured
+  Outputs (`text.format` other than plain text, `response_format`), `truncation: "auto"`, forced `tool_choice`,
+  `reasoning.effort` and any `reasoning.summary` other than `"auto"`, any other `include` entry, `max_tool_calls`,
+  `service_tier`, `text.verbosity`, `tools[].strict: true`, hosted tool kinds other than the exact offline
+  `web_search` shape above (including `namespace` — run Codex with `--disable multi_agent`), image URLs outside
+  `http`/`https`/`data:image/...`, every unlisted top-level field, and wrong-typed known fields.
 - Responses are not stored: there is no retrieve/cancel/delete by response id.
 
-```bash
-# Responses API (honest subset)
-curl -X POST http://localhost:28100/v1/responses \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3",
-    "input": "Hello!",
-    "max_output_tokens": 200
-  }'
-```
+</details>
 
-##### `/v1/decisions` (SGLang prompt format 1)
+## Command line
 
-`POST /v1/decisions` scores a finite set of answers without generating text.
-It accepts `choice` (2–26 named options), `score` (2–10 levels), and `yes_no`
-questions. Each answer includes probabilities conditional on its labels and
-`label_mass`, the total probability of those labels against the full
-vocabulary. A low `label_mass` means the model may prefer an answer outside the
-requested set. The response has `prompt_format_version: 1`; a request pinning
-another version is rejected.
+| Command | Purpose |
+| --- | --- |
+| `swama run <model> <prompt>` | One-off generation. `-i` image (repeatable), `-t` temperature, `--top-p`, `-n` max tokens, `--repetition-penalty`, `--no-stream` |
+| `swama serve` | Start the API server (`--host`, `--port`) — also the default when no command is given |
+| `swama pull <model>` | Download a model or alias |
+| `swama list [--format json]` | Downloaded models |
+| `swama rm <model>` | Delete a downloaded model |
+| `swama transcribe <audio>` | Speech to text (`-m` model, `-l` language, `-f simple\|verbose`) |
+| `swama create <path> -n <name>` | Register a model directory you already have under a name |
+| `swama logs [--follow]` | Read the JSONL diagnostics log |
+| `swama menubar` | Run as a menu bar app |
 
-This endpoint uses SGLang's public prompt wording and response fields. Swama
-requires an explicit local `model` because it can serve more than one model.
-The local chat tokenizer must preserve the rendered prompt and encode every
-answer label as one distinct token at the answer position. The request passes
-`enable_thinking: false` to the template; requesting it on is rejected. Templates
-may ignore this flag. Open reasoning prefixes and a recognized single-token
-`<think>` or `[THINK]` opener at the vocabulary maximum are rejected. This check
-does not certify every reasoning format or guarantee the model follows
-instructions. `chat_template_kwargs` other than that fixed toggle are currently
-unsupported. Each question starts with a
-fresh KV cache, independent of the chat prompt cache. Inputs are textual:
-objects and arrays render as compact JSON with sorted keys; image and audio
-parts are unsupported. Use string inputs when comparing exact prompts across servers,
-because structured JSON is canonicalized by Swama. Even identical low-precision
-weights can produce probability differences across backends and prefill layouts.
+`run` and `serve` accept `--context-limit` (default 16384 tokens).
 
-For `choice` and `score`, Swama additionally returns `confidence` in `[0, 1]`.
-This is a local extension to the Decisions response, using the formulas from
-[SGLang's SystemOne implementation](https://github.com/sgl-project/sglang/blob/eb9c9ee99d47bf4c526a06cd84da59cd9cf4e2a5/python/sglang/srt/entrypoints/systemone/serving.py#L242-L258).
-It measures concentration among the candidates, **not the probability that the
-answer is correct**. It does not change the prompt, probabilities, score, or
-`label_mass`. The `yes_no` response continues to return its two probabilities
-without a separate confidence field.
+Environment variables: `SWAMA_PORT` (server port), `SWAMA_MODELS` (model directory, default `~/.swama/models`),
+`SWAMA_CONTEXT_LIMIT`, `SWAMA_REGISTRY` (`HUGGING_FACE` or `MODEL_SCOPE`), `SWAMA_PROMPT_CACHE=0` (disable prompt
+caching).
 
-Let `q` be the returned candidate probabilities normalized to sum to 1, `n` the
-number of candidates, and `m` the first index with maximum probability. For scores,
-use the original `levels` order (probability keys `"0"`, `"1"`, …), not JSON object
-iteration order:
+## Development
 
-- Choice: `clamp((n * max(q) - 1) / (n - 1), 0, 1)`.
-- Score: `max(0, 1 - sum(q[i] * abs(i - m)) / U)`, where
-  `U = sum(abs(i - (n - 1) / 2)) / n`. This uses absolute distance and the
-  uniform distribution's midpoint, not variance or a denominator centered on `m`.
+The Swift package is in `swama/` (`swift build`, `swift test`) and the macOS app in `swama-macos/`. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
-For example, three choice probabilities `[0.7, 0.2, 0.1]` give confidence `0.55`;
-uniform probabilities give `0`, and a one-hot distribution gives `1`. Lowering
-`temperature` can increase confidence while leaving `label_mass` unchanged.
-A high confidence can coexist with tiny label mass. Downstream routing should
-consider both, fix the temperature used for thresholds, and validate accuracy
-on representative application data; neither value guarantees correctness.
+Built on [mlx-swift](https://github.com/ml-explore/mlx-swift), [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm),
+[mlx-audio-swift](https://github.com/Blaizzy/mlx-audio-swift), [swift-transformers](https://github.com/huggingface/swift-transformers),
+[swift-nio](https://github.com/apple/swift-nio) and [swift-argument-parser](https://github.com/apple/swift-argument-parser).
 
-```bash
-curl -X POST http://localhost:28100/v1/decisions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"mlx-community/Qwen3.5-0.8B-MLX-4bit","input":"My invoice charged me twice.","questions":[{"id":"team","type":"choice","question":"Which team should handle this?","options":[{"name":"billing"},{"name":"technical"},{"name":"sales"}]}]}'
-```
+## License
 
-##### Other endpoint examples
-
-```bash
-# Get available models
-curl http://localhost:28100/v1/models
-
-# Chat completion using aliases (auto-downloads if needed)
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3",
-    "messages": [
-      {"role": "user", "content": "Hello!"}
-    ],
-    "temperature": 0.7,
-    "max_tokens": 100
-  }'
-
-# Streaming response with DeepSeek R1
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-r1",
-    "messages": [
-      {"role": "user", "content": "Solve this step by step: What is 15% of 240?"}
-    ],
-    "stream": true
-  }'
-
-# Generate text embeddings
-curl -X POST http://localhost:28100/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": ["Hello world", "Text embeddings"],
-    "model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
-  }'
-
-# Transcribe audio files (local processing)
-curl -X POST http://localhost:28100/v1/audio/transcriptions \
-  -F "file=@audio.wav" \
-  -F "model=qwen3-asr" \
-  -F "response_format=json"
-
-# Text-to-speech (TTS, experimental)
-curl -X POST http://localhost:28100/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "orpheus",
-    "input": "Hello from Swama TTS",
-    "voice": "tara",
-    "response_format": "wav"
-  }' --output speech.wav
-
-# TTS models: qwen3-tts, orpheus, marvis, chatterbox, vyvo, fish-speech, soprano, pocket-tts, moss-tts, echo-tts, kokoro, kitten-tts, irodori-tts, omnivoice, moss-ttsd, moss-tts-local
-# Voice-supported models: orpheus, marvis, qwen3-tts, vyvo, kokoro, kitten-tts, irodori-tts, omnivoice
-# Orpheus voices: dan, jess, leo, mia, tara, zac, zoe
-# Marvis voices: conversational_a, conversational_b
-# Qwen3-TTS / VyvoTTS voice: en-us-1
-# Kokoro default voice: af_heart; KittenTTS default voice: Bella
-
-# Tool calling (function calling)
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3",
-    "messages": [{"role": "user", "content": "What is the weather in Tokyo?"}],
-    "tools": [
-      {
-        "type": "function",
-        "function": {
-          "name": "get_weather",
-          "description": "Get current weather",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "location": {"type": "string", "description": "City name"}
-            },
-            "required": ["location"]
-          }
-        }
-      }
-    ],
-    "tool_choice": "auto"
-  }'
-
-# Multimodal support (vision language models)
-curl -X POST http://localhost:28100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemma3",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {"type": "text", "text": "What do you see in this image?"},
-          {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}
-        ]
-      }
-    ]
-  }'
-```
-
-## 📚 Command Reference
-
-### Model Management
-
-```bash
-# Download model (supports both aliases and full names)
-swama pull qwen3                    # Using alias
-swama pull qwen3-asr                # Download speech recognition model
-swama pull mlx-community/Qwen3-8B-4bit  # Using full name
-
-# List local models and available aliases
-swama list [--format json]
-
-# Run inference (auto-downloads if model not found locally)
-swama run qwen3 "Your prompt here"              # Using alias - downloads automatically!
-swama run deepseek-coder "Write a Python function"  # Another alias
-swama run <full-model-name> <prompt> [options]      # Using full name
-
-# Transcribe audio files
-swama transcribe audio.wav --model qwen3-asr --language en
-```
-
-### Server
-
-```bash
-# Start API server
-swama serve [--host HOST] [--port PORT]
-```
-
-### Model Aliases
-
-Swama supports convenient aliases for popular models. Use these short names instead of full model URLs:
-
-```bash
-# Examples with different model families
-swama run qwen3 "Explain machine learning"           # Qwen3 8B
-swama run llama3.2-1b "Quick question: what is AI?"  # Llama 3.2 1B (fastest)
-swama run deepseek-r1 "Think step by step: 2+2*3"    # DeepSeek R1 (reasoning)
-```
-
-### Options
-
-- `--temperature <value>`: Sampling temperature (0.0-2.0)
-- `--top-p <value>`: Nucleus sampling parameter (0.0-1.0)
-- `--max-tokens <number>`: Maximum number of tokens to generate
-- `--repetition-penalty <value>`: Repetition penalty factor
-
-## 🔧 Development
-
-### Dependencies
-
-- [swift-nio](https://github.com/apple/swift-nio) - High-performance networking framework
-- [swift-argument-parser](https://github.com/apple/swift-argument-parser) - Command-line argument parsing
-- [mlx-swift](https://github.com/ml-explore/mlx-swift) - Apple MLX Swift bindings
-- [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) - MLX Swift language models
-- [mlx-audio-swift](https://github.com/Blaizzy/mlx-audio-swift) - MLX Swift audio (STT/TTS: Qwen3-ASR, GLM-ASR, SenseVoice, Parakeet, Qwen3-TTS, and more)
-
-### Building
-
-```bash
-# Development build
-swift build
-
-# Release build
-swift build -c release
-
-# Run tests
-swift test
-
-# Generate Xcode project
-swift package generate-xcodeproj
-```
-
-## 🤝 Contributing
-
-We welcome community contributions! Please follow these steps:
-
-1. Fork this repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Guidelines
-
-- Follow Swift coding style guidelines
-- Add tests for new features
-- Update relevant documentation
-- Ensure all tests pass
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- [Apple MLX](https://github.com/ml-explore/mlx) team for the excellent machine learning framework
-- [Swift NIO](https://github.com/apple/swift-nio) for high-performance networking support
-- All contributors and community members
-
-## 📞 Support
-
-- 📝 [Issue Tracker](https://github.com/Trans-N-ai/swama/issues)
-- 💬 [Discussions](https://github.com/Trans-N-ai/swama/discussions)
-
-## 🗺️ Roadmap
-
-- TODO
-
----
-
-**Swama** - Bringing the best local AI experience to macOS users 🚀
+MIT — see [LICENSE](LICENSE). Questions and bug reports: [Issues](https://github.com/Trans-N-ai/swama/issues) ·
+[Discussions](https://github.com/Trans-N-ai/swama/discussions).
