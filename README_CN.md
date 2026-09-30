@@ -124,7 +124,7 @@ Qwen3-TTS 和 VyvoTTS `en-us-1`；Kokoro 默认 `af_heart`，KittenTTS 默认 `B
 | `swama pull <model>` | 下载模型或别名 |
 | `swama list [--format json]` | 已下载的模型 |
 | `swama rm <model>` | 删除已下载的模型 |
-| `swama transcribe <audio>` | 语音转文字（`-m` 模型、`-l` 语言、`-f simple\|verbose`） |
+| `swama transcribe <audio>` | 语音转文字（`-m` 模型、`-l` 语言、`-f simple\|json\|verbose`） |
 | `swama create <path> -n <name>` | 把已有的模型目录注册成一个名字 |
 | `swama logs [--follow]` | 读取 JSONL 诊断日志 |
 | `swama menubar` | 以菜单栏应用运行 |

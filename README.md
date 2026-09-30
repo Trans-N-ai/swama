@@ -172,7 +172,7 @@ Qwen3-TTS and VyvoTTS `en-us-1`; Kokoro defaults to `af_heart`, KittenTTS to `Be
 | `swama pull <model>` | Download a model or alias |
 | `swama list [--format json]` | Downloaded models |
 | `swama rm <model>` | Delete a downloaded model |
-| `swama transcribe <audio>` | Speech to text (`-m` model, `-l` language, `-f simple\|verbose`) |
+| `swama transcribe <audio>` | Speech to text (`-m` model, `-l` language, `-f simple\|json\|verbose`) |
 | `swama create <path> -n <name>` | Register a model directory you already have under a name |
 | `swama logs [--follow]` | Read the JSONL diagnostics log |
 | `swama menubar` | Run as a menu bar app |

@@ -124,7 +124,7 @@ Qwen3-TTS と VyvoTTS `en-us-1`、Kokoro のデフォルトは `af_heart`、Kitt
 | `swama pull <model>` | モデルまたはエイリアスをダウンロード |
 | `swama list [--format json]` | ダウンロード済みのモデル |
 | `swama rm <model>` | ダウンロード済みのモデルを削除 |
-| `swama transcribe <audio>` | 音声をテキストに（`-m` モデル、`-l` 言語、`-f simple\|verbose`） |
+| `swama transcribe <audio>` | 音声をテキストに（`-m` モデル、`-l` 言語、`-f simple\|json\|verbose`） |
 | `swama create <path> -n <name>` | 手元のモデルディレクトリを名前で登録 |
 | `swama logs [--follow]` | JSONL 診断ログを読む |
 | `swama menubar` | メニューバーアプリとして実行 |
