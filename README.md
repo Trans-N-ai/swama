@@ -126,7 +126,7 @@ Qwen3-TTS and VyvoTTS `en-us-1`; Kokoro defaults to `af_heart`, KittenTTS to `Be
 <details>
 <summary><b><code>/v1/responses</code> support matrix</b></summary>
 
-`POST /v1/responses` implements an honest, stateless subset of the OpenAI Responses API.
+`POST /v1/responses` implements an honest, stateless subset of the OpenAI Responses API:
 
 - **Supported**: string or message-item `input`, `instructions`, `input_text` and `input_image` parts, custom `function`
   tools including multi-turn `function_call` / `function_call_output` items, `tool_choice` `"auto"`/`"none"`, basic
