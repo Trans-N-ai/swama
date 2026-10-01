@@ -5,7 +5,7 @@ import MLXVLM
 
 // MARK: - DecisionPrefillCache
 
-/// Private to one runner/container. Tensor access occurs only inside that container's
+/// Shared by transient runners for one immutable container. Tensor access occurs only inside its
 /// serial `perform` operation; the recursive lock also protects diagnostic counters.
 /// Stored tensors are evaluated before a scoring operation returns.
 final class DecisionPrefillCache: @unchecked Sendable {
@@ -332,4 +332,42 @@ private final class DecisionPrefixCollector: @unchecked Sendable {
     private let body: (Int, Int) -> Void
     init(_ body: @escaping (Int, Int) -> Void) { self.body = body }
     func record(_ processed: Int, _ total: Int) { body(processed, total) }
+}
+
+// MARK: - DecisionPrefillStore
+
+/// ModelPool creates a runner for each operation. Keep reuse with the actual model
+/// container, without retaining model weights through this registry.
+final class DecisionPrefillStore: @unchecked Sendable {
+    static let shared: DecisionPrefillStore = .init()
+    private final class Entry {
+        weak var container: ModelContainer?
+        let cache: DecisionPrefillCache
+        init(_ container: ModelContainer) {
+            self.container = container
+            self.cache = DecisionPrefillCache(modelIdentity: ObjectIdentifier(container))
+        }
+    }
+
+    private let lock: NSLock = .init()
+    private var entries: [ObjectIdentifier: Entry] = [:]
+
+    func cache(for container: ModelContainer) -> DecisionPrefillCache {
+        lock.lock()
+        defer { lock.unlock() }
+        entries = entries.filter { $0.value.container != nil }
+        let id = ObjectIdentifier(container)
+        if let entry = entries[id], entry.container === container {
+            return entry.cache
+        }
+        let entry = Entry(container)
+        entries[id] = entry
+        return entry.cache
+    }
+
+    func remove(_ container: ModelContainer) {
+        lock.lock()
+        defer { lock.unlock() }
+        entries.removeValue(forKey: ObjectIdentifier(container))
+    }
 }

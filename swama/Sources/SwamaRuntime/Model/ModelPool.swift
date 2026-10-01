@@ -434,6 +434,9 @@ package actor ModelPool {
         // implementation copied `cache.values` into `containersToEvict`, then captured that
         // array in an asynchronous cleanup Task. MLX therefore cleared while all model weights
         // were still strongly retained; after the Task released them, no second clear occurred.
+        for container in cache.values {
+            DecisionPrefillStore.shared.remove(container)
+        }
         cache.removeAll()
         tasks.removeAll()
         embeddingTasks.removeAll()
@@ -473,6 +476,9 @@ package actor ModelPool {
         let diagnosticOperation = hadEntry ? SwamaDiagnostics.startEviction(model: modelName) : nil
         invalidateLoads(for: modelName)
 
+        if let container = cache[modelName] {
+            DecisionPrefillStore.shared.remove(container)
+        }
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName) // Clear type cache for this model
         embeddingRunnerCache.removeValue(forKey: modelName) // Clear embedding cache for this model
@@ -1316,6 +1322,9 @@ package actor ModelPool {
         invalidateLoads(for: modelName)
 
         // Remove from all caches to release strong references
+        if let container = cache[modelName] {
+            DecisionPrefillStore.shared.remove(container)
+        }
         cache.removeValue(forKey: modelName)
         modelTypeCache.removeValue(forKey: modelName)
         embeddingRunnerCache.removeValue(forKey: modelName)

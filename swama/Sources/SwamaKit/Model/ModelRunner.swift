@@ -37,7 +37,7 @@ public actor ModelRunner {
     ///   tests can inject an isolated store instead of sharing global state.
     public init(container: ModelContainer, promptCacheStore: PromptCacheStore = .shared) {
         self.container = container
-        self.decisionPrefillCache = DecisionPrefillCache(modelIdentity: ObjectIdentifier(container))
+        self.decisionPrefillCache = DecisionPrefillStore.shared.cache(for: container)
         self.promptCacheStore = promptCacheStore
     }
 

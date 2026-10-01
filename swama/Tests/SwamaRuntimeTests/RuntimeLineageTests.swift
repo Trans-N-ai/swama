@@ -47,8 +47,8 @@ private struct LineageEntry {
 private let lineage: [LineageEntry] = [
     .init(
         path: "Model/DecisionPrefillCache.swift",
-        legacySHA256: "2ea8df7f46580807877e0d7826e61334f168bdaba222d9b3c879849700752931",
-        runtimeSHA256: "2ea8df7f46580807877e0d7826e61334f168bdaba222d9b3c879849700752931",
+        legacySHA256: "05f29fb4b5b041ad9015fb0c3524b58b0ff6421c28954c1e86a349924c93060a",
+        runtimeSHA256: "05f29fb4b5b041ad9015fb0c3524b58b0ff6421c28954c1e86a349924c93060a",
         derivedSymbols: ["class DecisionPrefillCache", "class DecisionPrefixCollector"]
     ),
     .init(
@@ -161,8 +161,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/ModelPool.swift",
-        legacySHA256: "25e0565ff98ad2b5bef77741a55130d7a1e247cd4b09a8a1a22b31e50e6026da",
-        runtimeSHA256: "ffcb57ee3f36dd3ce0b78edf6963b08879eb0190f342f8da63319a9080d816b9",
+        legacySHA256: "0838251f4f3b117c46a4a15c3db8cbb467e0926ea8ec6f109f0628bbd85c4fca",
+        runtimeSHA256: "8c44c9458aafca48599fd8958ede968f4318a8734834973cccfe10f5c37fa37a",
         derivedSymbols: [
             "actor ModelPool",
             "func run<",
@@ -175,8 +175,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/ModelRunner.swift",
-        legacySHA256: "ad196c6f0c441787f368760f7faaa1616f262ffc8c7e2522f166a6a1cbb86ab4",
-        runtimeSHA256: "96f105cc7b3b08403e4a7e508473ebc410c239361182384e929e7f96ebe2db60",
+        legacySHA256: "c03f25c8b160ab4d3459be9bf4d302c586f9e18206396cbb59ce08b749702e11",
+        runtimeSHA256: "b290e581e7f7e2fb2a4bb700fe349417ae537e2a245b1b99868a30b75e310d88",
         derivedSymbols: ["actor ModelRunner", "struct ChatRunResult", "func runChat"]
     ),
     .init(
