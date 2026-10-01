@@ -87,39 +87,39 @@ struct ModelPoolSlotAdmissionTests {
         #expect(await order.values == [2, 1])
     }
 
-    @Test func globalLimitAdmitsTheOldestWaiterWhenASlotFrees() async throws {
-        let pool = await makePool(models: ["a", "b", "c", "d", "e"])
-        let holders = ["a", "b", "c", "d", "e"].reduce(into: [String: Gate]()) { $0[$1] = Gate() }
-        let order = OrderRecorder()
+    @Test func globalLimitAdmitsWaitersInArrivalOrderAsSlotsFree() async throws {
+        let running = ["a", "b", "c"]
+        let waiting = ["d", "e", "f", "g", "h", "i", "j", "k"]
+        let pool = await makePool(models: running + waiting)
+        let holders = (running + waiting).reduce(into: [String: Gate]()) { $0[$1] = Gate() }
+        let order = NameRecorder()
 
         var tasks: [Task<Void, Error>] = []
-        for (index, model) in ["a", "b", "c"].enumerated() {
+        for model in running {
             tasks.append(Task { try await pool.run(modelName: model) { _ in
-                await order.append(index + 1)
+                await order.append(model)
                 await holders[model]!.wait()
             } })
         }
         try await waitUntil { await pool.runningInferenceCountForTesting() == 3 }
 
-        for (index, model) in ["d", "e"].enumerated() {
+        // Every waiter needs a different, idle model, so only the global limit holds them back.
+        for (index, model) in waiting.enumerated() {
             tasks.append(Task { try await pool.run(modelName: model) { _ in
-                await order.append(index + 4)
+                await order.append(model)
                 await holders[model]!.wait()
             } })
             try await waitUntil { await pool.slotWaiterCountForTesting() == index + 1 }
         }
-        #expect(await order.values.sorted() == [1, 2, 3])
 
-        // One slot frees: only the older of the two waiters may take it.
-        await holders["b"]!.open()
-        try await waitUntil { await order.values.count == 4 }
-        #expect(await order.values.last == 4)
-        #expect(await pool.slotWaiterCountForTesting() == 1)
-        #expect(await pool.runningInferenceCountForTesting() == 3)
-
-        await holders["a"]!.open()
-        try await waitUntil { await order.values.count == 5 }
-        #expect(await order.values.last == 5)
+        // Free one slot at a time; each must go to the oldest waiter still queued.
+        var freed = running
+        for (index, expected) in waiting.enumerated() {
+            await holders[freed.removeFirst()]!.open()
+            try await waitUntil { await order.values.count == running.count + index + 1 }
+            #expect(await order.values.last == expected)
+            freed.append(expected)
+        }
 
         for gate in holders.values {
             await gate.open()
@@ -127,6 +127,7 @@ struct ModelPoolSlotAdmissionTests {
         for task in tasks {
             try await task.value
         }
+        #expect(await order.values.suffix(waiting.count) == ArraySlice(waiting))
         #expect(await pool.runningInferenceCountForTesting() == 0)
     }
 
@@ -195,6 +196,16 @@ struct ModelPoolSlotAdmissionTests {
             await pool.cacheContainerForTesting(container, modelName: model)
         }
         return pool
+    }
+}
+
+// MARK: - NameRecorder
+
+private actor NameRecorder {
+    private(set) var values: [String] = []
+
+    func append(_ value: String) {
+        values.append(value)
     }
 }
 
