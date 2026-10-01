@@ -218,6 +218,21 @@ A high confidence can coexist with tiny label mass. Downstream routing should
 consider both, fix the temperature used for thresholds, and validate accuracy
 on representative application data; neither value guarantees correctness.
 
+**Known limitations**
+
+- **`yes_no` reads only lowercase labels.** As in SGLang, `label_mass` counts only the lowercase `yes` and `no`
+  tokens. Many models also put probability on `Yes` and `No`,
+  so `label_mass` reads low even on clear cases. When a model prefers the capitalized form for one answer but not the
+  other, `probabilities["yes"]` can differ from the case-combined answer, and in independent testing it occasionally
+  pointed the other way. Swama does not merge case variants; validate `yes_no` thresholds on your own data.
+- **The measured Qwen3.5 models produce bf16 logits.** Two labels can tie exactly; ties go to the first option in the
+  order given. Values can shift between Swama versions, dependency updates and backends; do not rely on bit-for-bit
+  probability agreement across those configurations.
+- **Mixture-of-experts models drift more.** Against a full-precision (fp32) computation of the same 4-bit weights,
+  centered label log-probabilities differed by up to about 0.2 for dense Qwen3.5 models (0.8B, 9B) and up to about
+  0.55 for Qwen3.5-35B-A3B. The top answer matched the full-precision result in all 21 reference cases we measured, but close
+  calls on MoE models are less stable. Whether that is acceptable depends on your application.
+
 ```bash
 curl -X POST http://localhost:28100/v1/decisions \
   -H "Content-Type: application/json" \

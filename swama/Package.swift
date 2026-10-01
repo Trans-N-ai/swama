@@ -32,11 +32,13 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/huggingface/swift-transformers.git", from: "1.3.3"),
-        // Last revision before FoundationModelsIntegration became a default trait;
-        // newer commits require a newer Xcode 27 FoundationModels SDK.
+        // Pin before throwing cache APIs break the audio dependency.
+        // Audio may enable FoundationModels transitively; our local tokenizer bridge
+        // keeps MLXHuggingFace and its FoundationModels adapter out of product targets.
         .package(
             url: "https://github.com/ml-explore/mlx-swift-lm",
-            revision: "10e0cb7442920d3f67a08e067d6670334e9dadef"
+            revision: "4ffa64deea2e88ee32bd3764fc3c10ac80439514",
+            traits: []
         ),
         .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMajor(from: "0.31.4")),
         .package(
@@ -64,7 +66,6 @@ let package = Package(
                 .product(name: "MLXVLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
-                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
                 .product(name: "MLXRandom", package: "mlx-swift"),
                 .product(name: "MLXFast", package: "mlx-swift"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
@@ -78,7 +79,6 @@ let package = Package(
                 .product(name: "MLXVLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
-                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
                 .product(name: "MLXRandom", package: "mlx-swift"),
                 .product(name: "MLXFast", package: "mlx-swift"),
                 .product(name: "MLXAudioCore", package: "mlx-audio-swift"),

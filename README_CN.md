@@ -82,7 +82,7 @@ Hugging Face 上的任何 MLX 模型都可以用完整 ID 使用（例如 `mlx-c
 | `GET /v1/models` | 已下载的模型 |
 | `POST /v1/chat/completions` | 流式（`"stream": true`）、工具调用、视觉模型的 `image_url` 输入 |
 | `POST /v1/responses` | 无状态子集，支持范围见[英文 README 的支持矩阵](README.md#api) |
-| `POST /v1/decisions` | 不生成文字，直接给选择题、打分题和是非题打分，说明见[英文 README](README.md#api) |
+| `POST /v1/decisions` | 不生成文字，直接给选择题、打分题和是非题打分，说明见[英文 README](README.md#api)（含已知限制：是非题只读小写 `yes`/`no`，MoE 模型概率漂移更大） |
 | `POST /v1/embeddings` | 嵌入模型，例如 `mlx-community/embeddinggemma-300m-4bit` |
 | `POST /v1/audio/transcriptions` | multipart 上传，本地语音识别 |
 | `POST /v1/audio/speech` | 语音合成（实验性） |

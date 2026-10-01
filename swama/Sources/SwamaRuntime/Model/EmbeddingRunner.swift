@@ -1,7 +1,6 @@
 import Foundation
 import MLX
 import MLXEmbedders
-import MLXHuggingFace
 import MLXLMCommon
 import Tokenizers
 
@@ -9,7 +8,7 @@ import Tokenizers
 package func loadEmbeddingModelContainer(modelName: String) async throws -> EmbedderModelContainer {
     try await loadEmbeddingModelContainer(
         modelName: modelName,
-        tokenizerLoader: CachedTokenizerLoader(upstream: #huggingFaceTokenizerLoader())
+        tokenizerLoader: CachedTokenizerLoader(upstream: LocalTokenizerLoader())
     )
 }
 
