@@ -1362,3 +1362,38 @@ private final class Counter: @unchecked Sendable {
         value += 1
     }
 }
+
+// MARK: - AbandonedGenerationTests
+
+/// #158: when the consumer stops early (a cancelled request, or an `onToken` write that failed
+/// because the client went away), the producer must stop too. Before the fix it ran on to the
+/// token budget while `runChat` awaited it, holding the model slot for the whole time.
+@Suite("Abandoned generation", .serialized)
+struct AbandonedGenerationTests {
+    @Test func failingOnTokenStopsTheProducerPromptly() async throws {
+        let (container, _) = makeTestContainer()
+        let budget = 300
+        let parameters = GenerateParameters(maxTokens: budget, maxKVSize: 4096, temperature: 0)
+        let messages: [MLXLMCommon.Chat.Message] = [.system(words([0])), .user(words([1, 2]))]
+
+        let fullStart = ContinuousClock.now
+        let full = try await ModelRunner(container: container, promptCacheStore: PromptCacheStore())
+            .runChat(userInput: .init(chat: messages), parameters: parameters)
+        let fullDuration = ContinuousClock.now - fullStart
+        #expect(full.completionInfo?.generationTokenCount == budget)
+
+        let abandonedStart = ContinuousClock.now
+        await #expect(throws: (any Error).self) {
+            _ = try await ModelRunner(container: container, promptCacheStore: PromptCacheStore()).runChat(
+                userInput: .init(chat: messages),
+                parameters: parameters,
+                onToken: { _ in throw CancellationError() }
+            )
+        }
+        let abandonedDuration = ContinuousClock.now - abandonedStart
+        #expect(
+            abandonedDuration < fullDuration / 4,
+            "abandoned run took \(abandonedDuration), full run took \(fullDuration)"
+        )
+    }
+}

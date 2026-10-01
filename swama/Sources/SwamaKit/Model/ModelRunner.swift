@@ -346,6 +346,13 @@ public actor ModelRunner {
             // what makes it safe for the very next request on this model (ModelPool.run serializes
             // by model name) to start touching the same cache/weights right after this returns.
             if let task = run.task {
+                // An early exit (cancellation, or an `onToken` write that failed because the
+                // client went away) does not stop the producer by itself: `run` still holds the
+                // stream, so its termination handler never fires and the producer would run to
+                // the token budget while this await holds the model slot. Cancel it first.
+                if thrownError != nil || Task.isCancelled {
+                    task.cancel()
+                }
                 await task.value
             }
 

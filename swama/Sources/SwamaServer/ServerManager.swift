@@ -119,10 +119,7 @@ public class ServerManager {
                 .serverChannelOption(ChannelOptions.backlog, value: 256)
                 .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
                 .childChannelInitializer { channelInOut in
-                    channelInOut.pipeline.configureHTTPServerPipeline().flatMap {
-                        // HTTPHandler() must be accessible from SwamaKit
-                        channelInOut.pipeline.addHandler(HTTPHandler())
-                    }
+                    Self.configureConnectionPipeline(channelInOut, handler: HTTPHandler())
                 }
                 .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
                 .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 16)
@@ -204,9 +201,7 @@ public class ServerManager {
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channelInOut in
-                channelInOut.pipeline.configureHTTPServerPipeline().flatMap {
-                    channelInOut.pipeline.addHandler(HTTPHandler()) // Uses SwamaKit.HTTPHandler
-                }
+                Self.configureConnectionPipeline(channelInOut, handler: HTTPHandler())
             }
             .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 16)
@@ -246,6 +241,23 @@ public class ServerManager {
         catch {
             NSLog("SwamaKit.ServerManager (CLI) Error: Failed to shutdown EventLoopGroup - \(error)")
             // Optionally rethrow or handle this specific shutdown error if critical
+        }
+    }
+
+    // MARK: Internal
+
+    /// Pipeline for every accepted connection. NIO's pipelining assistance is off so the socket
+    /// keeps being read while a request runs and a client disconnect cancels it (#158);
+    /// `HTTPPipeliningGuard` keeps one request in flight per connection instead.
+    static func configureConnectionPipeline(
+        _ channel: Channel,
+        handler: ChannelInboundHandler
+    ) -> EventLoopFuture<Void> {
+        channel.eventLoop.makeCompletedFuture {
+            let pipeline = channel.pipeline.syncOperations
+            try pipeline.configureHTTPServerPipeline(withPipeliningAssistance: false)
+            try pipeline.addHandler(HTTPPipeliningGuard())
+            try pipeline.addHandler(handler)
         }
     }
 
