@@ -53,7 +53,7 @@ package enum ModelPaths {
               modelName.utf8.count <= 192,
               modelName.hasPrefix("/") == false,
               modelName.contains("\\") == false,
-              modelName.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) == false
+              modelName.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) == false
         else {
             return false
         }
@@ -77,7 +77,7 @@ package enum ModelPaths {
         guard relativePath.isEmpty == false,
               relativePath.hasPrefix("/") == false,
               relativePath.contains("\\") == false,
-              relativePath.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) == false
+              relativePath.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) == false
         else {
             throw ModelPathError.invalidRelativePath
         }
