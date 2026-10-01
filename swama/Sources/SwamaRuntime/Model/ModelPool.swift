@@ -1,7 +1,6 @@
 import Foundation
 import MLX
 import MLXEmbedders
-import MLXHuggingFace
 import MLXLLM
 import MLXLMCommon
 import MLXVLM
@@ -845,7 +844,7 @@ package actor ModelPool {
         let container = try await loadEmbeddingModelContainer(
             modelName: modelName,
             tokenizerLoader: DiagnosticTokenizerLoader(
-                upstream: #huggingFaceTokenizerLoader(),
+                upstream: LocalTokenizerLoader(),
                 phases: diagnosticPhases,
                 cache: tokenizerCache,
                 owner: tokenizerCacheOwner
@@ -897,7 +896,7 @@ package actor ModelPool {
 
         do {
             let tokenizerLoader = DiagnosticTokenizerLoader(
-                upstream: #huggingFaceTokenizerLoader(),
+                upstream: LocalTokenizerLoader(),
                 phases: diagnosticPhases,
                 cache: tokenizerCache,
                 owner: tokenizerCacheOwner

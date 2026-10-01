@@ -46,6 +46,12 @@ private struct LineageEntry {
 
 private let lineage: [LineageEntry] = [
     .init(
+        path: "Model/LocalTokenizerLoader.swift",
+        legacySHA256: "9706bd4b8a2393bc41c2ccfd7b8576e5b28579b65eb40b69fa6840bf7afd92ed",
+        runtimeSHA256: "9706bd4b8a2393bc41c2ccfd7b8576e5b28579b65eb40b69fa6840bf7afd92ed",
+        derivedSymbols: ["struct LocalTokenizerLoader", "struct SwiftTransformersTokenizer"]
+    ),
+    .init(
         path: "Model/DecisionScoring.swift",
         legacySHA256: "840d500dae972466d5575360cb75401636c4bd79a97205cd028bb26d64d172f5",
         runtimeSHA256: "505e421fbc09ae21fa8757549175009daaba078236605f5a5b8f831dc6a07171",
@@ -107,8 +113,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/EmbeddingRunner.swift",
-        legacySHA256: "e98feba0f798afa436a14a61b82534030228412a1ee89ce542046b3d35101202",
-        runtimeSHA256: "09344ae5ae0974fb6e229619dcd9856fb4c4eda08c72f2ed899f81fe781a5358",
+        legacySHA256: "ae53a14d154a76e1014479e1d1da848a74b6d2225ec6f203c959ba47507d6ecc",
+        runtimeSHA256: "d4e6e3c89fb26ebd43d10343e9919e0687838a2e5eb5969ca1ec1001c0a312ab",
         derivedSymbols: ["actor EmbeddingRunner", "func generateEmbeddings", "struct EmbeddingUsage"]
     ),
     .init(
@@ -149,8 +155,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/ModelPool.swift",
-        legacySHA256: "9efe64ad25e30dc1f747eaf91c8d3dcf6c944a1ec938a4573bbd3e74b7d79f13",
-        runtimeSHA256: "bd8ff6ddb014cc9bf2e7fef2dc30ef44e9386bca7679c117c513964c30db59ef",
+        legacySHA256: "25e0565ff98ad2b5bef77741a55130d7a1e247cd4b09a8a1a22b31e50e6026da",
+        runtimeSHA256: "ffcb57ee3f36dd3ce0b78edf6963b08879eb0190f342f8da63319a9080d816b9",
         derivedSymbols: [
             "actor ModelPool",
             "func run<",

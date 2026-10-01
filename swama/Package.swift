@@ -33,7 +33,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/huggingface/swift-transformers.git", from: "1.3.3"),
         // Pin before throwing cache APIs break the audio dependency.
-        // Disable the optional FoundationModels trait on this dependency edge.
+        // Audio may enable FoundationModels transitively; our local tokenizer bridge
+        // keeps MLXHuggingFace and its FoundationModels adapter out of product targets.
         .package(
             url: "https://github.com/ml-explore/mlx-swift-lm",
             revision: "4ffa64deea2e88ee32bd3764fc3c10ac80439514",
@@ -65,7 +66,6 @@ let package = Package(
                 .product(name: "MLXVLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
-                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
                 .product(name: "MLXRandom", package: "mlx-swift"),
                 .product(name: "MLXFast", package: "mlx-swift"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
@@ -79,7 +79,6 @@ let package = Package(
                 .product(name: "MLXVLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
-                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
                 .product(name: "MLXRandom", package: "mlx-swift"),
                 .product(name: "MLXFast", package: "mlx-swift"),
                 .product(name: "MLXAudioCore", package: "mlx-audio-swift"),

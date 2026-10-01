@@ -221,7 +221,7 @@ on representative application data; neither value guarantees correctness.
 **Known limitations**
 
 - **`yes_no` reads only lowercase labels.** As in SGLang, `label_mass` counts only the lowercase `yes` and `no`
-  tokens. Many models also put probability on `Yes` and `No` (Qwen3.5-9B put up to about 60% on `Yes` in our tests),
+  tokens. Many models also put probability on `Yes` and `No`,
   so `label_mass` reads low even on clear cases. When a model prefers the capitalized form for one answer but not the
   other, `probabilities["yes"]` can differ from the case-combined answer, and in independent testing it occasionally
   pointed the other way. Swama does not merge case variants; validate `yes_no` thresholds on your own data.
