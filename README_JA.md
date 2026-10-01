@@ -82,7 +82,7 @@ Hugging Face 上の MLX モデルはフル ID でそのまま使えます（例�
 | `GET /v1/models` | ダウンロード済みのモデル |
 | `POST /v1/chat/completions` | ストリーミング（`"stream": true`）、ツール呼び出し、画像モデルへの `image_url` 入力 |
 | `POST /v1/responses` | ステートレスなサブセット。対応範囲は[英語 README のサポートマトリクス](README.md#api)を参照 |
-| `POST /v1/decisions` | テキストを生成せずに選択式・評価・はい／いいえをスコアリング。説明は[英語 README](README.md#api)を参照 |
+| `POST /v1/decisions` | テキストを生成せずに選択式・評価・はい／いいえをスコアリング。説明は[英語 README](README.md#api)を参照（既知の制限：はい／いいえは小文字の `yes`/`no` のみ読み取り、MoE モデルは確率の揺れが大きい） |
 | `POST /v1/embeddings` | 埋め込みモデル（例：`mlx-community/embeddinggemma-300m-4bit`） |
 | `POST /v1/audio/transcriptions` | multipart アップロード、ローカル音声認識 |
 | `POST /v1/audio/speech` | 音声合成（実験的） |

@@ -1,5 +1,5 @@
 {
-  "originHash" : "77f73a11ede3b2b05d5371516ec723532fd164a4cee168a96c232d105bc85970",
+  "originHash" : "6e707041f9258bb2b84b896302b6534a6269345b34d57d4b4c51e8aa02b23082",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -32,7 +32,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ml-explore/mlx-swift-lm",
       "state" : {
-        "revision" : "10e0cb7442920d3f67a08e067d6670334e9dadef"
+        "revision" : "4ffa64deea2e88ee32bd3764fc3c10ac80439514"
       }
     },
     {
