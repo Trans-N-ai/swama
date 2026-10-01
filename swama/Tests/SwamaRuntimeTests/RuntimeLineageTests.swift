@@ -150,7 +150,7 @@ private let lineage: [LineageEntry] = [
     .init(
         path: "Model/ModelPaths.swift",
         legacySHA256: "6a9d06eccae50a263918f02d20db2c080c283bc1a39091b43aced760dd61b970",
-        runtimeSHA256: "98723afb43af742da669d786f916ce0846a286db79dbe2b8bc10e4a726386219",
+        runtimeSHA256: "ee60a32027ad95d701f0e5a025b77825a9e0f45edd9ebdabf58778afc653608b",
         derivedSymbols: ["enum ModelPaths", "static func getModelDirectory", "static func removeModel"]
     ),
     .init(
