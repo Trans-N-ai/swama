@@ -36,12 +36,13 @@ struct DecisionLogits: Sendable {
 }
 
 extension ModelRunner {
-    /// Score the raw next-token distribution after one chat prompt. A new KV cache is allocated
-    /// for every question and discarded here; the chat PromptCacheStore is never touched.
+    /// Score the raw next-token distribution after one chat prompt. Decisions use a
+    /// bounded, container-scoped cache; the chat PromptCacheStore is never touched.
     func scoreDecision(content: String, labels: [String], contextLimit: Int) async throws -> DecisionLogits {
         try Task.checkCancellation()
         let boundaryTokens = await DecisionBoundaryCache.shared.tokens(for: container)
-        let result = try await container.perform { context in
+        let prefillCache = decisionPrefillCache
+        let result = try await container.perform { (context: ModelContext) in
             let tokenizer = context.tokenizer
             let promptIDs: [Int]
             do {
@@ -72,14 +73,16 @@ extension ModelRunner {
             }
 
             try Task.checkCancellation()
-            let cache = context.model.newCache(parameters: nil)
             let rawTokens = MLXArray(promptIDs)
             // LLM prefill consumes a one-dimensional sequence; VLM processors use [batch, tokens].
             let input = LMInput(tokens: context.model is any LLMModel
                 ? rawTokens : rawTokens.expandedDimensions(axis: 0)
             )
-            let output: LMOutput =
-                switch try context.model.prepare(input, cache: cache, state: nil, windowSize: nil) {
+            let session = try prefillCache.forward(
+                context: context, input: input, tokens: promptIDs, content: content, prompt: prompt
+            ) {
+                let cache = context.model.newCache(parameters: nil)
+                return switch try context.model.prepare(input, cache: cache, state: nil, windowSize: nil) {
                 case let .tokens(tokens):
                     withPreparedCache(cache, lengths: tokens.sequenceLengths) {
                         context.model(tokens[text: .newAxis], cache: cache.isEmpty ? nil : cache, state: nil)
@@ -88,6 +91,8 @@ extension ModelRunner {
                 case let .logits(value):
                     value
                 }
+            }
+            let output = session.output
             guard output.logits.ndim == 3, output.logits.dim(0) == 1, output.logits.dim(1) > 0 else {
                 throw DecisionScoringError.invalidLogits
             }
@@ -95,7 +100,8 @@ extension ModelRunner {
             let last = output.logits[0, -1, 0...].asType(.float32)
             // Start the unchanged MLX graph before CPU label validation. The final
             // synchronization is required on both success and failure before leaving
-            // ModelContainer.perform; no MLXArray escapes this isolated operation.
+            // ModelContainer.perform; stored snapshots are evaluated and accessed only
+            // inside this same container, never exposed in the returned DTO.
             asyncEval(last)
             let labelIDs: [Int]
             do {
@@ -145,6 +151,8 @@ extension ModelRunner {
                 throw DecisionScoringError.invalidLogits
             }
 
+            try Task.checkCancellation()
+            prefillCache.commit(session, tokens: promptIDs, content: content, prompt: prompt, last: last)
             return DecisionLogits(
                 promptTokenIDs: promptIDs,
                 labelTokenIDs: labelIDs,
@@ -157,7 +165,7 @@ extension ModelRunner {
 }
 
 /// Check the actual answer boundary, including prefix stability and distinct label IDs.
-package func decisionLabelIDs(
+func decisionLabelIDs(
     promptIDs: [Int], labels: [String], encodeAppendedLabel: (String) -> [Int]
 ) throws -> [Int] {
     var labelIDs = [Int]()
@@ -176,7 +184,7 @@ package func decisionLabelIDs(
     return labelIDs
 }
 
-package func decisionHasOpenReasoning(_ prefix: String) -> Bool {
+func decisionHasOpenReasoning(_ prefix: String) -> Bool {
     for (start, end) in [("<think>", "</think>"), ("[THINK]", "[/THINK]")] {
         if let opened = prefix.range(of: start, options: .backwards) {
             guard let closed = prefix.range(of: end, options: .backwards),
@@ -198,7 +206,7 @@ package func decisionHasOpenReasoning(_ prefix: String) -> Bool {
 
 /// Reject a recognized reasoning opener tied for the vocabulary's highest logit.
 /// Low label mass by itself is not a proof of reasoning or an application accuracy threshold.
-package func decisionPredictsReasoning(logits: [Double], reasoningTokenIDs: [Int]) -> Bool {
+func decisionPredictsReasoning(logits: [Double], reasoningTokenIDs: [Int]) -> Bool {
     guard let maximum = logits.max(), maximum.isFinite else {
         return false
     }

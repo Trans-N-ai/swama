@@ -46,6 +46,12 @@ private struct LineageEntry {
 
 private let lineage: [LineageEntry] = [
     .init(
+        path: "Model/DecisionPrefillCache.swift",
+        legacySHA256: "2ea8df7f46580807877e0d7826e61334f168bdaba222d9b3c879849700752931",
+        runtimeSHA256: "2ea8df7f46580807877e0d7826e61334f168bdaba222d9b3c879849700752931",
+        derivedSymbols: ["class DecisionPrefillCache", "class DecisionPrefixCollector"]
+    ),
+    .init(
         path: "Model/LocalTokenizerLoader.swift",
         legacySHA256: "9706bd4b8a2393bc41c2ccfd7b8576e5b28579b65eb40b69fa6840bf7afd92ed",
         runtimeSHA256: "9706bd4b8a2393bc41c2ccfd7b8576e5b28579b65eb40b69fa6840bf7afd92ed",
@@ -53,8 +59,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/DecisionScoring.swift",
-        legacySHA256: "840d500dae972466d5575360cb75401636c4bd79a97205cd028bb26d64d172f5",
-        runtimeSHA256: "505e421fbc09ae21fa8757549175009daaba078236605f5a5b8f831dc6a07171",
+        legacySHA256: "f69442d94a39581dee5e7eb206ae5ef95c56ea2607be06fd36fb3627c362cff3",
+        runtimeSHA256: "f873b0968ca51844e49a734d7d9ea5fd5cecc3bbbc0809aae02c759684ea48f5",
         derivedSymbols: ["func scoreDecision", "struct DecisionLogits"]
     ),
     .init(
@@ -169,8 +175,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/ModelRunner.swift",
-        legacySHA256: "5944e150a5ee3f7871a63272122c253bb889b9202382e2f46d3f6fbf3deb0c42",
-        runtimeSHA256: "1952d56f5e891cb1cf498ee06edcb960784f1cf031b9031a989aa6bcac4d2ca2",
+        legacySHA256: "ad196c6f0c441787f368760f7faaa1616f262ffc8c7e2522f166a6a1cbb86ab4",
+        runtimeSHA256: "96f105cc7b3b08403e4a7e508473ebc410c239361182384e929e7f96ebe2db60",
         derivedSymbols: ["actor ModelRunner", "struct ChatRunResult", "func runChat"]
     ),
     .init(
