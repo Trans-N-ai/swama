@@ -11,6 +11,16 @@ public enum AudioResult: Sendable {
     case file(URL, TimeInterval?)
 }
 
+// MARK: - TTSWordTiming
+
+/// One word's time span in a synthesized clip, seconds from the start of the audio.
+/// Produced only for models that expose phoneme/duration alignment (Kokoro today).
+public struct TTSWordTiming: Sendable {
+    public let text: String
+    public let start: TimeInterval
+    public let end: TimeInterval
+}
+
 // MARK: - TTSError
 
 public enum TTSError: Error, LocalizedError {
@@ -422,6 +432,163 @@ public final class TTSRunner: @unchecked Sendable {
         catch {
             throw TTSError.generationFailed(error.localizedDescription)
         }
+    }
+
+    /// `generate`, plus per-word start/end times when the loaded model exposes phoneme/duration
+    /// alignment (Kokoro today, via `KokoroModel.generateWithDurations`). Used only by the
+    /// `timestamps: true` request path — `generate` above is untouched, so the default
+    /// (flag absent) response stays byte-identical to before this method existed.
+    ///
+    /// For any model other than Kokoro this is exactly `generate` with `words: nil`.
+    public func generateWithTimestamps(
+        text: String,
+        voice: String?,
+        speed: Float?
+    ) async throws -> (result: AudioResult, words: [TTSWordTiming]?) {
+        if model == nil {
+            try await loadModel()
+        }
+
+        guard let kokoroModel = model as? KokoroModel else {
+            return try await (generate(text: text, voice: voice, speed: speed), nil)
+        }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw TTSError.invalidArgument("Input text cannot be empty")
+        }
+
+        var parameters = kokoroModel.defaultGenerationParameters
+        if let speed, speed > 0, speed != 1 {
+            parameters.maxTokens = scaledMaxTokens(parameters.maxTokens, speed: speed)
+        }
+
+        do {
+            let (audio, phonemized, durations) = try await kokoroModel.generateWithDurations(
+                text: trimmed,
+                voice: resolveVoice(voice),
+                refAudio: nil,
+                refText: nil,
+                language: nil,
+                generationParameters: parameters
+            )
+            let samples = audio.asType(.float32).reshaped([-1]).asArray(Float.self)
+            let duration = samples.isEmpty ? nil : TimeInterval(samples.count) / TimeInterval(kokoroModel.sampleRate)
+            let words = Self.alignWords(
+                inputText: trimmed,
+                phonemized: phonemized,
+                durations: durations,
+                sampleCount: samples.count,
+                sampleRate: kokoroModel.sampleRate
+            )
+            return (.samples(samples, kokoroModel.sampleRate, duration), words)
+        }
+        catch is CancellationError {
+            throw TTSError.cancelled
+        }
+        catch {
+            throw TTSError.generationFailed(error.localizedDescription)
+        }
+    }
+
+    /// Aligns Kokoro's per-token durations to the words of the ORIGINAL input text.
+    ///
+    /// `durations` has one entry per token fed to the model, padded with a leading and
+    /// trailing zero-duration pad token (`KokoroModel.generateWithDurations`'s doc comment),
+    /// so the *interior* `durations.count - 2` entries line up 1:1 with
+    /// `KokoroModel.tokenize(phonemized)` — which walks `phonemized`'s Unicode scalars and
+    /// keeps only the ones present in the model's vocab.
+    ///
+    /// That vocab, and `tokenize` itself, are `internal` to MLXAudioTTS, not `public` — this
+    /// module cannot import mlx-audio-swift and replay the filter exactly (checked against
+    /// the pinned checkout: `KokoroConfig.vocab` and `KokoroModel.tokenize` both lack
+    /// `public`). Empirically the Kokoro-82M vocab (checked against the pinned model's
+    /// downloaded `config.json`: 114 entries — IPA phonemes, stress/diacritic marks, space,
+    /// and standard punctuation) covers every scalar its own G2P frontends emit, so scalar
+    /// count and interior-duration count line up 1:1 in practice. We verify that per request
+    /// rather than trust it, and return `nil` (omit "words") if it doesn't hold.
+    ///
+    /// Word *text* comes from splitting the original input on whitespace (punctuation stays
+    /// attached, per the wire contract) rather than any word split inside the processor:
+    /// `TextProcessor.process(text:language:)` is the only method the processor exposes
+    /// publicly, so there is no processor-owned word list to call into from here. If that
+    /// count disagrees with the phonemized string's space-delimited chunk count (e.g. a
+    /// number or symbol whose phonemization expands into more space-separated pieces than
+    /// the one input token it came from), alignment is not trustworthy — return `nil` rather
+    /// than emit misaligned words.
+    static func alignWords(
+        inputText: String,
+        phonemized: String,
+        durations: MLXArray,
+        sampleCount: Int,
+        sampleRate: Int
+    ) -> [TTSWordTiming]? {
+        guard sampleCount > 0, sampleRate > 0 else {
+            return nil
+        }
+
+        let allDurations = durations.asArray(Int32.self)
+        guard allDurations.count >= 2 else {
+            return nil
+        }
+
+        let perScalarDurations = allDurations[1 ..< (allDurations.count - 1)]
+
+        let scalars = Array(phonemized.unicodeScalars)
+        guard scalars.count == perScalarDurations.count else {
+            return nil
+        }
+
+        let totalFrames = allDurations.reduce(0.0) { $0 + Double($1) }
+        guard totalFrames > 0 else {
+            return nil
+        }
+
+        let secondsPerFrame = (Double(sampleCount) / Double(sampleRate)) / totalFrames
+
+        let textWords = inputText.split { $0.isWhitespace }.map(String.init)
+
+        var phonemeWordStarts: [Double] = []
+        var phonemeWordFrames: [Double] = []
+        var cumulativeFrames = Double(allDurations[0]) // leading pad token
+        var currentStart: Double?
+        var currentFrames = 0.0
+
+        for (scalar, frames) in zip(scalars, perScalarDurations) {
+            if scalar.properties.isWhitespace {
+                if let start = currentStart {
+                    phonemeWordStarts.append(start)
+                    phonemeWordFrames.append(currentFrames)
+                    currentStart = nil
+                    currentFrames = 0
+                }
+                cumulativeFrames += Double(frames)
+                continue
+            }
+            if currentStart == nil {
+                currentStart = cumulativeFrames
+            }
+            currentFrames += Double(frames)
+            cumulativeFrames += Double(frames)
+        }
+        if let start = currentStart {
+            phonemeWordStarts.append(start)
+            phonemeWordFrames.append(currentFrames)
+        }
+
+        guard phonemeWordStarts.count == textWords.count else {
+            return nil
+        }
+
+        let durationSeconds = Double(sampleCount) / Double(sampleRate)
+        var result: [TTSWordTiming] = []
+        result.reserveCapacity(textWords.count)
+        for i in 0 ..< textWords.count {
+            let start = phonemeWordStarts[i] * secondsPerFrame
+            let end = min((phonemeWordStarts[i] + phonemeWordFrames[i]) * secondsPerFrame, durationSeconds)
+            result.append(TTSWordTiming(text: textWords[i], start: start, end: end))
+        }
+        return result
     }
 
     private func resolveVoice(_ voice: String?) -> String? {

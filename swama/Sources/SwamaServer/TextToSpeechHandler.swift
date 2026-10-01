@@ -13,6 +13,7 @@ public enum TextToSpeechHandler {
         let voice: String?
         let response_format: String?
         let speed: Float?
+        let timestamps: Bool?
     }
 
     enum ResponseFormat: String {
@@ -56,6 +57,35 @@ public enum TextToSpeechHandler {
             }
 
             let responseFormat = try resolveResponseFormat(request.response_format)
+
+            if request.timestamps == true {
+                let (result, words) = try await ServerModelPool.shared.runTTS(
+                    modelKey: modelResolution.cacheKey,
+                    kind: modelResolution.kind,
+                    repository: modelResolution.repository
+                ) { runner in
+                    try await runner.generateWithTimestamps(
+                        text: trimmedInput,
+                        voice: request.voice,
+                        speed: request.speed
+                    )
+                }
+
+                let responseData = try encodeTimestampedResponse(
+                    result: result,
+                    words: words,
+                    format: responseFormat
+                )
+
+                await sendResponse(
+                    channel: channel,
+                    requestHead: requestHead,
+                    data: responseData,
+                    contentType: "application/json",
+                    status: .ok
+                )
+                return
+            }
 
             let result = try await ServerModelPool.shared.runTTS(
                 modelKey: modelResolution.cacheKey,
@@ -114,6 +144,57 @@ public enum TextToSpeechHandler {
         case let .file(url, _):
             return try Data(contentsOf: url)
         }
+    }
+
+    /// JSON envelope for `timestamps: true` (see the wire contract in the PR/issue draft):
+    /// base64 audio + format + sample_rate + duration_seconds, plus "words" when the model
+    /// exposed alignment (Kokoro today — `TTSRunner.generateWithTimestamps` returns `nil`
+    /// for every other model, and the key is omitted entirely rather than sent as `null`).
+    private static func encodeTimestampedResponse(
+        result: AudioResult,
+        words: [TTSWordTiming]?,
+        format: ResponseFormat
+    ) throws -> Data {
+        let audioData = try encodeAudio(result: result, format: format)
+        let (sampleRate, duration) = try audioMetadata(for: result)
+
+        var payload: [String: Any] = [
+            "audio": audioData.base64EncodedString(),
+            "format": format.rawValue,
+            "sample_rate": sampleRate,
+            "duration_seconds": round3(duration),
+        ]
+
+        if let words {
+            payload["words"] = words.map {
+                [
+                    "text": $0.text,
+                    "start": round3($0.start),
+                    "end": round3($0.end),
+                ]
+            }
+        }
+
+        return try JSONSerialization.data(withJSONObject: payload)
+    }
+
+    /// `AudioResult.file` is not currently produced by any model wired into `TTSRunner`
+    /// (grep confirms it: only `.samples(...)` is ever constructed) — it carries no sample
+    /// rate, which the timestamped envelope always needs, so that case is rejected here
+    /// rather than guessing one by sniffing the encoded audio bytes.
+    private static func audioMetadata(for result: AudioResult) throws -> (sampleRate: Int, duration: TimeInterval) {
+        switch result {
+        case let .samples(samples, sampleRate, duration):
+            let computed = duration ?? (sampleRate > 0 ? TimeInterval(samples.count) / TimeInterval(sampleRate) : 0)
+            return (sampleRate, computed)
+
+        case .file:
+            throw TextToSpeechError.invalidRequest("Timestamped response requires in-memory audio samples")
+        }
+    }
+
+    private static func round3(_ value: TimeInterval) -> Double {
+        (value * 1000).rounded() / 1000
     }
 
     private static func encodePCM(result: AudioResult) throws -> Data {
