@@ -132,6 +132,33 @@ struct DecisionRawLogitTests {
         await ModelPool.shared.clearCache()
     }
 
+    @Test func invalidLabelAfterAsyncDispatchRecoversWithIdenticalAnswer() async throws {
+        let model = "mlx-community/Qwen3.5-0.8B-MLX-4bit"
+        let content = "Choose between A and B. Answer with one letter only."
+        let before = try await ModelPool.shared.run(modelName: model) { runner in
+            try await runner.scoreDecision(content: content, labels: ["A", "B"], contextLimit: 4096)
+        }
+        var rejected = false
+        do {
+            _ = try await ModelPool.shared.run(modelName: model) { runner in
+                try await runner.scoreDecision(
+                    content: content, labels: ["A", "this label needs multiple tokens"], contextLimit: 4096
+                )
+            }
+        }
+        catch SwamaKit.DecisionScoringError.invalidLabel {
+            rejected = true
+        }
+        #expect(rejected)
+        let after = try await ModelPool.shared.run(modelName: model) { runner in
+            try await runner.scoreDecision(content: content, labels: ["A", "B"], contextLimit: 4096)
+        }
+        #expect(after.promptTokenIDs == before.promptTokenIDs)
+        #expect(after.labelTokenIDs == before.labelTokenIDs)
+        #expect(after.labelLogProbs == before.labelLogProbs)
+        await ModelPool.shared.clearCache()
+    }
+
     private func expectedScore(_ logits: [Double]) -> Double {
         let maximum = logits.max()!
         let weights = logits.map { exp($0 - maximum) }
