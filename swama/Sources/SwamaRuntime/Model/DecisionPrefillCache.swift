@@ -183,7 +183,10 @@ final class DecisionPrefillCache: @unchecked Sendable {
         var pendingCost = 0
         let collector = DecisionPrefixCollector { [self] processed, total in
             let count = offset + processed
-            guard processed < total, count < tokens.count, count > 0,
+            // The final prefill boundary has only the fixed answer-prefix token
+            // left. Exact repetition is already served by the raw-logit memo;
+            // retaining this large state crowds out genuinely shared prefixes.
+            guard processed < total, count < tokens.count - 1, count > 0,
                   let bytes = Self.prefixBytes(
                       content: content,
                       prompt: prompt,
@@ -351,12 +354,24 @@ final class DecisionPrefillStore: @unchecked Sendable {
 
     private let lock: NSLock = .init()
     private var entries: [ObjectIdentifier: Entry] = [:]
+    private var retired: [ObjectIdentifier: WeakContainer] = [:]
+
+    private final class WeakContainer {
+        weak var value: ModelContainer?
+        init(_ value: ModelContainer) { self.value = value }
+    }
 
     func cache(for container: ModelContainer) -> DecisionPrefillCache {
         lock.lock()
         defer { lock.unlock() }
         entries = entries.filter { $0.value.container != nil }
+        retired = retired.filter { $0.value.value != nil }
         let id = ObjectIdentifier(container)
+        if retired[id]?.value === container {
+            // An in-flight operation can outlive a pool eviction. Its remaining
+            // work must not repopulate the process registry after that teardown.
+            return DecisionPrefillCache(modelIdentity: id)
+        }
         if let entry = entries[id], entry.container === container {
             return entry.cache
         }
@@ -369,5 +384,6 @@ final class DecisionPrefillStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         entries.removeValue(forKey: ObjectIdentifier(container))
+        retired[ObjectIdentifier(container)] = WeakContainer(container)
     }
 }

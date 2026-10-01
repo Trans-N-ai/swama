@@ -47,8 +47,8 @@ private struct LineageEntry {
 private let lineage: [LineageEntry] = [
     .init(
         path: "Model/DecisionPrefillCache.swift",
-        legacySHA256: "05f29fb4b5b041ad9015fb0c3524b58b0ff6421c28954c1e86a349924c93060a",
-        runtimeSHA256: "05f29fb4b5b041ad9015fb0c3524b58b0ff6421c28954c1e86a349924c93060a",
+        legacySHA256: "073227a5157878b7634c94e3f001117c19ab2d07342e4afd0a591b4cb6432250",
+        runtimeSHA256: "073227a5157878b7634c94e3f001117c19ab2d07342e4afd0a591b4cb6432250",
         derivedSymbols: ["class DecisionPrefillCache", "class DecisionPrefixCollector"]
     ),
     .init(

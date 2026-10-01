@@ -2,6 +2,8 @@ import MLXLMCommon
 @testable import SwamaKit
 import Testing
 
+// MARK: - DecisionPrefillCacheTests
+
 @Suite("Decision prefix plan")
 struct DecisionPrefillCacheTests {
     @Test func warmRangesEqualTheOriginalBalancedRemainder() throws {
@@ -59,5 +61,46 @@ struct DecisionPrefillCacheTests {
         let different = DecisionPrefillCache.templateIdentity(content: "input B", prompt: "<user>input B</user>B:")
         #expect(a == b)
         #expect(a != different)
+    }
+}
+
+// MARK: - DecisionCacheLifetimeTests
+
+@Suite("Decision cache lifetime")
+struct DecisionCacheLifetimeTests {
+    @Test func transientRunnersShareOnlyTheirOwnContainerState() async {
+        let one = makeLifetimeTestContainer()
+        let two = makeLifetimeTestContainer()
+        let first = ModelRunner(container: one)
+        let second = ModelRunner(container: one)
+        let other = ModelRunner(container: two)
+        let a = await first.decisionPrefillCache
+        let b = await second.decisionPrefillCache
+        let c = await other.decisionPrefillCache
+        #expect(a === b)
+        #expect(a !== c)
+        DecisionPrefillStore.shared.remove(one)
+        DecisionPrefillStore.shared.remove(two)
+    }
+
+    @Test func registryCannotKeepModelWeightsAlive() {
+        var container: ModelContainer? = makeLifetimeTestContainer()
+        weak var witness = container
+        let cache = DecisionPrefillStore.shared.cache(for: container!)
+        container = nil
+        #expect(witness == nil)
+        withExtendedLifetime(cache) {}
+    }
+
+    @Test func teardownCannotBeUndoneByAnInflightContainer() async throws {
+        let pool = ModelPool(memoryHooks: .init(activeMemory: { 0 }, clearCache: {}))
+        let container = makeLifetimeTestContainer()
+        try await pool.cacheContainerForTesting(container, modelName: "decision-cache")
+        let first = DecisionPrefillStore.shared.cache(for: container)
+        await pool.remove(modelName: "decision-cache")
+        let staleOne = DecisionPrefillStore.shared.cache(for: container)
+        let staleTwo = DecisionPrefillStore.shared.cache(for: container)
+        #expect(first !== staleOne)
+        #expect(staleOne !== staleTwo)
     }
 }
