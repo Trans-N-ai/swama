@@ -199,6 +199,9 @@ package actor ModelPool {
     }
 
     deinit {
+        for container in cache.values {
+            DecisionPrefillStore.shared.remove(container)
+        }
         tokenizerCache.purge(owner: tokenizerCacheOwner)
     }
 

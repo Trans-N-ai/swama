@@ -161,8 +161,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/ModelPool.swift",
-        legacySHA256: "0838251f4f3b117c46a4a15c3db8cbb467e0926ea8ec6f109f0628bbd85c4fca",
-        runtimeSHA256: "8c44c9458aafca48599fd8958ede968f4318a8734834973cccfe10f5c37fa37a",
+        legacySHA256: "2a0ea82d6973f864067e09bb89dac0a9571fb2431bb0d98c372675e8868727d5",
+        runtimeSHA256: "8801b89c305a0f16c598c940e834bbe922f4617307ec171a0d8b856946282504",
         derivedSymbols: [
             "actor ModelPool",
             "func run<",
