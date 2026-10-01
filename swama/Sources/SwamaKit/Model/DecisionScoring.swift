@@ -38,7 +38,12 @@ package struct DecisionLogits: Sendable {
 package extension ModelRunner {
     /// Score the raw next-token distribution after one chat prompt. Decisions use a
     /// bounded, container-scoped cache; the chat PromptCacheStore is never touched.
-    func scoreDecision(content: String, labels: [String], contextLimit: Int) async throws -> DecisionLogits {
+    func scoreDecision(
+        content: String,
+        labels: [String],
+        contextLimit: Int,
+        sharingExpected: Bool = false
+    ) async throws -> DecisionLogits {
         try Task.checkCancellation()
         let boundaryTokens = await DecisionBoundaryCache.shared.tokens(for: container)
         let prefillCache = decisionPrefillCache
@@ -79,7 +84,8 @@ package extension ModelRunner {
                 ? rawTokens : rawTokens.expandedDimensions(axis: 0)
             )
             let session = try prefillCache.forward(
-                context: context, input: input, tokens: promptIDs, content: content, prompt: prompt
+                context: context, input: input, tokens: promptIDs, content: content, prompt: prompt,
+                sharingExpected: sharingExpected
             ) {
                 let cache = context.model.newCache(parameters: nil)
                 return switch try context.model.prepare(input, cache: cache, state: nil, windowSize: nil) {

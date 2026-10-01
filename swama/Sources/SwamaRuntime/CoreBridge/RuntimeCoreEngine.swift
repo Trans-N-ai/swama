@@ -460,7 +460,12 @@ package actor RuntimeCoreEngine {
                 let content = question.content(input: request.input)
                 let labels = question.labels
                 let scored = try await pool.run(modelName: request.model) { runner in
-                    try await runner.scoreDecision(content: content, labels: labels, contextLimit: limit)
+                    try await runner.scoreDecision(
+                        content: content,
+                        labels: labels,
+                        contextLimit: limit,
+                        sharingExpected: request.questions.count > 1
+                    )
                 }
                 let answer = try decisionAnswer(
                     question: question,

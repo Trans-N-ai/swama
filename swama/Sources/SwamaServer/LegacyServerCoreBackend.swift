@@ -121,7 +121,12 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
                 let prompt = question.decisionPrompt(input: request.input)
                 let labels = question.decisionLabels
                 let scored = try await modelPool.run(modelName: modelName) { runner in
-                    try await runner.scoreDecision(content: prompt, labels: labels, contextLimit: contextLimit)
+                    try await runner.scoreDecision(
+                        content: prompt,
+                        labels: labels,
+                        contextLimit: contextLimit,
+                        sharingExpected: request.questions.count > 1
+                    )
                 }
                 answers[question.id] = try question.decisionAnswer(
                     logProbs: scored.labelLogProbs,

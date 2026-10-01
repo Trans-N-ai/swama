@@ -52,6 +52,8 @@ final class DecisionPrefillCache: @unchecked Sendable {
     private var reused = 0
     private var logical = 0
     private var evictions = 0
+    private var previousTokens: [Int] = []
+    private var previousTemplate: String?
     private let ropeKey = LMOutput.Key<MLXArray>("qwen35.ropeDeltas")
 
     init(
@@ -96,6 +98,18 @@ final class DecisionPrefillCache: @unchecked Sendable {
         return Data(header.utf8) + Data(content.utf8.prefix(count))
     }
 
+    static func commonPrefix(_ a: [Int], _ b: [Int]) -> Int {
+        var count = 0
+        for (left, right) in zip(a, b) {
+            guard left == right else {
+                break
+            }
+
+            count += 1
+        }
+        return count
+    }
+
     static func templateIdentity(content: String, prompt: String) -> String {
         guard !content.isEmpty, let location = prompt.range(of: content),
               prompt.range(of: content, range: location.upperBound ..< prompt.endIndex) == nil
@@ -112,6 +126,7 @@ final class DecisionPrefillCache: @unchecked Sendable {
         tokens: [Int],
         content: String,
         prompt: String,
+        sharingExpected: Bool,
         cold: () throws -> LMOutput
     ) throws -> Session {
         guard enabled else {
@@ -172,6 +187,16 @@ final class DecisionPrefillCache: @unchecked Sendable {
                 selected = entry
             }
         }
+        // Avoid cloning large recurrent states on streams with no shared
+        // complete block (e.g. changing Tetris boards). Multi-question calls
+        // provide advance notice; single-question streams learn a usable prefix.
+        let observed = previousTemplate == template
+            ? Self.commonPrefix(previousTokens, tokens) : 0
+        let captureLimit = sharingExpected ? tokens.count - 2 : observed
+        guard selected != nil || captureLimit >= chunk else {
+            return try Session(output: cold(), pending: [], reusedTokens: 0, hit: "cold")
+        }
+
         let offset = selected?.value.count ?? 0
         let caches = selected?.value.caches.map { $0.copy() } ?? context.model.newCache(parameters: nil)
         guard caches.allSatisfy({ type(of: $0) == KVCacheSimple.self || type(of: $0) == MambaCache.self }) else {
@@ -186,7 +211,7 @@ final class DecisionPrefillCache: @unchecked Sendable {
             // The final prefill boundary has only the fixed answer-prefix token
             // left. Exact repetition is already served by the raw-logit memo;
             // retaining this large state crowds out genuinely shared prefixes.
-            guard processed < total, count < tokens.count - 1, count > 0,
+            guard processed < total, count < tokens.count - 1, count <= captureLimit, count > 0,
                   let bytes = Self.prefixBytes(
                       content: content,
                       prompt: prompt,
@@ -261,6 +286,8 @@ final class DecisionPrefillCache: @unchecked Sendable {
 
         lock.lock()
         defer { lock.unlock() }
+        previousTokens = tokens
+        previousTemplate = Self.templateIdentity(content: content, prompt: prompt)
         complete.removeAll { $0.tokens == tokens && $0.content == content }
         let stored = last[.ellipsis]
         eval(stored)

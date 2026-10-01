@@ -92,6 +92,21 @@ struct DecisionCacheLifetimeTests {
         withExtendedLifetime(cache) {}
     }
 
+    @Test func clearingThePoolReleasesIdleDecisionState() async throws {
+        let pool = ModelPool(memoryHooks: .init(activeMemory: { 0 }, clearCache: {}))
+        let container = makeLifetimeTestContainer()
+        try await pool.cacheContainerForTesting(container, modelName: "idle-decision-cache")
+        weak var witness: DecisionPrefillCache?
+        do {
+            let state = DecisionPrefillStore.shared.cache(for: container)
+            witness = state
+        }
+        #expect(witness != nil)
+        await pool.clearCache()
+        #expect(witness == nil)
+        withExtendedLifetime(container) {}
+    }
+
     @Test func teardownCannotBeUndoneByAnInflightContainer() async throws {
         let pool = ModelPool(memoryHooks: .init(activeMemory: { 0 }, clearCache: {}))
         let container = makeLifetimeTestContainer()
