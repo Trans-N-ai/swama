@@ -575,6 +575,13 @@ public actor ModelPool {
         return try await operation(runner)
     }
 
+    /// The already-loaded container for `modelName`, without loading it, waiting for a slot or
+    /// recording usage. Decisions use it to tokenize before acquiring the model slot; the slot's
+    /// own container is checked again before that work is reused.
+    package func loadedContainer(modelName: String) -> MLXLMCommon.ModelContainer? {
+        cache[modelName]
+    }
+
     /// Gets or loads a ModelContainer
     private func getContainer(modelName: String) async throws -> MLXLMCommon.ModelContainer {
         // Ensure memory management is started

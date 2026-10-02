@@ -459,8 +459,18 @@ package actor RuntimeCoreEngine {
                 try Task.checkCancellation()
                 let content = question.content(input: request.input)
                 let labels = question.labels
-                let scored = try await pool.run(modelName: request.model) { runner in
-                    try await runner.scoreDecision(content: content, labels: labels, contextLimit: limit)
+                // Tokenize before taking the exclusive model slot when the model is already loaded,
+                // so this CPU work overlaps other requests' model work. Cold loads keep the old path.
+                var prepared: PreparedDecisionPrompt?
+                if let container = await pool.loadedContainer(modelName: request.model) {
+                    prepared = try await prepareDecisionPrompt(
+                        container: container, content: content, contextLimit: limit
+                    )
+                }
+                let scored = try await pool.run(modelName: request.model) { [prepared] runner in
+                    try await runner.scoreDecision(
+                        content: content, labels: labels, contextLimit: limit, prepared: prepared
+                    )
                 }
                 let answer = try decisionAnswer(
                     question: question,
