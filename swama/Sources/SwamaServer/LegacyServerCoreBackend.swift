@@ -241,7 +241,8 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
         }
     }
 
-    private func makeUserInput(
+    /// Internal for tests: task #81 compares decision image prompts with the real chat path.
+    func makeUserInput(
         _ messages: [SwamaCore.Message],
         tools: [ToolDefinition],
         modelName: String

@@ -4,6 +4,8 @@ import MLX
 import MLXLMCommon
 @testable import SwamaCore
 @testable import SwamaKit
+@testable import SwamaRuntime
+@testable import SwamaServer
 import Testing
 
 // MARK: - DecisionImageRequestTests
@@ -70,7 +72,11 @@ struct DecisionImageRequestTests {
     @Test func chatInputPlacesImagesBeforeTheTextInOrder() throws {
         let red = try decisionTestPNG(red: 1, green: 0, blue: 0)
         let blue = try decisionTestPNG(red: 0, green: 0, blue: 1)
-        let input = try decisionImageUserInput(content: "Which colour?", images: [red, blue], processing: .init())
+        let input = try SwamaKit.decisionImageUserInput(
+            content: "Which colour?",
+            images: [red, blue],
+            processing: .init()
+        )
         guard case let .chat(messages) = input.prompt else {
             Issue.record("Expected a chat prompt")
             return
@@ -81,8 +87,12 @@ struct DecisionImageRequestTests {
         #expect(messages[0].content == "Which colour?")
         #expect(messages[0].images.count == 2)
         #expect(input.additionalContext?["enable_thinking"] as? Bool == false)
-        #expect(throws: DecisionScoringError.self) {
-            _ = try decisionImageUserInput(content: "x", images: [Data("not an image".utf8)], processing: .init())
+        #expect(throws: SwamaKit.DecisionScoringError.self) {
+            _ = try SwamaKit.decisionImageUserInput(
+                content: "x",
+                images: [Data("not an image".utf8)],
+                processing: .init()
+            )
         }
     }
 }
@@ -101,22 +111,68 @@ struct DecisionImageModelTests {
     private let textModel = "mlx-community/SmolLM-135M-Instruct-4bit"
     private let content = "Is the following true? The image is red.\nAnswer with yes or no only."
     private let labels = ["yes", "no"]
-    private let pool: ModelPool = .init()
+    private let pool: SwamaKit.ModelPool = .init()
 
-    /// M3: the token ids a decision scores are exactly what the chat path prepares for the same message.
-    @Test func scoredPromptIsTheChatPathPrompt() async throws {
+    /// M3: the token ids a decision scores are what the real HTTP chat path (`LegacyServerCoreBackend.makeUserInput`)
+    /// prepares for the same user message, under the same resize policy. A decision always turns thinking off;
+    /// the chat input below gets the same switch.
+    @Test func scoredPromptIsTheKitChatPathPrompt() async throws {
         let red = try decisionTestPNG(red: 1, green: 0, blue: 0)
-        let processing = MLXLMCommon.UserInput.Processing(resize: .init(width: 448, height: 448))
+        let backend = LegacyServerCoreBackend(modelPool: pool)
+        let message = SwamaCore.Message(role: .user, content: [.text(content), .imageData(red, mediaType: "image/png")])
+        let defaultInput = try backend.makeUserInput([message], tools: [], modelName: visionModel)
+        var chatInput = try backend.makeUserInput([message], tools: [], modelName: visionModel)
+        chatInput.additionalContext = ["enable_thinking": false]
+        // The chat path's own policy for Qwen3.5 with media: resize to 1344.
+        let processing = chatInput.processing
+        #expect(processing.resize == CGSize(width: 1344, height: 1344))
         let scored = try await score(visionModel, images: [red], processing: processing)
         let container = try #require(await pool.loadedContainer(modelName: visionModel))
-        let chatInput = try decisionImageUserInput(content: content, images: [red], processing: processing)
+        let chatDefault = try await container.prepare(input: defaultInput)
+            .text
+            .tokens
+            .flattened()
+            .asArray(Int.self)
         let chatIDs = try await container.prepare(input: chatInput).text.tokens.flattened().asArray(Int.self)
         #expect(scored.promptTokenIDs == chatIDs)
+        // For this model the chat path's default render already equals thinking-off; a decision always
+        // forces it off, so both chat renders must match what the decision scored.
+        #expect(chatDefault == chatIDs)
 
         let text = try await score(visionModel, images: [], processing: processing)
         #expect(scored.promptTokenIDs.count > text.promptTokenIDs.count)
         #expect(scored.labelTokenIDs == text.labelTokenIDs)
         await pool.clearCache()
+    }
+
+    /// M3 for the library path: Runtime's decision scorer against Runtime's own chat input builder
+    /// (`RuntimeCoreEngine.makeUserInput`, model-default resize), thinking switched off as above.
+    @Test func scoredPromptIsTheRuntimeChatPathPrompt() async throws {
+        let red = try decisionTestPNG(red: 1, green: 0, blue: 0)
+        let engine = RuntimeCoreEngine()
+        var chatInput = try engine.makeUserInput(
+            [.init(
+                role: .user,
+                content: [.text(content), .imageData(red, mediaType: "image/png")],
+                toolCalls: [],
+                toolCallID: nil
+            )],
+            tools: []
+        )
+        chatInput.additionalContext = ["enable_thinking": false]
+        let runtimePool = SwamaRuntime.ModelPool()
+        let content = content
+        let labels = labels
+        let processing = chatInput.processing
+        let scored = try await runtimePool.run(modelName: visionModel) { runner in
+            try await runner.scoreDecision(
+                content: content, labels: labels, contextLimit: 8192, images: [red], imageProcessing: processing
+            )
+        }
+        let container = try #require(await runtimePool.loadedContainer(modelName: visionModel))
+        let chatIDs = try await container.prepare(input: chatInput).text.tokens.flattened().asArray(Int.self)
+        #expect(scored.promptTokenIDs == chatIDs)
+        await runtimePool.clearCache()
     }
 
     /// M5: two different images in swapped order give different probabilities.
@@ -135,7 +191,11 @@ struct DecisionImageModelTests {
         let red = try decisionTestPNG(red: 1, green: 0, blue: 0)
         let text = try await score(visionModel, images: [])
         let container = try #require(await pool.loadedContainer(modelName: visionModel))
-        let prepared = try await prepareDecisionPrompt(container: container, content: content, contextLimit: 8192)
+        let prepared = try await SwamaKit.prepareDecisionPrompt(
+            container: container,
+            content: content,
+            contextLimit: 8192
+        )
         let withImage = try await score(visionModel, images: [red], prepared: prepared)
         #expect(prepared.promptIDs == text.promptTokenIDs)
         #expect(withImage.promptTokenIDs != prepared.promptIDs)
@@ -150,7 +210,7 @@ struct DecisionImageModelTests {
             _ = try await score(textModel, images: [red])
             Issue.record("A text-only model accepted an image")
         }
-        catch let error as DecisionScoringError {
+        catch let error as SwamaKit.DecisionScoringError {
             guard case .imagesNotSupported = error else {
                 Issue.record("Unexpected error \(error)")
                 return
@@ -164,8 +224,8 @@ struct DecisionImageModelTests {
         _ model: String,
         images: [Data],
         processing: MLXLMCommon.UserInput.Processing = .init(resize: .init(width: 448, height: 448)),
-        prepared: PreparedDecisionPrompt? = nil
-    ) async throws -> DecisionLogits {
+        prepared: SwamaKit.PreparedDecisionPrompt? = nil
+    ) async throws -> SwamaKit.DecisionLogits {
         let content = content
         let labels = labels
         return try await pool.run(modelName: model) { runner in
@@ -219,7 +279,7 @@ func decisionTestPNG(red: CGFloat, green: CGFloat, blue: CGFloat) throws -> Data
         of: image, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!
     )
     else {
-        throw DecisionScoringError.invalidImage
+        throw SwamaKit.DecisionScoringError.invalidImage
     }
 
     return data

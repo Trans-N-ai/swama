@@ -659,7 +659,8 @@ package actor RuntimeCoreEngine {
         }
     }
 
-    private nonisolated func makeUserInput(
+    /// Internal for tests: task #81 compares decision image prompts with the real chat path.
+    nonisolated func makeUserInput(
         _ messages: [RuntimeMessage],
         tools: [RuntimeToolDefinition]
     ) throws -> MLXLMCommon.UserInput {
