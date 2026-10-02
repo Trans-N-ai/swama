@@ -257,10 +257,12 @@ Swama's current backend accepts **2–26 choices, 2–10 score levels, and non-e
 Single-option questions, empty or omitted instructions, invalid rubrics, and unsupported counts receive a readable
 4xx refusal. No question text or probability is invented to work around a refusal. Validation errors use HTTP 400;
 unknown models use 404. Capacity refusals include the phrases recognized by Decision Index's HTTP engine.
+Duplicate JSON object keys are rejected instead of overwriting the earlier value.
 
 Question and choice-criteria maps retain request order; that order determines labels and the first winner on ties.
 String state is passed through. Objects and arrays render as compact Unicode JSON in their original member order,
-following SGLang `render_text`; this differs from Decisions' sorted structured-input rendering. For an exact comparison,
+following SGLang `render_text` (`openai/serving_decisions.py:369–374`, frozen commit `eb9c9ee9`);
+this differs from Decisions' sorted structured-input rendering. For an exact comparison,
 send that same rendered text as the Decisions `input`. Rubric descriptions may be strings, objects or arrays; the
 score answer echoes their original JSON values in `legend`. Temperature, prompt version and token-ID-return fields
 belong to `/v1/decisions`, not this route. `chat_template_kwargs` supports only `enable_thinking: false`.
