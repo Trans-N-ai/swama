@@ -457,8 +457,16 @@ package actor RuntimeCoreEngine {
         do {
             for question in request.questions {
                 try Task.checkCancellation()
-                let content = question.content(input: request.input)
-                let labels = question.labels
+                let labels: [String] =
+                    if case let .choice(_, _, options) = question, options.count > 26 {
+                        try await decisionPairLabelPrefix(
+                            count: options.count, usable: pairLabels(modelName: request.model)
+                        )
+                    }
+                    else {
+                        question.labels
+                    }
+                let content = question.content(input: request.input, labels: labels)
                 // Tokenize before taking the exclusive model slot when the model is already loaded,
                 // so this CPU work overlaps other requests' model work. Cold loads keep the old path.
                 var prepared: PreparedDecisionPrompt?
@@ -619,6 +627,17 @@ package actor RuntimeCoreEngine {
             }
         }
         return false
+    }
+
+    /// The model's two-letter labels, from the loaded container when there is one. A cold model is
+    /// loaded in the slot, as the scoring call that follows would do.
+    private func pairLabels(modelName: String) async throws -> [String]? {
+        if let container = await pool.loadedContainer(modelName: modelName) {
+            return try await cachedDecisionPairLabels(container: container)
+        }
+        return try await pool.run(modelName: modelName) { runner in
+            try await runner.decisionPairLabels()
+        }
     }
 
     private func validateModelID(_ model: String) throws {

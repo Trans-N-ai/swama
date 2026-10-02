@@ -195,11 +195,11 @@ struct DecisionAPITests {
         for (path, expected) in [
             (
                 "Sources/SwamaRuntime/CoreBridge/RuntimeDecisions.swift",
-                "8c70eef27b9da3ed6f191870df190ee4444728d8f7a9220f9118f7292a56b60b"
+                "d2a2fd6fb48f60c928347617fed09c24ce0afe58c3e3a8a73401b80994650938"
             ),
             (
                 "Sources/SwamaServer/DecisionCalculation.swift",
-                "14e979bf272cd0b880797d5d05b0a011f81c8750e7177c08e851a7aa6b60f40e"
+                "876436c1de45be0f87939f87a4412dd64bfdc390abeed34b1809e6faa06e9adc"
             )
         ] {
             let bytes = try Data(contentsOf: package.appendingPathComponent(path))

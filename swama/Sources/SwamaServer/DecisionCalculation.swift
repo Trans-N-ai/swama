@@ -2,8 +2,10 @@ import Foundation
 import SwamaCore
 
 extension DecisionQuestion {
+    /// Choices with more than 26 options have no fixed labels; they take the model's pair labels.
     var decisionLabels: [String] {
         switch self {
+        case let .choice(_, _, options) where options.count > 26: []
         case let .choice(_, _, options): options.indices.map { String(UnicodeScalar(65 + $0)!) }
         case let .score(_, _, levels): levels.indices.map(String.init)
         case .yesNo: ["yes", "no"]
@@ -26,12 +28,13 @@ extension DecisionQuestion {
         }
     }
 
-    func decisionPrompt(input: String) -> String {
+    func decisionPrompt(input: String, labels: [String]? = nil) -> String {
+        let labels = labels ?? decisionLabels
         var lines = [input, ""]
         switch self {
         case let .choice(_, question, options):
             lines.append("Question: \(question)")
-            for (label, option) in zip(decisionLabels, options) {
+            for (label, option) in zip(labels, options) {
                 if let description = option.description, !description.isEmpty {
                     lines.append("\(label): \(option.name) - \(description)")
                 }
@@ -43,7 +46,7 @@ extension DecisionQuestion {
 
         case let .score(_, question, levels):
             lines.append("Question: \(question)")
-            for (label, level) in zip(decisionLabels, levels) {
+            for (label, level) in zip(labels, levels) {
                 lines.append("\(label): \(level)")
             }
             lines.append("Answer with the number of one level only.")

@@ -196,15 +196,25 @@ public actor SwamaEngine {
             switch question {
             case let .choice(_, text, options):
                 let names = options.map(\.name)
+                // /v1/decisions refuses more than 26 options when parsing; SystemOne labels them AA to ZZ.
+                guard options.count <= 26 * 26 else {
+                    throw invalidRequest(
+                        "Choice questions support at most 676 options per choice.",
+                        model: request.model
+                    )
+                }
                 guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      (2 ... 26).contains(options.count),
+                      options.count >= 2,
                       names.allSatisfy({ Self.validOptionName($0) }),
                       Set(names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).folding(
                           options: .caseInsensitive,
                           locale: nil
                       ) }).count == names.count
                 else {
-                    throw invalidRequest("Choice questions require 2–26 distinct, valid options.", model: request.model)
+                    let message = options.count > 26
+                        ? "Choice questions require distinct, valid options."
+                        : "Choice questions require 2–26 distinct, valid options."
+                    throw invalidRequest(message, model: request.model)
                 }
 
             case let .score(_, text, levels):
