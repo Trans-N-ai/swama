@@ -257,19 +257,13 @@ public actor ModelPool {
         modelName: String,
         operation: @Sendable @escaping (SpeechToTextRunner) async throws -> T
     ) async throws -> T {
-        // Wait for available slot AND ensure the specific model is not already running
-        while runningInferences >= maxConcurrentInferences || runningModels[modelName] != nil {
-            try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        // Wait, in arrival order, for a free slot with this model not already running.
+        let operationToken = try await acquireSlot(exclusiveModel: modelName)
+        defer {
+            releaseSlot(exclusiveModel: modelName, token: operationToken)
         }
 
         try Task.checkCancellation()
-
-        runningInferences += 1
-        let operationToken = beginModelOperation(modelName)
-        defer {
-            runningInferences = max(0, runningInferences - 1)
-            endModelOperation(modelName, token: operationToken)
-        }
 
         // Get or load the speech-to-text runner
         let runner = try await getSpeechToTextRunner(modelName: modelName)
@@ -286,18 +280,13 @@ public actor ModelPool {
         repository: String? = nil,
         operation: @Sendable @escaping (TTSRunner) async throws -> T
     ) async throws -> T {
-        while runningInferences >= maxConcurrentInferences || runningModels[modelKey] != nil {
-            try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        // Wait, in arrival order, for a free slot with this model not already running.
+        let operationToken = try await acquireSlot(exclusiveModel: modelKey)
+        defer {
+            releaseSlot(exclusiveModel: modelKey, token: operationToken)
         }
 
         try Task.checkCancellation()
-
-        runningInferences += 1
-        let operationToken = beginModelOperation(modelKey)
-        defer {
-            runningInferences = max(0, runningInferences - 1)
-            endModelOperation(modelKey, token: operationToken)
-        }
 
         let runner = try await getTTSRunner(
             modelKey: modelKey,
@@ -451,24 +440,110 @@ public actor ModelPool {
         }
     }
 
+    // MARK: - Slot Admission
+
+    /// A caller waiting for an inference slot. `exclusiveModel` is the model it must run alone
+    /// on; `nil` (embeddings) needs only a global slot.
+    private struct SlotWaiter {
+        let id: UInt64
+        let exclusiveModel: String?
+        let continuation: CheckedContinuation<UInt64, Error>
+    }
+
+    /// Callers waiting for a slot, oldest first.
+    private var slotWaiters: [SlotWaiter] = []
+    private var nextSlotWaiterID: UInt64 = 0
+
+    private func canAdmit(exclusiveModel: String?) -> Bool {
+        guard runningInferences < maxConcurrentInferences else {
+            return false
+        }
+        guard let exclusiveModel else {
+            return true
+        }
+
+        return runningModels[exclusiveModel] == nil
+    }
+
+    /// Reserves the slot, and the model if exclusive. Returns the model's operation token, or 0
+    /// for a global-only slot, which has none.
+    private func admit(exclusiveModel: String?) -> UInt64 {
+        runningInferences += 1
+        return exclusiveModel.map(beginModelOperation) ?? 0
+    }
+
+    /// Waits for a slot in arrival order. A waiter is skipped only while its own model is
+    /// running, so one busy model never blocks callers for other models, and callers for the
+    /// same model are served first come, first served. The slot is reserved when it is granted,
+    /// not when the waiter resumes, so a newcomer cannot take it in between. Replaces a 50 ms
+    /// polling loop that left the GPU idle between requests and admitted waiters in no order.
+    private func acquireSlot(exclusiveModel: String?) async throws -> UInt64 {
+        try Task.checkCancellation()
+
+        if canAdmit(exclusiveModel: exclusiveModel) {
+            return admit(exclusiveModel: exclusiveModel)
+        }
+
+        nextSlotWaiterID &+= 1
+        let id = nextSlotWaiterID
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+
+                slotWaiters.append(.init(id: id, exclusiveModel: exclusiveModel, continuation: continuation))
+            }
+        } onCancel: {
+            Task { await self.cancelSlotWaiter(id: id) }
+        }
+    }
+
+    /// Fails a cancelled waiter that has not been granted a slot yet. A waiter that was already
+    /// granted owns its slot, and `run` releases it.
+    private func cancelSlotWaiter(id: UInt64) {
+        guard let index = slotWaiters.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        slotWaiters.remove(at: index).continuation.resume(throwing: CancellationError())
+    }
+
+    private func releaseSlot(exclusiveModel: String?, token: UInt64) {
+        runningInferences = max(0, runningInferences - 1)
+        if let exclusiveModel {
+            endModelOperation(exclusiveModel, token: token)
+        }
+        grantWaitingSlots()
+    }
+
+    /// Grants slots to the oldest waiters that can run now.
+    private func grantWaitingSlots() {
+        var index = 0
+        while index < slotWaiters.count, runningInferences < maxConcurrentInferences {
+            guard canAdmit(exclusiveModel: slotWaiters[index].exclusiveModel) else {
+                index += 1
+                continue
+            }
+
+            let waiter = slotWaiters.remove(at: index)
+            waiter.continuation.resume(returning: admit(exclusiveModel: waiter.exclusiveModel))
+        }
+    }
+
     /// Safely run a model operation with concurrency control to prevent MLX heap corruption
     public func run<T: Sendable>(
         modelName: String,
         operation: @Sendable @escaping (ModelRunner) async throws -> T
     ) async throws -> T {
-        // Wait for available slot AND ensure the specific model is not already running
-        while runningInferences >= maxConcurrentInferences || runningModels[modelName] != nil {
-            try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        // Wait, in arrival order, for a free slot with this model not already running.
+        let operationToken = try await acquireSlot(exclusiveModel: modelName)
+        defer {
+            releaseSlot(exclusiveModel: modelName, token: operationToken)
         }
 
         try Task.checkCancellation()
-
-        runningInferences += 1
-        let operationToken = beginModelOperation(modelName)
-        defer {
-            runningInferences = max(0, runningInferences - 1)
-            endModelOperation(modelName, token: operationToken)
-        }
 
         // Get or load the model container
         let container = try await getContainer(modelName: modelName)
@@ -487,16 +562,12 @@ public actor ModelPool {
         // Embedding requests share the global pool limit but deliberately do not reserve
         // `runningModels`: EmbeddingRunner is an actor and EmbedderModelContainer serializes
         // access internally, so same-model callers may coalesce one load and then queue there.
-        while runningInferences >= maxConcurrentInferences {
-            try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        let operationToken = try await acquireSlot(exclusiveModel: nil)
+        defer {
+            releaseSlot(exclusiveModel: nil, token: operationToken)
         }
 
         try Task.checkCancellation()
-
-        runningInferences += 1
-        defer {
-            runningInferences = max(0, runningInferences - 1)
-        }
 
         let runner = try await getOrLoadEmbeddingRunner(modelName: modelName)
 
