@@ -88,7 +88,7 @@ func prepareDecisionPrompt(
     )
 }
 
-/// Two-letter answer labels usable after this container's chat prompt, computed once per container
+/// Two-letter answer labels usable after this container's chat prompt, computed once per cached container
 /// outside the exclusive model slot. `nil` when this tokenizer and chat template cannot provide them.
 func cachedDecisionPairLabels(container: ModelContainer) async throws -> [String]? {
     try Task.checkCancellation()
@@ -513,8 +513,9 @@ private actor DecisionBoundaryCache {
     }
 }
 
-/// The pair labels of each live container, computed once; `nil` results are kept too.
-/// Weak, like the boundary cache.
+/// The pair labels of each live container, computed once while the container is in the cache;
+/// `nil` results are kept too. Weak and bounded to 8 entries, like the boundary cache: an evicted
+/// container is computed again, with the same result.
 actor DecisionPairLabelCache {
     static let shared: DecisionPairLabelCache = .init()
     private struct Entry {
