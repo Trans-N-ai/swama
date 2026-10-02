@@ -272,7 +272,7 @@ struct DecisionPairLabelTests {
         #expect(tied.choice == "29")
     }
 
-    @Test func systemOneAcceptsUpTo676OptionsAndDecisionsStillRefuse27() async throws {
+    @Test func onlySystemOneOptsIntoUpTo676OptionsAndDecisionsStillRefuse27() async throws {
         func systemOne(_ count: Int) throws -> SystemOneRequest {
             let criteria = (0 ..< count).map { "\"o\($0)\":null" }.joined(separator: ",")
             let body = #"{"model":"m","state":"s","questions":{"c":{"type":"choice","instructions":"Pick","criteria":{"#
@@ -293,17 +293,31 @@ struct DecisionPairLabelTests {
         catch {
             #expect(error.localizedDescription.contains("options per choice"))
         }
-        let options = (0 ..< 677).map { DecisionOption(name: "o\($0)") }
-        do {
-            _ = try await engine.decide(.init(
-                model: .init("org/model"), input: "s", questions: [.choice(id: "c", question: "Pick", options: options)]
-            ))
-            Issue.record("677 options reached the backend")
+        #expect(try systemOne(27).decision.allowsPairLabels)
+        // Library callers keep the 2-26 limit unless they opt in; the opt-in still stops at 676.
+        func choice(_ count: Int, allowsPairLabels: Bool) -> DecisionRequest {
+            let options = (0 ..< count).map { DecisionOption(name: "o\($0)") }
+            return .init(
+                model: .init("org/model"), input: "s",
+                questions: [.choice(id: "c", question: "Pick", options: options)],
+                allowsPairLabels: allowsPairLabels
+            )
         }
-        catch let error as SwamaError {
-            #expect(error.code == .invalidRequest)
-            #expect(error.message.contains("options per choice"))
+        #expect(DecisionRequest(model: .init("org/model"), input: "s", questions: []).allowsPairLabels == false)
+        for (count, allowsPairLabels, message) in [
+            (27, false, "Choice questions require 2–26 distinct, valid options."),
+            (677, true, "Choice questions require 2–676 distinct, valid options.")
+        ] {
+            do {
+                _ = try await engine.decide(choice(count, allowsPairLabels: allowsPairLabels))
+                Issue.record("\(count) options reached the backend")
+            }
+            catch let error as SwamaError {
+                #expect(error.code == .invalidRequest)
+                #expect(error.message == message)
+            }
         }
+        _ = try await engine.decide(choice(26, allowsPairLabels: false))
 
         func decisions(_ count: Int) throws -> DecisionRequest {
             let options = (0 ..< count).map { #"{"name":"o\#($0)"}"# }.joined(separator: ",")
@@ -348,7 +362,8 @@ struct DecisionPairLabelModelTests {
         let legacy = LegacyServerCoreBackend(modelPool: pool)
         let input = "Find the option whose name is exactly the number 21."
         let request = DecisionRequest(
-            model: .init(model), input: input, questions: [question(30, target: 21)], returnPromptTokenIDs: true
+            model: .init(model), input: input, questions: [question(30, target: 21)], returnPromptTokenIDs: true,
+            allowsPairLabels: true
         )
         let cold = try await legacy.decide(request)
         let warm = try await legacy.decide(request)

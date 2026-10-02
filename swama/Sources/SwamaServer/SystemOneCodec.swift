@@ -108,7 +108,11 @@ struct SystemOneRequest: Sendable {
         }
         return .init(
             // SGLang accepts any state, including an empty one; /v1/decisions still requires input.
-            decision: .init(model: .init(model), input: state.text, questions: decisions, allowsBlankInput: true),
+            // More than 26 options take the model's two-letter labels.
+            decision: .init(
+                model: .init(model), input: state.text, questions: decisions,
+                allowsBlankInput: true, allowsPairLabels: true
+            ),
             questions: metadata
         )
     }
