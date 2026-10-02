@@ -38,13 +38,15 @@ public struct DecisionRequest: Hashable, Sendable {
         input: String,
         questions: [DecisionQuestion],
         temperature: Double = 1,
-        returnPromptTokenIDs: Bool = false
+        returnPromptTokenIDs: Bool = false,
+        allowsBlankInput: Bool = false
     ) {
         self.model = model
         self.input = input
         self.questions = questions
         self.temperature = temperature
         self.returnPromptTokenIDs = returnPromptTokenIDs
+        self.allowsBlankInput = allowsBlankInput
     }
 
     public let model: ModelID
@@ -52,6 +54,8 @@ public struct DecisionRequest: Hashable, Sendable {
     public let questions: [DecisionQuestion]
     public let temperature: Double
     public let returnPromptTokenIDs: Bool
+    /// Allows a blank input, rendered as is. Off by default, so library callers keep requiring input.
+    public let allowsBlankInput: Bool
 }
 
 // MARK: - DecisionKind

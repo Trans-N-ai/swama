@@ -364,6 +364,30 @@ struct DecisionAPITests {
         ))
         #expect(await backend.calls == 1)
     }
+
+    @Test func coreRequiresInputUnlessTheCallerAllowsBlankInput() async throws {
+        let backend = DecisionTestBackend()
+        let engine = SwamaEngine(backend: backend)
+        let questions: [DecisionQuestion] = [.yesNo(id: "q", question: "True?")]
+        #expect(DecisionRequest(model: .init("org/model"), input: "", questions: questions).allowsBlankInput == false)
+        for input in ["", " \n\t"] {
+            do {
+                _ = try await engine.decide(.init(model: .init("org/model"), input: input, questions: questions))
+                Issue.record("A blank input reached the backend by default")
+            }
+            catch let error as SwamaError {
+                #expect(error.code == .invalidRequest)
+                #expect(error.message == "Decision input, questions, and positive finite temperature are required.")
+            }
+        }
+        #expect(await backend.calls == 0)
+        for input in ["", " \n\t"] {
+            _ = try await engine.decide(.init(
+                model: .init("org/model"), input: input, questions: questions, allowsBlankInput: true
+            ))
+        }
+        #expect(await backend.calls == 2)
+    }
 }
 
 // MARK: - DecisionTestBackend
