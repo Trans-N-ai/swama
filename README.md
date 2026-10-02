@@ -91,6 +91,7 @@ The server listens on port 28100 by default (`--port` or `SWAMA_PORT` to change 
 | `POST /v1/chat/completions` | Streaming (`"stream": true`), tool calling, `image_url` input for vision models |
 | `POST /v1/responses` | Stateless subset — see below |
 | `POST /v1/decisions` | Scores choices, ratings and yes/no answers without generating text — see below |
+| `POST /v1/systemone` | SystemOne request/response adapter over the same decision scorer — see below |
 | `POST /v1/embeddings` | Embedding models such as `mlx-community/embeddinggemma-300m-4bit` |
 | `POST /v1/audio/transcriptions` | Multipart upload, local speech recognition |
 | `POST /v1/audio/speech` | Text-to-speech (experimental) |
@@ -237,6 +238,58 @@ on representative application data; neither value guarantees correctness.
 curl -X POST http://localhost:28100/v1/decisions \
   -H "Content-Type: application/json" \
   -d '{"model":"mlx-community/Qwen3.5-0.8B-MLX-4bit","input":"My invoice charged me twice.","questions":[{"id":"team","type":"choice","question":"Which team should handle this?","options":[{"name":"billing"},{"name":"technical"},{"name":"sales"}]}]}'
+```
+
+</details>
+
+<details>
+<summary><b><code>/v1/systemone</code> (SystemOne OpenAPI 0.2.0)</b></summary>
+
+`POST /v1/systemone` accepts an explicit local `model`, textual or structured `state`, and a map of named
+`questions`. It calls the same engine, model pool, prompt format and scorer as `/v1/decisions`.
+`noul` maps to yes/no and returns `noul = p(yes)`; `choice` returns the selected name, probabilities and confidence;
+`score` returns the expected level, probabilities, confidence and the original criteria in `legend`.
+The response has `model`, `answers` and `usage` (`input_tokens`, `output_tokens: 0`).
+`x_label_mass` is the same diagnostic value called `label_mass` by Decisions. Confidence remains concentration,
+not calibrated correctness. The existing model/template and lowercase yes/no limitations above also apply.
+
+Swama's current backend accepts **2–26 choices, 2–10 score levels, and non-empty instructions**.
+Single-option questions, empty or omitted instructions, invalid rubrics, and unsupported counts receive a readable
+4xx refusal. No question text or probability is invented to work around a refusal. Validation errors use HTTP 400;
+unknown models use 404. Capacity refusals include the phrases recognized by Decision Index's HTTP engine.
+Duplicate JSON object keys are rejected instead of overwriting the earlier value.
+
+Question and choice-criteria maps retain request order; that order determines labels and the first winner on ties.
+String state is passed through. Objects and arrays render as compact Unicode JSON in their original member order,
+following SGLang `render_text` (`openai/serving_decisions.py:369–374`, frozen commit `eb9c9ee9`);
+this differs from Decisions' sorted structured-input rendering. For an exact comparison,
+send that same rendered text as the Decisions `input`. Rubric descriptions may be strings, objects or arrays; the
+score answer echoes their original JSON values in `legend`. Temperature, prompt version and token-ID-return fields
+belong to `/v1/decisions`, not this route. `chat_template_kwargs` supports only `enable_thinking: false`.
+
+The official [Python SDK](https://github.com/typesafe-ai/typesafe-sdk-python) and
+[JavaScript SDK](https://github.com/typesafe-ai/typesafe-sdk-js) can call this endpoint with a local base URL and model.
+An SDK API key placeholder is needed by their constructors; Swama does not use it for authentication.
+Model discovery keeps the OpenAI-shaped `/v1/models`. Pass an explicit local model name to TypeSafe SDK calls;
+its `client.models.list()` expects a different catalog format.
+
+```python
+from typesafe_sdk import Choice, Noul, Score, TypeSafeClient
+
+with TypeSafeClient(
+    base_url="http://127.0.0.1:28100",
+    api_key="local",
+    model="mlx-community/Qwen3.5-0.8B-MLX-4bit",
+) as client:
+    result = client.system_one(
+        state={"document": "I was charged twice. Please help."},
+        questions={
+            "team": Choice(instructions="Which team?", criteria={"billing": None, "technical": None}),
+            "billing": Noul(instructions="Is this a billing issue?"),
+            "urgency": Score(instructions="How urgent?", criteria=["Can wait", "Needs attention today"]),
+        },
+    )
+    print(result.choices["team"].choice)
 ```
 
 </details>
