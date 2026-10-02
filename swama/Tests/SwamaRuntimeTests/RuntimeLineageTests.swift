@@ -53,8 +53,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/DecisionScoring.swift",
-        legacySHA256: "3f10050d4a1f8b6a2df9dad1004ccd730324112d3d77e0e8ece72596bd1ecc27",
-        runtimeSHA256: "d840321524e8f9f984166bba3b1c8946ee9b94141bf747304c38c1c090763e66",
+        legacySHA256: "658e02959a2f96dae08e5e8ac6fe328e73b8fd92280d1246ed7aa4666340bcda",
+        runtimeSHA256: "50004bf177c876011c8ef8ae0f2565632424ba6d175679842a4dcc8497d5d2e3",
         derivedSymbols: ["func scoreDecision", "struct DecisionLogits"]
     ),
     .init(

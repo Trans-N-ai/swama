@@ -1,7 +1,9 @@
+import CoreImage
 import Foundation
 import MLX
 import MLXLLM
 import MLXLMCommon
+import MLXVLM
 
 // MARK: - DecisionScoringError
 
@@ -15,6 +17,8 @@ enum DecisionScoringError: Error, LocalizedError {
     case invalidLogits
     case pairLabelsUnavailable
     case tooManyOptions(requested: Int, available: Int)
+    case imagesNotSupported
+    case invalidImage
 
     var errorDescription: String? {
         switch self {
@@ -38,6 +42,10 @@ enum DecisionScoringError: Error, LocalizedError {
 
         case let .tooManyOptions(requested, available):
             "This model supports at most \(available) options per choice; the question has \(requested)."
+
+        case .imagesNotSupported: "Images are not supported by this model; it has no vision processor."
+
+        case .invalidImage: "The image data is invalid."
         }
     }
 }
@@ -182,7 +190,9 @@ extension ModelRunner {
         content: String,
         labels: [String],
         contextLimit: Int,
-        prepared: PreparedDecisionPrompt? = nil
+        prepared: PreparedDecisionPrompt? = nil,
+        images: [Data] = [],
+        imageProcessing: MLXLMCommon.UserInput.Processing = .init()
     ) async throws -> DecisionLogits {
         try Task.checkCancellation()
         let boundaryTokens = await DecisionBoundaryCache.shared.tokens(for: container)
@@ -190,11 +200,16 @@ extension ModelRunner {
             let tokenizer = context.tokenizer
             let prompt: String
             let promptIDs: [Int]
-            if let prepared, prepared.matches(container: container, content: content, contextLimit: contextLimit) {
+            // A prepared prompt is text-only: never reuse it for a request with images.
+            if images.isEmpty, let prepared,
+               prepared.matches(container: container, content: content, contextLimit: contextLimit)
+            {
                 prompt = prepared.prompt
                 promptIDs = prepared.promptIDs
             }
             else {
+                // With images, these checks run on the text-only render of the same message:
+                // template, round-trip and an open reasoning block at the answer position.
                 (prompt, promptIDs) = try decisionPrompt(
                     content: content, contextLimit: contextLimit, tokenizer: tokenizer
                 )
@@ -202,11 +217,22 @@ extension ModelRunner {
 
             try Task.checkCancellation()
             let cache = context.model.newCache(parameters: nil)
-            let rawTokens = MLXArray(promptIDs)
-            // LLM prefill consumes a one-dimensional sequence; VLM processors use [batch, tokens].
-            let input = LMInput(tokens: context.model is any LLMModel
-                ? rawTokens : rawTokens.expandedDimensions(axis: 0)
-            )
+            let input: LMInput
+            let scoredIDs: [Int]
+            if images.isEmpty {
+                let rawTokens = MLXArray(promptIDs)
+                // LLM prefill consumes a one-dimensional sequence; VLM processors use [batch, tokens].
+                input = LMInput(tokens: context.model is any LLMModel
+                    ? rawTokens : rawTokens.expandedDimensions(axis: 0)
+                )
+                scoredIDs = promptIDs
+            }
+            else {
+                (input, scoredIDs) = try await decisionImageInput(
+                    content: content, images: images, processing: imageProcessing,
+                    contextLimit: contextLimit, context: context
+                )
+            }
             let output: LMOutput =
                 switch try context.model.prepare(input, cache: cache, state: nil, windowSize: nil) {
                 case let .tokens(tokens):
@@ -275,7 +301,7 @@ extension ModelRunner {
             }
 
             return DecisionLogits(
-                promptTokenIDs: promptIDs,
+                promptTokenIDs: scoredIDs,
                 labelTokenIDs: labelIDs,
                 labelLogProbs: labelIDs.map { values[$0] - logNormalizer }
             )
@@ -288,6 +314,49 @@ extension ModelRunner {
     func decisionPairLabels() async throws -> [String]? {
         try await cachedDecisionPairLabels(container: container)
     }
+}
+
+/// The prepared model input for a decision with images: the same single user message the chat path
+/// builds (images before the text), processed by the model's own vision processor.
+/// Images require a vision model; capability is decided by the loaded container, not the model name.
+func decisionImageInput(
+    content: String,
+    images: [Data],
+    processing: MLXLMCommon.UserInput.Processing,
+    contextLimit: Int,
+    context: ModelContext
+) async throws -> (input: LMInput, tokenIDs: [Int]) {
+    guard context.model is any VLMModel else {
+        throw DecisionScoringError.imagesNotSupported
+    }
+
+    let userInput = try decisionImageUserInput(content: content, images: images, processing: processing)
+    let input = try await context.processor.prepare(input: userInput)
+    let tokenIDs = input.text.tokens.flattened().asArray(Int.self)
+    guard !tokenIDs.isEmpty, tokenIDs.count < contextLimit else {
+        throw DecisionScoringError.contextLimitExceeded
+    }
+
+    return (input, tokenIDs)
+}
+
+/// The chat user input a decision with images is scored on. Shared with tests that compare the
+/// decision prompt with what the chat path prepares for the same message.
+func decisionImageUserInput(
+    content: String, images: [Data], processing: MLXLMCommon.UserInput.Processing
+) throws -> MLXLMCommon.UserInput {
+    let decoded = try images.map { data -> MLXLMCommon.UserInput.Image in
+        guard let image = CIImage(data: data) else {
+            throw DecisionScoringError.invalidImage
+        }
+
+        return .ciImage(image)
+    }
+    return MLXLMCommon.UserInput(
+        chat: [.user(content, images: decoded)],
+        processing: processing,
+        additionalContext: ["enable_thinking": false]
+    )
 }
 
 /// Check the actual answer boundary, including prefix stability and distinct label IDs.

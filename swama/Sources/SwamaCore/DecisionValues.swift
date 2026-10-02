@@ -40,7 +40,9 @@ public struct DecisionRequest: Hashable, Sendable {
         temperature: Double = 1,
         returnPromptTokenIDs: Bool = false,
         allowsBlankInput: Bool = false,
-        allowsPairLabels: Bool = false
+        allowsPairLabels: Bool = false,
+        images: [DecisionImage] = [],
+        imageMaxDimension: Int? = nil
     ) {
         self.model = model
         self.input = input
@@ -49,6 +51,8 @@ public struct DecisionRequest: Hashable, Sendable {
         self.returnPromptTokenIDs = returnPromptTokenIDs
         self.allowsBlankInput = allowsBlankInput
         self.allowsPairLabels = allowsPairLabels
+        self.images = images
+        self.imageMaxDimension = imageMaxDimension
     }
 
     public let model: ModelID
@@ -61,6 +65,27 @@ public struct DecisionRequest: Hashable, Sendable {
     /// Allows choices with more than 26 options, labeled with the model's two-letter labels.
     /// Off by default, so library callers keep the 2–26 option limit.
     public let allowsPairLabels: Bool
+    /// Images placed before the input in the one user message. Only vision models accept them.
+    public let images: [DecisionImage]
+    /// Resize images to fit this many pixels per side; `nil` keeps the model's default policy.
+    public let imageMaxDimension: Int?
+
+    /// At most this many images per decision request.
+    public static let maximumImageCount = 4
+}
+
+// MARK: - DecisionImage
+
+/// An embedded image for a decision. Core never fetches remote images.
+public struct DecisionImage: Hashable, Sendable {
+    public init(data: Data, mediaType: String) {
+        self.data = data
+        self.mediaType = mediaType
+    }
+
+    public let data: Data
+    /// For example `image/png`, `image/jpeg` or `image/webp`.
+    public let mediaType: String
 }
 
 // MARK: - DecisionKind
