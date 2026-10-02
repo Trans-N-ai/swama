@@ -116,6 +116,47 @@ struct DecisionPairLabelTests {
         #expect(SwamaRuntime.decisionPairLabels(probes: repeated, boundaryTokens: [:], encode: tokenizer.encode) == nil)
     }
 
+    @Test func probeTemplateFailuresMeanNoLabelsAndOtherErrorsKeepTheirCategory() throws {
+        // A template without a direct answer position cannot provide labels; it is then refused
+        // with the capacity phrase rather than a bare template error.
+        for error in [SwamaKit.DecisionScoringError.missingChatTemplate, .lossyTemplate, .reasoningOpen] {
+            #expect(try SwamaKit.decisionPairLabelProbes { _ in throw error } == nil)
+        }
+        for error in [SwamaRuntime.DecisionScoringError.missingChatTemplate, .lossyTemplate, .reasoningOpen] {
+            #expect(try SwamaRuntime.decisionPairLabelProbes { _ in throw error } == nil)
+        }
+        do {
+            _ = try SwamaKit.decisionPairLabelPrefix(
+                count: 27,
+                usable: SwamaKit.decisionPairLabelProbes { _ in
+                    throw SwamaKit.DecisionScoringError.lossyTemplate
+                }
+                .map { _ in Self.candidates }
+            )
+            Issue.record("A lossy template produced labels")
+        }
+        catch {
+            #expect(error.localizedDescription.contains("options per choice"))
+        }
+
+        #expect(throws: CancellationError.self) {
+            try SwamaKit.decisionPairLabelProbes { _ in throw CancellationError() }
+        }
+        #expect(throws: CancellationError.self) {
+            try SwamaRuntime.decisionPairLabelProbes { _ in throw CancellationError() }
+        }
+        #expect(throws: SwamaKit.DecisionScoringError.self) {
+            try SwamaKit.decisionPairLabelProbes { _ in throw SwamaKit.DecisionScoringError.contextLimitExceeded }
+        }
+        #expect(throws: SwamaRuntime.DecisionScoringError.self) {
+            try SwamaRuntime.decisionPairLabelProbes { _ in
+                throw SwamaRuntime.DecisionScoringError.contextLimitExceeded
+            }
+        }
+        #expect(try SwamaKit.decisionPairLabelProbes { ($0, [1]) }?.map(\.prompt) == ["x", "y"])
+        #expect(try SwamaRuntime.decisionPairLabelProbes { ($0, [1]) }?.map(\.prompt) == ["x", "y"])
+    }
+
     @Test func tooFewLabelsOrNoLabelsAreRefusedWithoutTruncating() throws {
         let usable = Array(Self.candidates.prefix(30))
         #expect(try SwamaKit.decisionPairLabelPrefix(count: 30, usable: usable) == usable)

@@ -95,10 +95,32 @@ package func cachedDecisionPairLabels(container: ModelContainer) async throws ->
     let tokenizer = await DecisionTokenizerCache.shared.tokenizer(for: container)
     let boundaryTokens = await DecisionBoundaryCache.shared.tokens(for: container)
     return try await DecisionPairLabelCache.shared.labels(for: container) {
-        let probes = try ["x", "y"].map { try decisionPrompt(content: $0, contextLimit: .max, tokenizer: tokenizer) }
+        let probes = try decisionPairLabelProbes {
+            try decisionPrompt(content: $0, contextLimit: .max, tokenizer: tokenizer)
+        }
+        guard let probes else {
+            return nil
+        }
+
         return decisionPairLabels(probes: probes, boundaryTokens: boundaryTokens) {
             tokenizer.encode(text: $0, addSpecialTokens: false)
         }
+    }
+}
+
+/// The "x" and "y" probe prompts for pair-label discovery. A chat template that cannot give a direct
+/// answer position (missing, lossy, or leaving reasoning open) cannot provide the labels: `nil`.
+/// Every other error, such as cancellation, keeps its own category.
+package func decisionPairLabelProbes(
+    render: (String) throws -> (prompt: String, promptIDs: [Int])
+) throws -> [(prompt: String, promptIDs: [Int])]? {
+    do {
+        return try ["x", "y"].map(render)
+    }
+    catch DecisionScoringError.missingChatTemplate, DecisionScoringError.lossyTemplate,
+        DecisionScoringError.reasoningOpen
+    {
+        return nil
     }
 }
 
