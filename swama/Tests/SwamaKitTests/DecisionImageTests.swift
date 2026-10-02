@@ -135,7 +135,8 @@ struct DecisionImageModelTests {
             .asArray(Int.self)
         let chatIDs = try await container.prepare(input: chatInput).text.tokens.flattened().asArray(Int.self)
         #expect(scored.promptTokenIDs == chatIDs)
-        // For this model the chat path's default render already equals thinking-off; a decision always
+        // For this model (0.8B) the chat path's default render already equals thinking-off; on 9B it does not.
+        // A decision always
         // forces it off, so both chat renders must match what the decision scored.
         #expect(chatDefault == chatIDs)
 
@@ -200,6 +201,30 @@ struct DecisionImageModelTests {
         #expect(prepared.promptIDs == text.promptTokenIDs)
         #expect(withImage.promptTokenIDs != prepared.promptIDs)
         #expect(withImage.promptTokenIDs.count > prepared.promptIDs.count)
+        await pool.clearCache()
+    }
+
+    /// The chat path's multimodal safety limit (4096 tokens) applies to image decisions too: four images at
+    /// the Qwen3.5 default resize (about 5000 tokens) are refused, the same images at 512 px are scored.
+    @Test func imageDecisionsKeepTheMultimodalContextLimit() async throws {
+        let red = try decisionTestPNG(red: 1, green: 0, blue: 0)
+        let four = Array(repeating: red, count: 4)
+        do {
+            _ = try await score(visionModel, images: four, processing: .init(resize: .init(width: 1344, height: 1344)))
+            Issue.record("Four 1344 px images passed the multimodal context limit")
+        }
+        catch let error as SwamaKit.DecisionScoringError {
+            guard case .contextLimitExceeded = error else {
+                Issue.record("Unexpected error \(error)")
+                return
+            }
+        }
+        let small = try await score(
+            visionModel,
+            images: four,
+            processing: .init(resize: .init(width: 512, height: 512))
+        )
+        #expect(small.promptTokenIDs.count < 4096)
         await pool.clearCache()
     }
 

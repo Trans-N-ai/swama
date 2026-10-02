@@ -333,7 +333,9 @@ func decisionImageInput(
     let userInput = try decisionImageUserInput(content: content, images: images, processing: processing)
     let input = try await context.processor.prepare(input: userInput)
     let tokenIDs = input.text.tokens.flattened().asArray(Int.self)
-    guard !tokenIDs.isEmpty, tokenIDs.count < contextLimit else {
+    // The same multimodal safety limit the chat path applies to requests with media.
+    let limit = min(contextLimit, InferenceSafetyLimits.multimodalContextLimit)
+    guard !tokenIDs.isEmpty, tokenIDs.count < limit else {
         throw DecisionScoringError.contextLimitExceeded
     }
 
