@@ -120,8 +120,18 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
                 try Task.checkCancellation()
                 let prompt = question.decisionPrompt(input: request.input)
                 let labels = question.decisionLabels
-                let scored = try await modelPool.run(modelName: modelName) { runner in
-                    try await runner.scoreDecision(content: prompt, labels: labels, contextLimit: contextLimit)
+                // Tokenize before taking the exclusive model slot when the model is already loaded,
+                // so this CPU work overlaps other requests' model work. Cold loads keep the old path.
+                var prepared: PreparedDecisionPrompt?
+                if let container = await modelPool.loadedContainer(modelName: modelName) {
+                    prepared = try await prepareDecisionPrompt(
+                        container: container, content: prompt, contextLimit: contextLimit
+                    )
+                }
+                let scored = try await modelPool.run(modelName: modelName) { [prepared] runner in
+                    try await runner.scoreDecision(
+                        content: prompt, labels: labels, contextLimit: contextLimit, prepared: prepared
+                    )
                 }
                 answers[question.id] = try question.decisionAnswer(
                     logProbs: scored.labelLogProbs,

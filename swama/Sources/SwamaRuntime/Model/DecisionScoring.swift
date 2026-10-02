@@ -35,40 +35,105 @@ struct DecisionLogits: Sendable {
     let labelLogProbs: [Double]
 }
 
+// MARK: - PreparedDecisionPrompt
+
+/// A decision prompt tokenized before the exclusive model slot is acquired, so this CPU work can
+/// overlap another request's model work. It is valid only for the container whose tokenizer
+/// produced it; `scoreDecision` recomputes the prompt inside the slot for any other container.
+struct PreparedDecisionPrompt: @unchecked Sendable {
+    private weak var container: ModelContainer?
+    let content: String
+    let contextLimit: Int
+    let prompt: String
+    let promptIDs: [Int]
+
+    init(container: ModelContainer, content: String, contextLimit: Int, prompt: String, promptIDs: [Int]) {
+        self.container = container
+        self.content = content
+        self.contextLimit = contextLimit
+        self.prompt = prompt
+        self.promptIDs = promptIDs
+    }
+
+    func matches(container other: ModelContainer, content: String, contextLimit: Int) -> Bool {
+        container === other && self.content == content && self.contextLimit == contextLimit
+    }
+}
+
+/// Tokenize a decision prompt outside the exclusive model slot, with the container's own tokenizer.
+/// Throws the same errors, in the same order, as the in-slot path.
+func prepareDecisionPrompt(
+    container: ModelContainer, content: String, contextLimit: Int
+) async throws -> PreparedDecisionPrompt {
+    try Task.checkCancellation()
+    let tokenizer = await DecisionTokenizerCache.shared.tokenizer(for: container)
+    let (prompt, promptIDs) = try decisionPrompt(content: content, contextLimit: contextLimit, tokenizer: tokenizer)
+    return PreparedDecisionPrompt(
+        container: container, content: content, contextLimit: contextLimit, prompt: prompt, promptIDs: promptIDs
+    )
+}
+
+/// Render the chat prompt, check it fits, check it round-trips through the tokenizer and that the
+/// template does not leave a reasoning block open. Shared by the pre-slot and in-slot paths.
+func decisionPrompt(
+    content: String, contextLimit: Int, tokenizer: any MLXLMCommon.Tokenizer
+) throws -> (prompt: String, promptIDs: [Int]) {
+    let promptIDs: [Int]
+    do {
+        promptIDs = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": content]],
+            tools: nil,
+            additionalContext: ["enable_thinking": false]
+        )
+    }
+    catch TokenizerError.missingChatTemplate {
+        throw DecisionScoringError.missingChatTemplate
+    }
+    guard !promptIDs.isEmpty, promptIDs.count < contextLimit else {
+        throw DecisionScoringError.contextLimitExceeded
+    }
+
+    let prompt = tokenizer.decode(tokenIds: promptIDs, skipSpecialTokens: false)
+    guard tokenizer.encode(text: prompt, addSpecialTokens: false) == promptIDs else {
+        throw DecisionScoringError.lossyTemplate
+    }
+
+    // Inspect only the generated assistant prefix. User text may quote reasoning tags.
+    let closingLine = content.components(separatedBy: "\n").last ?? content
+    let generationPrefix = prompt.range(of: closingLine, options: .backwards)
+        .map { String(prompt[$0.upperBound...]) } ?? prompt
+    guard !decisionHasOpenReasoning(generationPrefix) else {
+        throw DecisionScoringError.reasoningOpen
+    }
+
+    return (prompt, promptIDs)
+}
+
 extension ModelRunner {
     /// Score the raw next-token distribution after one chat prompt. A new KV cache is allocated
     /// for every question and discarded here; the chat PromptCacheStore is never touched.
-    func scoreDecision(content: String, labels: [String], contextLimit: Int) async throws -> DecisionLogits {
+    /// `prepared` is the prompt tokenized before the slot was acquired; it is used only when it came
+    /// from this runner's container, and recomputed here otherwise.
+    func scoreDecision(
+        content: String,
+        labels: [String],
+        contextLimit: Int,
+        prepared: PreparedDecisionPrompt? = nil
+    ) async throws -> DecisionLogits {
         try Task.checkCancellation()
         let boundaryTokens = await DecisionBoundaryCache.shared.tokens(for: container)
-        let result = try await container.perform { context in
+        let result = try await container.perform { [container] context in
             let tokenizer = context.tokenizer
+            let prompt: String
             let promptIDs: [Int]
-            do {
-                promptIDs = try tokenizer.applyChatTemplate(
-                    messages: [["role": "user", "content": content]],
-                    tools: nil,
-                    additionalContext: ["enable_thinking": false]
+            if let prepared, prepared.matches(container: container, content: content, contextLimit: contextLimit) {
+                prompt = prepared.prompt
+                promptIDs = prepared.promptIDs
+            }
+            else {
+                (prompt, promptIDs) = try decisionPrompt(
+                    content: content, contextLimit: contextLimit, tokenizer: tokenizer
                 )
-            }
-            catch TokenizerError.missingChatTemplate {
-                throw DecisionScoringError.missingChatTemplate
-            }
-            guard !promptIDs.isEmpty, promptIDs.count < contextLimit else {
-                throw DecisionScoringError.contextLimitExceeded
-            }
-
-            let prompt = tokenizer.decode(tokenIds: promptIDs, skipSpecialTokens: false)
-            guard tokenizer.encode(text: prompt, addSpecialTokens: false) == promptIDs else {
-                throw DecisionScoringError.lossyTemplate
-            }
-
-            // Inspect only the generated assistant prefix. User text may quote reasoning tags.
-            let closingLine = content.components(separatedBy: "\n").last ?? content
-            let generationPrefix = prompt.range(of: closingLine, options: .backwards)
-                .map { String(prompt[$0.upperBound...]) } ?? prompt
-            guard !decisionHasOpenReasoning(generationPrefix) else {
-                throw DecisionScoringError.reasoningOpen
             }
 
             try Task.checkCancellation()
@@ -285,6 +350,34 @@ private func decisionBoundaryMetadata(_ configuration: ModelConfiguration) -> [I
 
 /// Runners are created per request; cache metadata against the shared model container.
 /// Weak ownership never keeps model weights alive after the model pool evicts them.
+/// The tokenizer of each live container, fetched once: reading it through the container waits for
+/// any in-flight `perform`, which would serialize the pre-slot work again. Weak, like the boundary cache.
+private actor DecisionTokenizerCache {
+    static let shared: DecisionTokenizerCache = .init()
+    private struct Entry {
+        weak var container: ModelContainer?
+        let tokenizer: any MLXLMCommon.Tokenizer
+    }
+
+    private var entries: [ObjectIdentifier: Entry] = [:]
+    func tokenizer(for container: ModelContainer) async -> any MLXLMCommon.Tokenizer {
+        let key = ObjectIdentifier(container)
+        if let entry = entries[key], entry.container === container {
+            return entry.tokenizer
+        }
+        let tokenizer = await container.tokenizer
+        if let entry = entries[key], entry.container === container {
+            return entry.tokenizer
+        }
+        entries = entries.filter { $0.value.container != nil }
+        if entries.count >= 8, let evictedKey = entries.keys.first {
+            entries.removeValue(forKey: evictedKey)
+        }
+        entries[key] = Entry(container: container, tokenizer: tokenizer)
+        return tokenizer
+    }
+}
+
 private actor DecisionBoundaryCache {
     static let shared: DecisionBoundaryCache = .init()
     private struct Entry {

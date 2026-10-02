@@ -53,8 +53,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/DecisionScoring.swift",
-        legacySHA256: "840d500dae972466d5575360cb75401636c4bd79a97205cd028bb26d64d172f5",
-        runtimeSHA256: "505e421fbc09ae21fa8757549175009daaba078236605f5a5b8f831dc6a07171",
+        legacySHA256: "921497956ccb9d7ee01a0dfb2a58db12ae91978320f3dc7892f91d445f694429",
+        runtimeSHA256: "3dd320b08b66548c30b8b0a6222f1fb5980228cf4c0b050f0c99f5f4f9cb4771",
         derivedSymbols: ["func scoreDecision", "struct DecisionLogits"]
     ),
     .init(
@@ -155,8 +155,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/ModelPool.swift",
-        legacySHA256: "da5f636b48e60d771371b4045830efa7005f5c3f527da47ccc7edd8809fa62f2",
-        runtimeSHA256: "03e0d4b0eaafeb40765fffef80d2ee44d4d71700a71895023925f54a36e9ee19",
+        legacySHA256: "b531e7cb50212130e06e6c0abc005cd121fb5e11f6ac99c6bade824a5dd40839",
+        runtimeSHA256: "e9eb9df67f27f420f10454d55eb062b761f548e49eeed26828b14dffc1c9a8b0",
         derivedSymbols: [
             "actor ModelPool",
             "func run<",
