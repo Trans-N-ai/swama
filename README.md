@@ -270,8 +270,8 @@ belong to `/v1/decisions`, not this route. `chat_template_kwargs` supports only 
 The official [Python SDK](https://github.com/typesafe-ai/typesafe-sdk-python) and
 [JavaScript SDK](https://github.com/typesafe-ai/typesafe-sdk-js) can call this endpoint with a local base URL and model.
 An SDK API key placeholder is needed by their constructors; Swama does not use it for authentication.
-Model discovery is currently the existing OpenAI-shaped `/v1/models`; use an explicit local model name instead of
-`client.models.list()` until a discovery compatibility policy is introduced.
+Model discovery keeps the OpenAI-shaped `/v1/models`. Pass an explicit local model name to TypeSafe SDK calls;
+its `client.models.list()` expects a different catalog format.
 
 ```python
 from typesafe_sdk import Choice, Noul, Score, TypeSafeClient
