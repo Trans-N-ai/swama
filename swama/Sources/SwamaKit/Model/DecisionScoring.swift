@@ -13,16 +13,31 @@ package enum DecisionScoringError: Error, LocalizedError {
     case invalidLabel(String)
     case contextLimitExceeded
     case invalidLogits
+    case pairLabelsUnavailable
+    case tooManyOptions(requested: Int, available: Int)
 
     package var errorDescription: String? {
         switch self {
         case .missingChatTemplate: "Decision scoring requires a chat template."
+
         case .lossyTemplate: "The rendered chat prompt does not round-trip through this tokenizer."
+
         case .reasoningOpen: "The chat template leaves a reasoning block open at the answer position."
+
         case .reasoningPredicted: "The model predicts a reasoning opener instead of a direct answer."
+
         case let .invalidLabel(label): "The answer label '\(label)' is not one distinct token after the chat prompt."
+
         case .contextLimitExceeded: "The decision prompt exceeds the configured context limit."
+
         case .invalidLogits: "The model returned invalid next-token logits."
+
+        case .pairLabelsUnavailable:
+            "More than 26 options per choice needs an added token before the answer position, " +
+                "which this tokenizer and chat template do not provide."
+
+        case let .tooManyOptions(requested, available):
+            "This model supports at most \(available) options per choice; the question has \(requested)."
         }
     }
 }
@@ -71,6 +86,55 @@ package func prepareDecisionPrompt(
     return PreparedDecisionPrompt(
         container: container, content: content, contextLimit: contextLimit, prompt: prompt, promptIDs: promptIDs
     )
+}
+
+/// Two-letter answer labels usable after this container's chat prompt, computed once per cached container
+/// outside the exclusive model slot. `nil` when this tokenizer and chat template cannot provide them.
+package func cachedDecisionPairLabels(container: ModelContainer) async throws -> [String]? {
+    try Task.checkCancellation()
+    let tokenizer = await DecisionTokenizerCache.shared.tokenizer(for: container)
+    let boundaryTokens = await DecisionBoundaryCache.shared.tokens(for: container)
+    return try await DecisionPairLabelCache.shared.labels(for: container) {
+        let probes = try decisionPairLabelProbes {
+            try decisionPrompt(content: $0, contextLimit: .max, tokenizer: tokenizer)
+        }
+        guard let probes else {
+            return nil
+        }
+
+        return decisionPairLabels(probes: probes, boundaryTokens: boundaryTokens) {
+            tokenizer.encode(text: $0, addSpecialTokens: false)
+        }
+    }
+}
+
+/// The "x" and "y" probe prompts for pair-label discovery. A chat template that cannot give a direct
+/// answer position (missing, lossy, or leaving reasoning open) cannot provide the labels: `nil`.
+/// Every other error, such as cancellation, keeps its own category.
+package func decisionPairLabelProbes(
+    render: (String) throws -> (prompt: String, promptIDs: [Int])
+) throws -> [(prompt: String, promptIDs: [Int])]? {
+    do {
+        return try ["x", "y"].map(render)
+    }
+    catch DecisionScoringError.missingChatTemplate, DecisionScoringError.lossyTemplate,
+        DecisionScoringError.reasoningOpen
+    {
+        return nil
+    }
+}
+
+/// The labels for a choice with more than 26 options: the first `count` usable pair labels.
+/// Refuses rather than truncating.
+package func decisionPairLabelPrefix(count: Int, usable: [String]?) throws -> [String] {
+    guard let usable else {
+        throw DecisionScoringError.pairLabelsUnavailable
+    }
+    guard count <= usable.count else {
+        throw DecisionScoringError.tooManyOptions(requested: count, available: usable.count)
+    }
+
+    return Array(usable.prefix(count))
 }
 
 /// Render the chat prompt, check it fits, check it round-trips through the tokenizer and that the
@@ -219,6 +283,11 @@ package extension ModelRunner {
         try Task.checkCancellation()
         return result
     }
+
+    /// The pair labels of this runner's container, for a model that was not loaded before the slot.
+    func decisionPairLabels() async throws -> [String]? {
+        try await cachedDecisionPairLabels(container: container)
+    }
 }
 
 /// Check the actual answer boundary, including prefix stability and distinct label IDs.
@@ -296,6 +365,45 @@ package func decisionLabelContext(
     }
 
     return (suffix, suffixIDs)
+}
+
+/// SGLang `_pair_labels`, pinned to eb9c9ee9: candidates AA to ZZ in order, each kept only when it adds
+/// exactly one token, distinct from those already kept, after the text that follows the last added
+/// token. That text must not depend on the message, so every probe prompt must take the added-token
+/// shortcut and end with the same text; otherwise `nil`. Each final prompt is still checked as a whole.
+package func decisionPairLabels(
+    probes: [(prompt: String, promptIDs: [Int])], boundaryTokens: [Int: String], encode: (String) -> [Int]
+) -> [String]? {
+    let contexts = probes.map {
+        decisionLabelContext(
+            prompt: $0.prompt, promptIDs: $0.promptIDs, labels: ["AA"], boundaryTokens: boundaryTokens, encode: encode
+        )
+    }
+    guard let context = contexts.first,
+          zip(contexts, probes).allSatisfy({ $0.tokenIDs.count < $1.promptIDs.count }),
+          contexts.allSatisfy({ $0.text == context.text })
+    else {
+        return nil
+    }
+
+    let letters = (UInt8(ascii: "A") ... UInt8(ascii: "Z")).map { String(UnicodeScalar($0)) }
+    var labels = [String]()
+    var labelIDs = Set<Int>()
+    for first in letters {
+        for second in letters {
+            let encoded = encode(context.text + first + second)
+            guard encoded.count == context.tokenIDs.count + 1,
+                  encoded.dropLast().elementsEqual(context.tokenIDs),
+                  let last = encoded.last,
+                  labelIDs.insert(last).inserted
+            else {
+                continue
+            }
+
+            labels.append(first + second)
+        }
+    }
+    return labels
 }
 
 /// Added tokens are split off before NFC and the Split/ByteLevel pre-tokenizers run.
@@ -402,5 +510,33 @@ private actor DecisionBoundaryCache {
         }
         entries[key] = Entry(container: container, tokens: tokens)
         return tokens
+    }
+}
+
+/// The pair labels of each live container, computed once while the container is in the cache;
+/// `nil` results are kept too. Weak and bounded to 8 entries, like the boundary cache: an evicted
+/// container is computed again, with the same result.
+package actor DecisionPairLabelCache {
+    static let shared: DecisionPairLabelCache = .init()
+    private struct Entry {
+        weak var container: ModelContainer?
+        let labels: [String]?
+    }
+
+    private var entries: [ObjectIdentifier: Entry] = [:]
+    func labels(
+        for container: ModelContainer, compute: @Sendable () throws -> [String]?
+    ) throws -> [String]? {
+        let key = ObjectIdentifier(container)
+        if let entry = entries[key], entry.container === container {
+            return entry.labels
+        }
+        let labels = try compute()
+        entries = entries.filter { $0.value.container != nil }
+        if entries.count >= 8, let evictedKey = entries.keys.first {
+            entries.removeValue(forKey: evictedKey)
+        }
+        entries[key] = Entry(container: container, labels: labels)
+        return labels
     }
 }

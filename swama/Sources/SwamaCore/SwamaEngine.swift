@@ -196,15 +196,20 @@ public actor SwamaEngine {
             switch question {
             case let .choice(_, text, options):
                 let names = options.map(\.name)
+                // Two-letter labels (AA to ZZ) lift the A-to-Z limit only for callers that opt in.
+                let maximumOptions = request.allowsPairLabels ? 26 * 26 : 26
                 guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      (2 ... 26).contains(options.count),
+                      (2 ... maximumOptions).contains(options.count),
                       names.allSatisfy({ Self.validOptionName($0) }),
                       Set(names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).folding(
                           options: .caseInsensitive,
                           locale: nil
                       ) }).count == names.count
                 else {
-                    throw invalidRequest("Choice questions require 2–26 distinct, valid options.", model: request.model)
+                    throw invalidRequest(
+                        "Choice questions require 2–\(maximumOptions) distinct, valid options.",
+                        model: request.model
+                    )
                 }
 
             case let .score(_, text, levels):

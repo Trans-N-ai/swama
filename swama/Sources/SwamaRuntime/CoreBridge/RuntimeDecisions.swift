@@ -43,8 +43,10 @@ package enum RuntimeDecisionQuestion: Sendable {
         }
     }
 
+    /// Choices with more than 26 options have no fixed labels; they take the model's pair labels.
     var labels: [String] {
         switch self {
+        case let .choice(_, _, options) where options.count > 26: []
         case let .choice(_, _, options):
             options.indices.map { String(UnicodeScalar(65 + $0)!) }
         case let .score(_, _, levels): levels.indices.map(String.init)
@@ -53,7 +55,8 @@ package enum RuntimeDecisionQuestion: Sendable {
     }
 
     /// SGLang prompt format 1. Keep this versioned wording separate from HTTP JSON parsing.
-    func content(input: String) -> String {
+    func content(input: String, labels: [String]? = nil) -> String {
+        let labels = labels ?? self.labels
         var lines = [input, ""]
         switch self {
         case let .choice(_, question, options):

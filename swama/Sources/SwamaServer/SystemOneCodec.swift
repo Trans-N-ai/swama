@@ -72,9 +72,11 @@ struct SystemOneRequest: Sendable {
                 guard criteria.count >= 2 else {
                     throw invalid("a choice needs at least two options on this backend.")
                 }
-                guard criteria.count <= 26
+
+                // More than 26 options take the model's two-letter labels, AA to ZZ.
+                guard criteria.count <= 26 * 26
                 else {
-                    throw invalid("This backend supports at most 26 options per choice.")
+                    throw invalid("This backend supports at most 676 options per choice.")
                 }
 
                 let options = try criteria.map {
@@ -106,7 +108,11 @@ struct SystemOneRequest: Sendable {
         }
         return .init(
             // SGLang accepts any state, including an empty one; /v1/decisions still requires input.
-            decision: .init(model: .init(model), input: state.text, questions: decisions, allowsBlankInput: true),
+            // More than 26 options take the model's two-letter labels.
+            decision: .init(
+                model: .init(model), input: state.text, questions: decisions,
+                allowsBlankInput: true, allowsPairLabels: true
+            ),
             questions: metadata
         )
     }

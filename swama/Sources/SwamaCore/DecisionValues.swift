@@ -39,7 +39,8 @@ public struct DecisionRequest: Hashable, Sendable {
         questions: [DecisionQuestion],
         temperature: Double = 1,
         returnPromptTokenIDs: Bool = false,
-        allowsBlankInput: Bool = false
+        allowsBlankInput: Bool = false,
+        allowsPairLabels: Bool = false
     ) {
         self.model = model
         self.input = input
@@ -47,6 +48,7 @@ public struct DecisionRequest: Hashable, Sendable {
         self.temperature = temperature
         self.returnPromptTokenIDs = returnPromptTokenIDs
         self.allowsBlankInput = allowsBlankInput
+        self.allowsPairLabels = allowsPairLabels
     }
 
     public let model: ModelID
@@ -56,6 +58,9 @@ public struct DecisionRequest: Hashable, Sendable {
     public let returnPromptTokenIDs: Bool
     /// Allows a blank input, rendered as is. Off by default, so library callers keep requiring input.
     public let allowsBlankInput: Bool
+    /// Allows choices with more than 26 options, labeled with the model's two-letter labels.
+    /// Off by default, so library callers keep the 2–26 option limit.
+    public let allowsPairLabels: Bool
 }
 
 // MARK: - DecisionKind

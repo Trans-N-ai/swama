@@ -118,8 +118,16 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
         do {
             for question in request.questions {
                 try Task.checkCancellation()
-                let prompt = question.decisionPrompt(input: request.input)
-                let labels = question.decisionLabels
+                let labels: [String] =
+                    if case let .choice(_, _, options) = question, options.count > 26 {
+                        try await decisionPairLabelPrefix(
+                            count: options.count, usable: pairLabels(modelName: modelName)
+                        )
+                    }
+                    else {
+                        question.decisionLabels
+                    }
+                let prompt = question.decisionPrompt(input: request.input, labels: labels)
                 // Tokenize before taking the exclusive model slot when the model is already loaded,
                 // so this CPU work overlaps other requests' model work. Cold loads keep the old path.
                 var prepared: PreparedDecisionPrompt?
@@ -216,6 +224,17 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
     }
 
     private let modelPool: ModelPool
+
+    /// The model's two-letter labels, from the loaded container when there is one. A cold model is
+    /// loaded in the slot, as the scoring call that follows would do.
+    private func pairLabels(modelName: String) async throws -> [String]? {
+        if let container = await modelPool.loadedContainer(modelName: modelName) {
+            return try await cachedDecisionPairLabels(container: container)
+        }
+        return try await modelPool.run(modelName: modelName) { runner in
+            try await runner.decisionPairLabels()
+        }
+    }
 
     private func makeUserInput(
         _ messages: [SwamaCore.Message],
