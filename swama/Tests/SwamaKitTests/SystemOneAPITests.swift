@@ -153,4 +153,37 @@ struct SystemOneAPITests {
             with: #""instructions":"True?","typo":1"#
         )) }
     }
+
+    @Test func blankStateIsRenderedAsIsLikeSGLang() throws {
+        let questions = #""questions":{"n":{"type":"noul","instructions":"Is it?"},"#
+            + #""c":{"type":"choice","instructions":"Which?","criteria":{"a":null,"b":"second"}},"#
+            + #""s":{"type":"score","instructions":"How much?","criteria":["low","high"]}}"#
+        let request = try parse(#"{"model":"m","state":"","# + questions + "}")
+        #expect(request.decision.input == "")
+        #expect(request.decision.allowsBlankInput)
+        // SGLang: "\n".join([render_text(""), "", *lines]).
+        #expect(request.decision.questions.map { $0.decisionPrompt(input: request.decision.input) } == [
+            "\n\nIs the following true? Is it?\nAnswer with yes or no only.",
+            "\n\nQuestion: Which?\nA: a\nB: b - second\nAnswer with the letter of one option only.",
+            "\n\nQuestion: How much?\n0: low\n1: high\nAnswer with the number of one level only."
+        ])
+        for (state, input) in [(#"" \n ""#, " \n "), ("{}", "{}"), ("[]", "[]")] {
+            #expect(try parse(#"{"model":"m","state":"# + state + "," + questions + "}").decision.input == input)
+        }
+        #expect(throws: DecisionWireError.self) { try parse(#"{"model":"m","state":null,"# + questions + "}") }
+    }
+
+    @Test func decisionsStillRefusesBlankInput() throws {
+        for input in [#""""#, #"" ""#] {
+            let body = #"{"model":"m","input":"# + input
+                + #","questions":[{"id":"q","type":"yes_no","question":"Is it?"}]}"#
+            do {
+                _ = try DecisionsHandler.parse(JSONDecoder().decode([String: JSONValue].self, from: Data(body.utf8)))
+                Issue.record("/v1/decisions accepted a blank input")
+            }
+            catch {
+                #expect(error.localizedDescription == "input must not be blank.")
+            }
+        }
+    }
 }

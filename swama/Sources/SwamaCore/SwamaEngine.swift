@@ -173,7 +173,7 @@ public actor SwamaEngine {
 
     private func validate(_ request: DecisionRequest) throws {
         try validate(request.model)
-        guard !request.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        guard request.allowsBlankInput || !request.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !request.questions.isEmpty,
               request.temperature.isFinite,
               request.temperature > 0
