@@ -130,15 +130,19 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
                 let prompt = question.decisionPrompt(input: request.input, labels: labels)
                 // Tokenize before taking the exclusive model slot when the model is already loaded,
                 // so this CPU work overlaps other requests' model work. Cold loads keep the old path.
+                // Prepared prompts are text-only; image decisions are prepared inside the slot.
                 var prepared: PreparedDecisionPrompt?
-                if let container = await modelPool.loadedContainer(modelName: modelName) {
+                if request.images.isEmpty, let container = await modelPool.loadedContainer(modelName: modelName) {
                     prepared = try await prepareDecisionPrompt(
                         container: container, content: prompt, contextLimit: contextLimit
                     )
                 }
+                let images = request.images.map(\.data)
+                let processing = decisionImageProcessing(request, modelName: modelName)
                 let scored = try await modelPool.run(modelName: modelName) { [prepared] runner in
                     try await runner.scoreDecision(
-                        content: prompt, labels: labels, contextLimit: contextLimit, prepared: prepared
+                        content: prompt, labels: labels, contextLimit: contextLimit, prepared: prepared,
+                        images: images, imageProcessing: processing
                     )
                 }
                 answers[question.id] = try question.decisionAnswer(
@@ -164,6 +168,7 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
                 switch error {
                 case .contextLimitExceeded: .contextLimitExceeded
                 case .invalidLogits: .backendFailure
+                case .invalidImage: .invalidImage
                 default: .invalidRequest
                 }
             throw SwamaError(code: code, message: error.localizedDescription, model: request.model)
@@ -236,7 +241,8 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
         }
     }
 
-    private func makeUserInput(
+    /// Internal for tests: task #81 compares decision image prompts with the real chat path.
+    func makeUserInput(
         _ messages: [SwamaCore.Message],
         tools: [ToolDefinition],
         modelName: String
@@ -348,6 +354,20 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
             tools: !embedding,
             embeddings: embedding
         )
+    }
+
+    /// The image resize policy for a decision: the request's own maximum when given, otherwise the
+    /// same policy the chat path applies to the same model, so a decision sees what chat would see.
+    private func decisionImageProcessing(_ request: DecisionRequest, modelName: String) -> MLXLMCommon.UserInput
+        .Processing
+    {
+        if let size = request.imageMaxDimension {
+            return .init(resize: .init(width: size, height: size))
+        }
+        if !request.images.isEmpty, shouldApplyQwen35MultimodalSafety(modelName: modelName) {
+            return .init(resize: .init(width: 1344, height: 1344))
+        }
+        return .init()
     }
 
     private func shouldApplyQwen35MultimodalSafety(modelName: String) -> Bool {

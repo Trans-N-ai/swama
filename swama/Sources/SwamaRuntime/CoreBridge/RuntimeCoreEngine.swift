@@ -469,15 +469,21 @@ package actor RuntimeCoreEngine {
                 let content = question.content(input: request.input, labels: labels)
                 // Tokenize before taking the exclusive model slot when the model is already loaded,
                 // so this CPU work overlaps other requests' model work. Cold loads keep the old path.
+                // Prepared prompts are text-only; image decisions are prepared inside the slot.
                 var prepared: PreparedDecisionPrompt?
-                if let container = await pool.loadedContainer(modelName: request.model) {
+                if request.images.isEmpty, let container = await pool.loadedContainer(modelName: request.model) {
                     prepared = try await prepareDecisionPrompt(
                         container: container, content: content, contextLimit: limit
                     )
                 }
+                let images = request.images
+                let processing = MLXLMCommon.UserInput.Processing(
+                    resize: request.imageMaxDimension.map { CGSize(width: $0, height: $0) }
+                )
                 let scored = try await pool.run(modelName: request.model) { [prepared] runner in
                     try await runner.scoreDecision(
-                        content: content, labels: labels, contextLimit: limit, prepared: prepared
+                        content: content, labels: labels, contextLimit: limit, prepared: prepared,
+                        images: images, imageProcessing: processing
                     )
                 }
                 let answer = try decisionAnswer(
@@ -501,6 +507,7 @@ package actor RuntimeCoreEngine {
                 switch error {
                 case .contextLimitExceeded: .contextLimitExceeded
                 case .invalidLogits: .backendFailure
+                case .invalidImage: .invalidImage
                 default: .invalidRequest
                 }
             throw RuntimeCoreError(code: code, model: request.model, message: error.localizedDescription)
@@ -652,7 +659,8 @@ package actor RuntimeCoreEngine {
         }
     }
 
-    private nonisolated func makeUserInput(
+    /// Internal for tests: task #81 compares decision image prompts with the real chat path.
+    nonisolated func makeUserInput(
         _ messages: [RuntimeMessage],
         tools: [RuntimeToolDefinition]
     ) throws -> MLXLMCommon.UserInput {

@@ -173,15 +173,29 @@ public actor SwamaEngine {
 
     private func validate(_ request: DecisionRequest) throws {
         try validate(request.model)
-        guard request.allowsBlankInput || !request.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !request.questions.isEmpty,
-              request.temperature.isFinite,
-              request.temperature > 0
+        // Images are decision content of their own, so an image request may carry no text.
+        guard request.allowsBlankInput || !request.images.isEmpty
+            || !request.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !request.questions.isEmpty,
+            request.temperature.isFinite,
+            request.temperature > 0
         else {
             throw invalidRequest(
                 "Decision input, questions, and positive finite temperature are required.",
                 model: request.model
             )
+        }
+        guard request.images.count <= DecisionRequest.maximumImageCount else {
+            throw invalidRequest(
+                "A decision accepts at most \(DecisionRequest.maximumImageCount) images.", model: request.model
+            )
+        }
+        guard request.images.allSatisfy({ !$0.data.isEmpty }) else {
+            throw SwamaError(code: .invalidImage, message: "The image data is invalid.", model: request.model)
+        }
+
+        if let size = request.imageMaxDimension, size < 28 || size > 4096 {
+            throw invalidRequest("imageMaxDimension must be between 28 and 4096 pixels.", model: request.model)
         }
 
         var ids = Set<String>()
@@ -405,7 +419,9 @@ private extension DecisionRequest {
             input: input,
             questions: questions.map(\.runtimeValue),
             temperature: temperature,
-            returnPromptTokenIDs: returnPromptTokenIDs
+            returnPromptTokenIDs: returnPromptTokenIDs,
+            images: images.map(\.data),
+            imageMaxDimension: imageMaxDimension
         )
     }
 }

@@ -195,7 +195,7 @@ struct DecisionAPITests {
         for (path, expected) in [
             (
                 "Sources/SwamaRuntime/CoreBridge/RuntimeDecisions.swift",
-                "d2a2fd6fb48f60c928347617fed09c24ce0afe58c3e3a8a73401b80994650938"
+                "20d1586a3b5a4df97421fa34d22e0a18ae36e242d6d742170a61056f9ecdcf44"
             ),
             (
                 "Sources/SwamaServer/DecisionCalculation.swift",

@@ -100,19 +100,26 @@ package struct RuntimeDecisionRequest: Sendable {
     package let questions: [RuntimeDecisionQuestion]
     package let temperature: Double
     package let returnPromptTokenIDs: Bool
+    /// Embedded image data placed before the input; empty for text decisions.
+    package let images: [Data]
+    package let imageMaxDimension: Int?
 
     package init(
         model: String,
         input: String,
         questions: [RuntimeDecisionQuestion],
         temperature: Double,
-        returnPromptTokenIDs: Bool
+        returnPromptTokenIDs: Bool,
+        images: [Data] = [],
+        imageMaxDimension: Int? = nil
     ) {
         self.model = model
         self.input = input
         self.questions = questions
         self.temperature = temperature
         self.returnPromptTokenIDs = returnPromptTokenIDs
+        self.images = images
+        self.imageMaxDimension = imageMaxDimension
     }
 }
 
