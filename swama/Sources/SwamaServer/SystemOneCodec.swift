@@ -1,5 +1,8 @@
 import Foundation
+import ImageIO
 import SwamaCore
+
+// MARK: - SystemOneRequest
 
 struct SystemOneRequest: Sendable {
     struct Question: Sendable {
@@ -11,6 +14,9 @@ struct SystemOneRequest: Sendable {
 
     let decision: DecisionRequest
     let questions: [Question]
+
+    /// The largest request body this route reads (Cloudflare Clef's limit).
+    static let maximumBodyBytes = 13 * 1024 * 1024
 
     static func parse(_ data: Data) throws -> SystemOneRequest {
         let root = try SystemOneJSON.parse(data)
@@ -33,6 +39,11 @@ struct SystemOneRequest: Sendable {
                 throw invalid("\(name) is not part of this API; use /v1/decisions for it.")
             }
         }
+        // Clef's video extension is not served here; refusing it beats answering without it.
+        if let video = root.member("video"), video != .null {
+            throw invalid("video is not supported on this backend; send images instead.")
+        }
+        let images = try SystemOneImages.parse(root.member("images"))
         if let kwargs = root.member("chat_template_kwargs") {
             try allow(kwargs, ["enable_thinking"], field: "chat_template_kwargs")
             if let value = kwargs.member("enable_thinking"), value != .bool(false) {
@@ -111,7 +122,7 @@ struct SystemOneRequest: Sendable {
             // More than 26 options take the model's two-letter labels.
             decision: .init(
                 model: .init(model), input: state.text, questions: decisions,
-                allowsBlankInput: true, allowsPairLabels: true
+                allowsBlankInput: true, allowsPairLabels: true, images: images
             ),
             questions: metadata
         )
@@ -232,4 +243,135 @@ struct SystemOneRequest: Sendable {
 
     private static func invalid(_ message: String) -> DecisionWireError { .invalid(message) }
     private func backendFailure(_ message: String) -> SwamaError { .init(code: .backendFailure, message: message) }
+}
+
+// MARK: - SystemOneImages
+
+/// Cloudflare Clef's System One extension: an optional `images` array placed before the state.
+/// Each item is a base64 data URL string or `{"content_type", "base64"}`; remote URLs are refused.
+enum SystemOneImages {
+    static let maximumCount = 4
+    static let maximumImageBytes = 4 * 1024 * 1024
+    static let maximumTotalBytes = 8 * 1024 * 1024
+    static let maximumPixels = 16_000_000
+    static let mediaTypes: Set<String> = ["image/png", "image/jpeg", "image/webp"]
+
+    static func parse(_ value: SystemOneJSON?) throws -> [DecisionImage] {
+        guard let value, value != .null else {
+            return []
+        }
+        guard case let .array(items) = value else {
+            throw DecisionWireError.invalid("images must be an array.")
+        }
+        guard items.count <= maximumCount else {
+            throw DecisionWireError.invalid("A request accepts at most \(maximumCount) images.")
+        }
+
+        var images = [DecisionImage](), total = 0
+        for (index, item) in items.enumerated() {
+            let (mediaType, base64) = try mediaTypeAndBase64(item, index: index)
+            guard let data = Data(base64Encoded: base64), !data.isEmpty else {
+                throw DecisionWireError.invalid("images[\(index)] is not valid base64.")
+            }
+
+            // Judge the format by its bytes; a declaration alone is not enough.
+            guard let actual = sniffedMediaType(data) else {
+                throw DecisionWireError.invalid("images[\(index)] must be PNG, JPEG, or WebP data.")
+            }
+            guard actual == mediaType else {
+                throw DecisionWireError.invalid("images[\(index)] is declared \(mediaType) but contains \(actual).")
+            }
+            guard data.count <= maximumImageBytes else {
+                throw DecisionWireError.invalid("images[\(index)] is larger than 4 MiB.")
+            }
+
+            total += data.count
+            guard total <= maximumTotalBytes else {
+                throw DecisionWireError.invalid("images exceed 8 MiB in total.")
+            }
+            guard let pixels = pixelCount(data) else {
+                throw DecisionWireError.invalid("images[\(index)] is not a decodable image.")
+            }
+            guard pixels <= maximumPixels else {
+                throw DecisionWireError.invalid("images[\(index)] is larger than 16 megapixels.")
+            }
+
+            images.append(.init(data: data, mediaType: mediaType))
+        }
+        return images
+    }
+
+    private static func mediaTypeAndBase64(_ item: SystemOneJSON, index: Int) throws -> (String, String) {
+        switch item {
+        case let .string(text):
+            guard text.lowercased().hasPrefix("data:") else {
+                throw DecisionWireError.invalid(
+                    "images[\(index)] must be a base64 data URL; remote URLs are not accepted."
+                )
+            }
+            guard let comma = text.firstIndex(of: ","),
+                  let header = Optional(text[text.index(text.startIndex, offsetBy: 5) ..< comma]),
+                  header.lowercased().hasSuffix(";base64")
+            else {
+                throw DecisionWireError.invalid("images[\(index)] must be a base64 data URL.")
+            }
+
+            let mediaType = String(header.dropLast(";base64".count)).lowercased()
+            guard mediaTypes.contains(mediaType) else {
+                throw DecisionWireError.invalid("images[\(index)] must be PNG, JPEG, or WebP.")
+            }
+
+            return (mediaType, String(text[text.index(after: comma)...]))
+
+        case let .object(members):
+            if let unknown = members.first(where: { !["content_type", "base64"].contains($0.name) }) {
+                throw DecisionWireError.invalid("Unknown images[\(index)] field '\(unknown.name)'.")
+            }
+            guard case let .string(contentType)? = item.member("content_type"),
+                  case let .string(base64)? = item.member("base64")
+            else {
+                throw DecisionWireError.invalid("images[\(index)] needs string content_type and base64 fields.")
+            }
+
+            let mediaType = contentType.lowercased()
+            guard mediaTypes.contains(mediaType) else {
+                throw DecisionWireError.invalid("images[\(index)] must be PNG, JPEG, or WebP.")
+            }
+
+            return (mediaType, base64)
+
+        default:
+            throw DecisionWireError.invalid("images[\(index)] must be a data URL string or an object.")
+        }
+    }
+
+    /// The media type from the file signature: PNG, JPEG, or RIFF/WEBP; nil for anything else.
+    static func sniffedMediaType(_ data: Data) -> String? {
+        let bytes = [UInt8](data.prefix(12))
+        if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+            return "image/png"
+        }
+        if bytes.starts(with: [0xFF, 0xD8, 0xFF]) {
+            return "image/jpeg"
+        }
+        if bytes.count == 12, bytes.starts(with: Array("RIFF".utf8)), Array(bytes[8 ..< 12]) == Array("WEBP".utf8) {
+            return "image/webp"
+        }
+        return nil
+    }
+
+    /// Width times height from the image header, without decoding pixels; nil if it is not an image.
+    static func pixelCount(_ data: Data) -> Int? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0
+        else {
+            return nil
+        }
+
+        return width * height
+    }
 }
