@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import MLX
 import SwamaCore
 @testable import SwamaKit
 @testable import SwamaRuntime
@@ -242,17 +243,62 @@ struct DecisionAPITests {
         #expect(binary.confidence == nil)
     }
 
-    @Test func rejectsPredictedReasoningWithoutRejectingLowLabelMassAlone() {
-        for (logits, ids, expected) in [
-            ([10.0, -30, -32], [0], true),
-            ([10.0, 10, -32], [1], true),
-            ([10.0, -30, -32], [1], false),
-            ([10.0, -30, -32], [], false),
-            ([10.0, -30, -32], [-1, 3], false)
-        ] {
-            #expect(SwamaKit.decisionPredictsReasoning(logits: logits, reasoningTokenIDs: ids) == expected)
-            #expect(SwamaRuntime.decisionPredictsReasoning(logits: logits, reasoningTokenIDs: ids) == expected)
+    @Test func labelLogProbsMatchADoubleReferenceAndRejectPredictedReasoning() throws {
+        // Same rules the CPU path used: NaN or +inf anywhere is invalid, -inf is fine, a
+        // reasoning opener at the maximum (including a tie) is rejected, and an opener id outside
+        // the vocabulary is ignored.
+        var generator = SplitMix(seed: 20_261_002)
+        let random = (0 ..< 4096).map { _ in Float(generator.next() % 4000) / 100 - 20 }
+        let cases: [(logits: [Float], labels: [Int], openers: [Int], expected: Expectation)] = [
+            (random, [7, 70, 700], [], .valid),
+            (random, [7, 70, 700], [-1, 9999], .valid),
+            ([10, -30, -32], [1, 2], [0], .reasoning),
+            ([10, 10, -32], [0, 2], [1], .reasoning),
+            ([10, -30, -32], [0, 2], [1], .valid),
+            ([10, -.infinity, -32], [0, 2], [], .valid),
+            ([10, .nan, -32], [0, 2], [], .invalid),
+            ([10, .infinity, -32], [0, 2], [], .invalid),
+            ([10, -30, -32], [0, 3], [], .invalid)
+        ]
+        for (logits, labels, openers, expected) in cases {
+            let reference = Self.doubleReference(logits: logits, labels: labels, openers: openers)
+            for compute in [SwamaKit.decisionLabelLogProbs, SwamaRuntime.decisionLabelLogProbs] {
+                let outcome: Expectation
+                var values: [Double] = []
+                do {
+                    values = try compute(MLXArray(logits), labels, openers)
+                    outcome = .valid
+                }
+                catch SwamaKit.DecisionScoringError.reasoningPredicted,
+                    SwamaRuntime.DecisionScoringError.reasoningPredicted
+                {
+                    outcome = .reasoning
+                }
+                catch SwamaKit.DecisionScoringError.invalidLogits, SwamaRuntime.DecisionScoringError.invalidLogits {
+                    outcome = .invalid
+                }
+                #expect(outcome == expected, "\(labels) \(openers)")
+                if expected == .valid, let reference {
+                    for (got, want) in zip(values, reference) {
+                        #expect(abs(got - want) < 1e-5, "\(got) vs \(want)")
+                    }
+                }
+            }
         }
+    }
+
+    private enum Expectation { case valid, invalid, reasoning }
+
+    /// The pre-change CPU computation, kept here as the reference.
+    private static func doubleReference(logits: [Float], labels: [Int], openers _: [Int]) -> [Double]? {
+        let values = logits.map(Double.init)
+        guard let maximum = values.max(), maximum.isFinite else {
+            return nil
+        }
+
+        let total = values.reduce(0) { $0 + exp($1 - maximum) }
+        let normalizer = maximum + log(total)
+        return labels.map { values.indices.contains($0) ? values[$0] - normalizer : .nan }
     }
 
     @Test func rejectsOpenReasoningPrefixes() {
@@ -415,4 +461,22 @@ private actor DecisionTestBackend: SwamaEngineBackend {
     func remove(_: ModelID) async throws {}
     func clearCache(for _: ModelID) async {}
     func clearCache() async {}
+}
+
+// MARK: - SplitMix
+
+/// Small deterministic generator for synthetic logits.
+private struct SplitMix {
+    var state: UInt64
+    init(seed: UInt64) {
+        state = seed
+    }
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
 }

@@ -196,7 +196,8 @@ package extension ModelRunner {
     ) async throws -> DecisionLogits {
         try Task.checkCancellation()
         let boundaryTokens = await DecisionBoundaryCache.shared.tokens(for: container)
-        let result = try await container.perform { [container] context in
+        let knownOpeners = await DecisionBoundaryCache.shared.reasoningOpeners(for: container)
+        let (result, openers) = try await container.perform { [container] context in
             let tokenizer = context.tokenizer
             let prompt: String
             let promptIDs: [Int]
@@ -265,46 +266,17 @@ package extension ModelRunner {
                 eval(last)
                 throw error
             }
-            eval(last)
-            let values = last.asArray(Float.self).map(Double.init)
-            guard !values.isEmpty, values.allSatisfy({ !$0.isNaN && $0 != .infinity }),
-                  labelIDs.allSatisfy({ values.indices.contains($0) })
-            else {
-                throw DecisionScoringError.invalidLogits
-            }
-
-            let maximum = values.max()!
-            guard maximum.isFinite else {
-                throw DecisionScoringError.invalidLogits
-            }
-
-            // A clean template prefix does not prove the model obeyed enable_thinking=false.
-            // Only recognize exact single-token openers, never a tokenizer's unknown-token fallback.
-            let reasoningIDs = ["<think>", "[THINK]"].compactMap { marker -> Int? in
-                let encoded = tokenizer.encode(text: marker, addSpecialTokens: false)
-                guard encoded.count == 1,
-                      tokenizer.decode(tokenIds: encoded, skipSpecialTokens: false) == marker
-                else {
-                    return nil
-                }
-
-                return encoded[0]
-            }
-            guard !decisionPredictsReasoning(logits: values, reasoningTokenIDs: reasoningIDs) else {
-                throw DecisionScoringError.reasoningPredicted
-            }
-
-            let total = values.reduce(0) { $0 + exp($1 - maximum) }
-            let logNormalizer = maximum + log(total)
-            guard logNormalizer.isFinite else {
-                throw DecisionScoringError.invalidLogits
-            }
-
-            return DecisionLogits(
-                promptTokenIDs: scoredIDs,
-                labelTokenIDs: labelIDs,
-                labelLogProbs: labelIDs.map { values[$0] - logNormalizer }
+            let reasoningIDs = knownOpeners ?? decisionReasoningOpenerIDs(tokenizer)
+            let labelLogProbs = try decisionLabelLogProbs(
+                finalLogits: last, labelIDs: labelIDs, reasoningOpenerIDs: reasoningIDs
             )
+            return (
+                DecisionLogits(promptTokenIDs: scoredIDs, labelTokenIDs: labelIDs, labelLogProbs: labelLogProbs),
+                reasoningIDs
+            )
+        }
+        if knownOpeners == nil {
+            await DecisionBoundaryCache.shared.storeReasoningOpeners(openers, for: container)
         }
         try Task.checkCancellation()
         return result
@@ -403,12 +375,61 @@ package func decisionHasOpenReasoning(_ prefix: String) -> Bool {
 
 /// Reject a recognized reasoning opener tied for the vocabulary's highest logit.
 /// Low label mass by itself is not a proof of reasoning or an application accuracy threshold.
-package func decisionPredictsReasoning(logits: [Double], reasoningTokenIDs: [Int]) -> Bool {
-    guard let maximum = logits.max(), maximum.isFinite else {
-        return false
+/// Token ids of the single-token reasoning openers this tokenizer has. A clean template prefix
+/// does not prove the model obeyed enable_thinking=false, so a decision whose most likely next
+/// token is one of these is rejected. Only exact single-token openers count, never a tokenizer's
+/// unknown-token fallback.
+func decisionReasoningOpenerIDs(_ tokenizer: any MLXLMCommon.Tokenizer) -> [Int] {
+    ["<think>", "[THINK]"].compactMap { marker -> Int? in
+        let encoded = tokenizer.encode(text: marker, addSpecialTokens: false)
+        guard encoded.count == 1,
+              tokenizer.decode(tokenIds: encoded, skipSpecialTokens: false) == marker
+        else {
+            return nil
+        }
+
+        return encoded[0]
+    }
+}
+
+/// Label log-probabilities from the final-position logits, computed on the device: the maximum and
+/// the log-sum-exp are reduced there, and only the label and reasoning-opener logits are copied
+/// back, instead of the whole vocabulary as `[Double]`. NaN or +infinity anywhere is invalid: MLX's
+/// max propagates both, so a non-finite maximum covers them. A reasoning opener at the maximum is
+/// `reasoningPredicted`. The normaliser is float32 (it used to be summed in Double).
+package func decisionLabelLogProbs(
+    finalLogits last: MLXArray,
+    labelIDs: [Int],
+    reasoningOpenerIDs: [Int]
+) throws -> [Double] {
+    let vocabulary = 0 ..< last.dim(0)
+    guard labelIDs.allSatisfy({ vocabulary.contains($0) }) else {
+        eval(last)
+        throw DecisionScoringError.invalidLogits
     }
 
-    return reasoningTokenIDs.contains { logits.indices.contains($0) && logits[$0] == maximum }
+    let openers = reasoningOpenerIDs.filter { vocabulary.contains($0) }
+    let gathered = last.take(MLXArray((labelIDs + openers).map { Int32($0) }))
+    let maximum = last.max()
+    let logNormalizer = last.logSumExp()
+    eval(gathered, maximum, logNormalizer)
+
+    let maximumValue = Double(maximum.item(Float.self))
+    guard maximumValue.isFinite else {
+        throw DecisionScoringError.invalidLogits
+    }
+
+    let picked = gathered.asArray(Float.self).map(Double.init)
+    guard picked.suffix(openers.count).contains(maximumValue) == false else {
+        throw DecisionScoringError.reasoningPredicted
+    }
+
+    let normalizer = Double(logNormalizer.item(Float.self))
+    guard normalizer.isFinite else {
+        throw DecisionScoringError.invalidLogits
+    }
+
+    return picked.prefix(labelIDs.count).map { $0 - normalizer }
 }
 
 /// Use an added-token boundary only for tokenizer layouts whose final text segment is
@@ -557,7 +578,7 @@ private actor DecisionTokenizerCache {
     }
 }
 
-private actor DecisionBoundaryCache {
+actor DecisionBoundaryCache {
     static let shared: DecisionBoundaryCache = .init()
     private struct Entry {
         weak var container: ModelContainer?
@@ -565,6 +586,30 @@ private actor DecisionBoundaryCache {
     }
 
     private var entries: [ObjectIdentifier: Entry] = [:]
+    private struct OpenerEntry {
+        weak var container: ModelContainer?
+        let ids: [Int]
+    }
+
+    private var openers: [ObjectIdentifier: OpenerEntry] = [:]
+
+    func reasoningOpeners(for container: ModelContainer) -> [Int]? {
+        let key = ObjectIdentifier(container)
+        guard let entry = openers[key], entry.container === container else {
+            return nil
+        }
+
+        return entry.ids
+    }
+
+    func storeReasoningOpeners(_ ids: [Int], for container: ModelContainer) {
+        openers = openers.filter { $0.value.container != nil }
+        if openers.count >= 8, let evictedKey = openers.keys.first {
+            openers.removeValue(forKey: evictedKey)
+        }
+        openers[ObjectIdentifier(container)] = OpenerEntry(container: container, ids: ids)
+    }
+
     func tokens(for container: ModelContainer) async -> [Int: String] {
         let key = ObjectIdentifier(container)
         if let entry = entries[key], entry.container === container {
