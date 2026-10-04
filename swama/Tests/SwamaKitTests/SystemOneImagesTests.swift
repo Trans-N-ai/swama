@@ -1,6 +1,9 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import NIOCore
+import NIOEmbedded
+import NIOHTTP1
 import SwamaCore
 @testable import SwamaServer
 import Testing
@@ -56,7 +59,10 @@ struct SystemOneImagesTests {
         let five = Array(repeating: #""data:image/png;base64,\#(png)""#, count: 5).joined(separator: ",")
         refusal("[\(five)]", contains: "at most 4 images")
         refusal(#"["https://example.com/a.png"]"#, contains: "remote URLs are not accepted")
-        refusal(#"["data:image/gif;base64,\#(gif)"]"#, contains: "PNG, JPEG, or WebP")
+        refusal(#"["data:image/gif;base64,\#(gif)"]"#, contains: "data URL must be image/png")
+        // Declared types outside the allow-list are refused by the declaration, even when the bytes are a PNG.
+        refusal(#"["data:image/gif;base64,\#(png)"]"#, contains: "data URL must be image/png")
+        refusal(#"[{"content_type":"image/gif","base64":"\#(png)"}]"#, contains: "content_type must be image/png")
         refusal(#"[{"content_type":"image/png","base64":"\#(gif)"}]"#, contains: "PNG, JPEG, or WebP data")
         refusal(
             #"[{"content_type":"image/png","base64":"\#(jpeg)"}]"#,
@@ -71,10 +77,9 @@ struct SystemOneImagesTests {
         )
         refusal(#"[42]"#, contains: "data URL string or an object")
         refusal(#"{"a":1}"#, contains: "images must be an array")
-        // PNG signature followed by garbage: right magic, not a decodable image.
-        let fake = (Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + Data(repeating: 7, count: 64))
-            .base64EncodedString()
-        refusal(#"["data:image/png;base64,\#(fake)"]"#, contains: "not a decodable image")
+        // A JPEG signature followed by garbage: right magic, not a decodable image.
+        let fake = (Data([0xFF, 0xD8, 0xFF, 0xE0]) + Data(repeating: 7, count: 64)).base64EncodedString()
+        refusal(#"["data:image/jpeg;base64,\#(fake)"]"#, contains: "not a decodable image")
     }
 
     @Test func sizeLimitsUseDecodedBytesAndHeaderPixels() throws {
@@ -92,6 +97,38 @@ struct SystemOneImagesTests {
         let three = Array(repeating: #""data:image/png;base64,\#(part.base64EncodedString())""#, count: 3)
             .joined(separator: ",")
         refusal("[\(three)]", contains: "exceed 8 MiB in total")
+    }
+
+    @Test func truncatedImagesAreRefused() throws {
+        // ImageIO accepts the header of a cut PNG and decodes the missing rows as black.
+        let full = try image(.png, width: 512, height: 512, noise: true)
+        _ = try request(images: #"["data:image/png;base64,\#(full.base64EncodedString())"]"#)
+        for cut in [full.count / 2, full.count * 6 / 10, full.count - 13, full.count - 12, full.count - 1] {
+            let part = full.prefix(cut).base64EncodedString()
+            refusal(#"["data:image/png;base64,\#(part)"]"#, contains: "truncated or incomplete")
+        }
+        let webp = Data(base64Encoded: "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")!
+        let cutWebp = webp.prefix(webp.count - 2).base64EncodedString()
+        refusal(#"["data:image/webp;base64,\#(cutWebp)"]"#, contains: "truncated or incomplete")
+    }
+
+    @Test func handlerRefusesBodiesOver13MiB() async throws {
+        #expect(try await handlerStatus(bodyBytes: SystemOneRequest.maximumBodyBytes + 1) == .payloadTooLarge)
+        // Exactly the limit passes the size check and fails later as invalid JSON.
+        #expect(try await handlerStatus(bodyBytes: SystemOneRequest.maximumBodyBytes) == .badRequest)
+    }
+
+    private func handlerStatus(bodyBytes: Int) async throws -> HTTPResponseStatus? {
+        let channel = NIOAsyncTestingChannel()
+        var body = channel.allocator.buffer(capacity: bodyBytes)
+        body.writeRepeatingByte(UInt8(ascii: " "), count: bodyBytes)
+        let head = HTTPRequestHead(version: .http1_1, method: .POST, uri: "/v1/systemone")
+        await SystemOneHandler.handle(requestHead: head, body: body, channel: channel)
+        guard case let .head(response)? = try await channel.readOutbound(as: HTTPServerResponsePart.self) else {
+            return nil
+        }
+
+        return response.status
     }
 
     @Test func webpIsAcceptedBySignature() throws {

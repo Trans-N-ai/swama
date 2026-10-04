@@ -289,6 +289,11 @@ enum SystemOneImages {
             guard total <= maximumTotalBytes else {
                 throw DecisionWireError.invalid("images exceed 8 MiB in total.")
             }
+
+            // A truncated file still has a valid header; decoding would fill the missing rows with black.
+            guard isComplete(data) else {
+                throw DecisionWireError.invalid("images[\(index)] is truncated or incomplete.")
+            }
             guard let pixels = pixelCount(data) else {
                 throw DecisionWireError.invalid("images[\(index)] is not a decodable image.")
             }
@@ -318,7 +323,9 @@ enum SystemOneImages {
 
             let mediaType = String(header.dropLast(";base64".count)).lowercased()
             guard mediaTypes.contains(mediaType) else {
-                throw DecisionWireError.invalid("images[\(index)] must be PNG, JPEG, or WebP.")
+                throw DecisionWireError.invalid(
+                    "images[\(index)] data URL must be image/png, image/jpeg, or image/webp."
+                )
             }
 
             return (mediaType, String(text[text.index(after: comma)...]))
@@ -335,7 +342,9 @@ enum SystemOneImages {
 
             let mediaType = contentType.lowercased()
             guard mediaTypes.contains(mediaType) else {
-                throw DecisionWireError.invalid("images[\(index)] must be PNG, JPEG, or WebP.")
+                throw DecisionWireError.invalid(
+                    "images[\(index)] content_type must be image/png, image/jpeg, or image/webp."
+                )
             }
 
             return (mediaType, base64)
@@ -373,5 +382,40 @@ enum SystemOneImages {
         }
 
         return width * height
+    }
+
+    /// Whether the container is whole. ImageIO reports a truncated PNG as complete and decodes the missing rows as
+    /// black, so the structure is checked here: PNG chunks must fit and end with IEND; a WebP's RIFF size must fit.
+    /// A truncated JPEG already fails to decode in the core.
+    static func isComplete(_ data: Data) -> Bool {
+        let bytes = [UInt8](data)
+        func uint32(_ at: Int) -> Int {
+            bytes[at ..< at + 4].reduce(0) { $0 << 8 | Int($1) }
+        }
+
+        switch sniffedMediaType(data) {
+        case "image/png":
+            var offset = 8
+            while offset + 12 <= bytes.count {
+                let length = uint32(offset)
+                let type = bytes[offset + 4 ..< offset + 8]
+                guard offset + 12 + length <= bytes.count else {
+                    return false
+                }
+
+                if type.elementsEqual("IEND".utf8) {
+                    return true
+                }
+                offset += 12 + length
+            }
+            return false
+
+        case "image/webp":
+            let size = bytes[4 ..< 8].reversed().reduce(0) { $0 << 8 | Int($1) }
+            return size + 8 <= bytes.count
+
+        default:
+            return true
+        }
     }
 }
