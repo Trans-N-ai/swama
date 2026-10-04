@@ -77,8 +77,8 @@ struct SystemOneImagesTests {
         )
         refusal(#"[42]"#, contains: "data URL string or an object")
         refusal(#"{"a":1}"#, contains: "images must be an array")
-        // A JPEG signature followed by garbage: right magic, not a decodable image.
-        let fake = (Data([0xFF, 0xD8, 0xFF, 0xE0]) + Data(repeating: 7, count: 64)).base64EncodedString()
+        // A structurally whole JPEG (SOI, an empty scan, EOI) with no frame header: not a decodable image.
+        let fake = Data([0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 7, 7, 7, 7, 0xFF, 0xD9]).base64EncodedString()
         refusal(#"["data:image/jpeg;base64,\#(fake)"]"#, contains: "not a decodable image")
     }
 
@@ -106,6 +106,23 @@ struct SystemOneImagesTests {
         for cut in [full.count / 2, full.count * 6 / 10, full.count - 13, full.count - 12, full.count - 1] {
             let part = full.prefix(cut).base64EncodedString()
             refusal(#"["data:image/png;base64,\#(part)"]"#, contains: "truncated or incomplete")
+        }
+        // JPEGs large enough that ImageIO decodes a cut file: baseline, progressive, and one with an EXIF thumbnail
+        // whose own EOI comes early in the file.
+        for (progressive, thumbnail) in [(false, false), (true, false), (false, true)] {
+            let jpeg = try image(
+                .jpeg, width: 512, height: 512, noise: true, progressive: progressive, thumbnail: thumbnail
+            )
+            if thumbnail {
+                #expect(jpeg.prefix(jpeg.count / 2).range(of: Data([0xFF, 0xD9])) != nil)
+            }
+            _ = try request(images: #"["data:image/jpeg;base64,\#(jpeg.base64EncodedString())"]"#)
+            let trailing = (jpeg + Data(repeating: 0, count: 16)).base64EncodedString()
+            _ = try request(images: #"["data:image/jpeg;base64,\#(trailing)"]"#)
+            for cut in [jpeg.count / 2, jpeg.count * 8 / 10, jpeg.count - 2] {
+                let part = jpeg.prefix(cut).base64EncodedString()
+                refusal(#"["data:image/jpeg;base64,\#(part)"]"#, contains: "truncated or incomplete")
+            }
         }
         let webp = Data(base64Encoded: "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")!
         let cutWebp = webp.prefix(webp.count - 2).base64EncodedString()
@@ -164,7 +181,10 @@ struct SystemOneImagesTests {
     }
 
     /// A PNG, JPEG or GIF of the given size; `noise` makes it incompressible.
-    private func image(_ type: UTType, width: Int, height: Int, noise: Bool = false) throws -> Data {
+    private func image(
+        _ type: UTType, width: Int, height: Int, noise: Bool = false, progressive: Bool = false,
+        thumbnail: Bool = false
+    ) throws -> Data {
         let space = CGColorSpace(name: CGColorSpace.sRGB)!
         guard let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
@@ -196,7 +216,11 @@ struct SystemOneImagesTests {
             throw DecisionWireError.invalid("destination")
         }
 
-        CGImageDestinationAddImage(destination, cgImage, nil)
+        let properties: [CFString: Any] = [
+            kCGImagePropertyJFIFDictionary: [kCGImagePropertyJFIFIsProgressive: progressive],
+            kCGImageDestinationEmbedThumbnail: thumbnail
+        ]
+        CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
             throw DecisionWireError.invalid("finalize")
         }

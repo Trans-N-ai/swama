@@ -386,7 +386,7 @@ enum SystemOneImages {
 
     /// Whether the container is whole. ImageIO reports a truncated PNG as complete and decodes the missing rows as
     /// black, so the structure is checked here: PNG chunks must fit and end with IEND; a WebP's RIFF size must fit.
-    /// A truncated JPEG already fails to decode in the core.
+    /// A JPEG must reach its end-of-image marker.
     static func isComplete(_ data: Data) -> Bool {
         let bytes = [UInt8](data)
         func uint32(_ at: Int) -> Int {
@@ -414,8 +414,57 @@ enum SystemOneImages {
             let size = bytes[4 ..< 8].reversed().reduce(0) { $0 << 8 | Int($1) }
             return size + 8 <= bytes.count
 
+        case "image/jpeg":
+            return jpegHasEndOfImage(bytes)
+
         default:
-            return true
+            return false
         }
+    }
+
+    /// Walks the JPEG segments to each start-of-scan, then the entropy-coded data, until EOI. Inside scan data every
+    /// 0xFF is stuffed (FF 00) or a restart marker (FF D0–D7), so FF D9 there is the real end. Walking by segment
+    /// skips an EXIF thumbnail's own EOI. Bytes after EOI are allowed.
+    private static func jpegHasEndOfImage(_ bytes: [UInt8]) -> Bool {
+        var offset = 2
+        while offset + 1 < bytes.count {
+            guard bytes[offset] == 0xFF else {
+                return false
+            }
+
+            let marker = bytes[offset + 1]
+            switch marker {
+            case 0xFF:
+                offset += 1 // fill byte before a marker
+            case 0x01,
+                 0xD0 ... 0xD7:
+                offset += 2 // markers without a length
+            case 0xD9:
+                return true
+            default:
+                guard offset + 4 <= bytes.count else {
+                    return false
+                }
+
+                let length = Int(bytes[offset + 2]) << 8 | Int(bytes[offset + 3])
+                guard length >= 2, offset + 2 + length <= bytes.count else {
+                    return false
+                }
+
+                offset += 2 + length
+                if marker == 0xDA {
+                    // Entropy-coded data runs until the next marker that is not stuffing or a restart.
+                    while offset + 1 < bytes.count {
+                        if bytes[offset] == 0xFF, bytes[offset + 1] != 0x00,
+                           !(0xD0 ... 0xD7).contains(bytes[offset + 1])
+                        {
+                            break
+                        }
+                        offset += 1
+                    }
+                }
+            }
+        }
+        return false
     }
 }
