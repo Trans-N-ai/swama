@@ -11,6 +11,15 @@ enum SystemOneHandler {
 
     static func handle(requestHead: HTTPRequestHead, body: ByteBuffer, channel: Channel, engine: SwamaEngine) async {
         do {
+            // Clef's request body limit; swama has no global one, so this route enforces it.
+            guard body.readableBytes <= SystemOneRequest.maximumBodyBytes else {
+                try? await sendError(
+                    "The request body is larger than 13 MiB.", status: .payloadTooLarge,
+                    version: requestHead.version, channel: channel
+                )
+                return
+            }
+
             var readable = body
             guard let bytes = readable.readBytes(length: body.readableBytes) else {
                 throw DecisionWireError.invalid("Invalid request body.")

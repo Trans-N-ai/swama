@@ -273,6 +273,16 @@ An SDK API key placeholder is needed by their constructors; Swama does not use i
 Model discovery keeps the OpenAI-shaped `/v1/models`. Pass an explicit local model name to TypeSafe SDK calls;
 its `client.models.list()` expects a different catalog format.
 
+**Images (Cloudflare Clef extension).** An optional top-level `images` array follows
+[Clef's System One extension](https://developers.cloudflare.com/workers-ai/models/clef/): up to 4 images placed
+before the state, each either a base64 data URL string (`"data:image/png;base64,..."`) or an object
+`{"content_type": "image/png", "base64": "..."}`. Only PNG, JPEG and WebP are accepted, judged by the file signature;
+a declared type that does not match the bytes is refused, and so is a truncated file. Limits: 4 MiB and 16 megapixels per image (read from the
+header before decoding), 8 MiB decoded in total, and a 13 MiB request body (HTTP 413). Remote URLs and `video` are
+refused. Images need a vision model and share the chat path's multimodal context limit (4096 tokens). Images are resized
+the way the chat path resizes them (up to 1344 px for Qwen3.5), so in practice Qwen3.5-9B fits at most 3 images per
+request; a request over the limit is refused with `maximum context length`. `"images": []` is the same as no field. `/v1/decisions` does not take images.
+
 ```python
 from typesafe_sdk import Choice, Noul, Score, TypeSafeClient
 
