@@ -46,7 +46,7 @@ struct DecisionAPITests {
             of: "\"type\":\"predicate\"",
             with: "\"type\":\"other\""
         )) }
-        // Temperature, prompt version and thinking toggles are not part of the OpenAI request.
+        // Temperature, prompt version and thinking toggles are the removed SGLang shape.
         for field in [
             "\"prompt_format_version\":1",
             "\"chat_template_kwargs\":{\"enable_thinking\":false}",

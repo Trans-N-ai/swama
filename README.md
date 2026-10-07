@@ -173,7 +173,9 @@ Qwen3-TTS and VyvoTTS `en-us-1`; Kokoro defaults to `af_heart`, KittenTTS to `Be
 (openai-openapi `4a4020d8`). It scores a finite set of answers without generating text. **Breaking change:** the
 earlier SGLang prompt format 1 wire (questions with `id`/`question`/`options`, `yes_no`, `label_mass`,
 `temperature`, `chat_template_kwargs`, `prompt_format_version`, `return_prompt_token_ids`) has been removed from this
-route; such requests now get HTTP 400. `/v1/systemone` is unchanged.
+route; such requests now get HTTP 400 with a message saying the SGLang prompt format 1 request shape was removed
+(a question with `id`, `question`, `options` or type `yes_no`); a removed top-level field alone, such as `temperature`
+on an otherwise OpenAI-shaped request, is reported as an unknown field. `/v1/systemone` is unchanged.
 
 **Request.** `model` (an explicit local model), `input`, `questions` (1–200) and `safety_identifier` (a string of
 at most 128 characters, or null; accepted and ignored). Parsing is strict: an unknown field at any level is refused
@@ -184,7 +186,7 @@ with HTTP 400.
   `value` is a string or a boolean and comes back with the same JSON type.
 - `score`: `{"type":"score","name"?,"instructions","levels":[{"label","description"?}]}` with 2–10 ordered levels.
 
-`instructions` must not be blank. `name` is optional and must be unique when given. Duplicate choice values are
+`instructions` must not be blank, and a blank score level `label` is refused (stricter than the OpenAI schema). `name` is optional and must be unique when given. Duplicate choice values are
 refused. The prompt shows a boolean as `true`/`false`, so a string `"true"` and a boolean `true` in the same choice
 cannot be told apart and are refused too. Choice values must otherwise be non-empty, contain no control characters
 and be distinct ignoring case. A level with a description is shown as `label: description`. More than 26 choices use
@@ -195,7 +197,9 @@ refuses them.
 a string or a list of `input_text` and `input_image` parts. Texts are joined with newlines in order and images keep
 their order. Images must be base64 data URLs and follow the `/v1/systemone` image rules below: PNG, JPEG or WebP
 checked by file signature, complete files, at most 4 MiB and 16 megapixels each, 8 MiB in total, and at most 4 per
-request (fewer than OpenAI's 128). They need a vision model. `detail` is accepted and ignored. Other roles, other part
+request (fewer than OpenAI's 128). They need a vision model. When every image sets `detail: "low"`, images are resized to fit
+512 pixels per side, which is several times faster (Qwen3.5-9B on an M5 Pro: one 1280-pixel photo drops from about 1,240
+to 240 input tokens and from 1.8 s to 0.36 s); otherwise `detail` keeps the default resizing. Other roles, other part
 types and remote URLs are refused. A blank input is allowed and rendered as is.
 
 **Response.** `model`, `answers` in question order, and `usage`. Each answer carries its `name`, or `null` when the

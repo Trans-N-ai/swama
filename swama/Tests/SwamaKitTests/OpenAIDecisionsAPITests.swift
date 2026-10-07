@@ -115,6 +115,33 @@ struct OpenAIDecisionsAPITests {
         #expect(try parse(body(input: #""""#, questions: Self.predicate)).decision.input == "")
     }
 
+    @Test func lowDetailOnEveryImageResizesTo512() throws {
+        let pngText = try image(.png).base64EncodedString()
+        func images(_ details: [String?]) -> String {
+            let parts = details.map { detail in
+                let field = detail.map { #","detail":"\#($0)""# } ?? ""
+                return #"{"type":"input_image","image_url":"data:image/png;base64,\#(pngText)"\#(field)}"#
+            }
+            return #"[{"role":"user","content":[\#(parts.joined(separator: ","))]}]"#
+        }
+        func dimension(_ input: String) throws -> Int? {
+            try parse(body(input: input, questions: Self.predicate)).decision.imageMaxDimension
+        }
+
+        #expect(OpenAIDecisionRequest.lowDetailMaxDimension == 512)
+        #expect(try dimension(images(["low"])) == 512)
+        #expect(try dimension(images(["low", "low"])) == 512)
+        // Core resizes per request, so one image that is not low detail keeps the default for all of them.
+        #expect(try dimension(images(["low", "high"])) == nil)
+        #expect(try dimension(images(["low", nil])) == nil)
+        for detail in ["high", "auto", "original"] {
+            #expect(try dimension(images([detail])) == nil)
+        }
+        #expect(try dimension(images([nil])) == nil)
+        #expect(try dimension(#""text only""#) == nil)
+        #expect(try dimension("[]") == nil)
+    }
+
     @Test func safetyIdentifierIsAcceptedAndIgnored() throws {
         let plain = try parse(body(questions: Self.predicate)).decision
         for value in ["null", #""""#, #""\#(String(repeating: "é", count: 128))""#] {
@@ -129,8 +156,8 @@ struct OpenAIDecisionsAPITests {
     @Test func refusesUnknownFieldsAtEveryLevel() throws {
         let png = try image(.png).base64EncodedString()
         refusal(
-            body(questions: Self.predicate, extra: #","temperature":1"#),
-            contains: "Unknown decision field 'temperature'"
+            body(questions: Self.predicate, extra: #","unknown":1"#),
+            contains: "Unknown decision field 'unknown'"
         )
         refusal(
             body(questions: #"{"type":"predicate","instructions":"x","criteria":{}}"#),
@@ -281,7 +308,7 @@ struct OpenAIDecisionsAPITests {
         )
         refusal(body(questions: #""x""#), contains: "questions[0] must be an object")
         refusal(
-            body(questions: #"{"type":"yes_no","instructions":"x"}"#),
+            body(questions: #"{"type":"other","instructions":"x"}"#),
             contains: "questions[0] type must be predicate, choice, or score"
         )
         refusal(body(questions: #"{"instructions":"x"}"#), contains: "questions[0] type must be predicate")
@@ -318,31 +345,39 @@ struct OpenAIDecisionsAPITests {
     }
 
     @Test func refusesTheRemovedSGLangShape() throws {
-        // SGLang prompt format 1 is no longer served here; its fields fail strict parsing.
+        // SGLang prompt format 1 is no longer served here; the refusal says so explicitly.
+        let hint = "The SGLang prompt format 1 request shape was removed from /v1/decisions"
         refusal(
             #"{"model":"m","input":"x","questions":[{"id":"q","type":"yes_no","question":"True?"}]}"#,
-            contains: "questions[0] type must be predicate, choice, or score"
-        )
-        refusal(
-            body(questions: #"{"id":"q","type":"predicate","instructions":"True?"}"#),
-            contains: "Unknown decision field 'id'"
-        )
-        refusal(
-            body(questions: #"{"type":"choice","question":"Pick","options":[{"name":"a"},{"name":"b"}]}"#),
-            contains: "Unknown decision field 'options'"
+            contains: hint
         )
         refusal(
             body(questions: #"{"type":"score","instructions":"Rate","levels":["low","high"]}"#),
             contains: "Each score level must be an object"
         )
-        for field in [
-            #""temperature":1"#,
-            #""chat_template_kwargs":{"enable_thinking":false}"#,
-            #""prompt_format_version":1"#,
-            #""return_prompt_token_ids":true"#
+    }
+
+    @Test func removedRequestKeysAloneAreUnknownFieldsWithoutTheHint() throws {
+        // An OpenAI-shaped request with one stray SGLang field is told about that field, not the whole format.
+        for (key, field) in [
+            ("temperature", #""temperature":1"#),
+            ("chat_template_kwargs", #""chat_template_kwargs":{"enable_thinking":false}"#),
+            ("prompt_format_version", #""prompt_format_version":1"#),
+            ("return_prompt_token_ids", #""return_prompt_token_ids":true"#)
         ] {
-            let name = String(field.dropFirst().prefix { $0 != "\"" })
-            refusal(body(questions: Self.predicate, extra: "," + field), contains: "Unknown decision field '\(name)'")
+            refusal(body(questions: Self.predicate, extra: "," + field), contains: "Unknown decision field '\(key)'.")
+        }
+    }
+
+    @Test func refusesEachRemovedSGLangQuestionShapeWithAHint() throws {
+        let hint = "The SGLang prompt format 1 request shape was removed from /v1/decisions"
+        for question in [
+            #"{"id":"q","type":"predicate","instructions":"True?"}"#,
+            #"{"type":"predicate","question":"True?","instructions":"x"}"#,
+            #"{"type":"choice","instructions":"Pick","options":[{"name":"a"},{"name":"b"}]}"#,
+            #"{"type":"yes_no","instructions":"x"}"#
+        ] {
+            refusal(body(questions: question), contains: hint)
         }
     }
 
@@ -516,16 +551,21 @@ struct OpenAIDecisionsAPITests {
 
     @Test func handlerRefusesOldShapeAndInvalidRequestsWith400() async throws {
         let backend = OpenAIDecisionTestBackend()
+        let legacyMessage =
+            "The SGLang prompt format 1 request shape was removed from /v1/decisions; send the OpenAI Decisions format (questions with type, name and instructions)."
         for (request, message) in [
             (
                 #"{"model":"org/model","input":"x","questions":[{"id":"team","type":"choice","question":"Which?","options":[{"name":"a"},{"name":"b"}]}],"prompt_format_version":1}"#,
-                "Unknown decision field 'prompt_format_version'."
+                legacyMessage
             ),
             (
                 #"{"model":"org/model","input":"x","questions":[{"id":"q","type":"yes_no","question":"True?"}]}"#,
-                "questions[0] type must be predicate, choice, or score."
+                legacyMessage
             ),
-            (body(questions: Self.predicate, extra: #","temperature":1"#), "Unknown decision field 'temperature'."),
+            (
+                body(questions: Self.predicate, extra: #","temperature":1"#),
+                "Unknown decision field 'temperature'."
+            ),
             (body(questions: ""), "questions must be an array of 1–200 questions."),
             ("[]", "Invalid decision request.")
         ] {
