@@ -313,7 +313,7 @@ struct DecisionPairLabelTests {
         #expect(tied.choice == "29")
     }
 
-    @Test func onlySystemOneOptsIntoUpTo676OptionsAndDecisionsStillRefuse27() async throws {
+    @Test func routesOptIntoPairLabelsUpToTheirLimitsAndLibraryCallersDoNot() async throws {
         func systemOne(_ count: Int) throws -> SystemOneRequest {
             let criteria = (0 ..< count).map { "\"o\($0)\":null" }.joined(separator: ",")
             let body = #"{"model":"m","state":"s","questions":{"c":{"type":"choice","instructions":"Pick","criteria":{"#
@@ -361,18 +361,27 @@ struct DecisionPairLabelTests {
         _ = try await engine.decide(choice(26, allowsPairLabels: false))
 
         func decisions(_ count: Int) throws -> DecisionRequest {
-            let options = (0 ..< count).map { #"{"name":"o\#($0)"}"# }.joined(separator: ",")
-            let body = #"{"model":"m","input":"s","questions":[{"id":"c","type":"choice","question":"Pick","options":["#
-                + options + "]}]}"
-            return try DecisionsHandler.parse(JSONDecoder().decode([String: JSONValue].self, from: Data(body.utf8)))
+            let choices = (0 ..< count).map { #"{"value":"o\#($0)"}"# }.joined(separator: ",")
+            let body = #"{"model":"m","input":"s","questions":[{"type":"choice","instructions":"Pick","choices":["#
+                + choices + "]}]}"
+            return try OpenAIDecisionRequest.parse(
+                JSONDecoder().decode([String: JSONValue].self, from: Data(body.utf8))
+            )
+            .decision
         }
-        #expect(try decisions(26).questions.count == 1)
+        // /v1/decisions opts in only when a choice has more than 26 options, up to OpenAI's 255.
+        #expect(try decisions(26).allowsPairLabels == false)
+        for count in [27, 255] {
+            let request = try decisions(count)
+            #expect(request.allowsPairLabels)
+            _ = try await engine.decide(request)
+        }
         do {
-            _ = try decisions(27)
-            Issue.record("/v1/decisions accepted 27 options")
+            _ = try decisions(256)
+            Issue.record("/v1/decisions accepted 256 options")
         }
         catch {
-            #expect(error.localizedDescription == "choice options must contain 2–26 entries.")
+            #expect(error.localizedDescription == "questions[0] choices must contain 2–255 entries.")
         }
     }
 }

@@ -13,16 +13,16 @@ import Testing
 struct DecisionAPITests {
     private func parse(_ text: String) throws -> DecisionRequest {
         let value = try JSONDecoder().decode([String: JSONValue].self, from: Data(text.utf8))
-        return try DecisionsHandler.parse(value)
+        return try OpenAIDecisionRequest.parse(value).decision
     }
 
     @Test func parsesThreeQuestionTypesAndPromptFormat() throws {
         let request =
             try parse(
-                #"{"model":"m","input":"context","questions":[{"id":"c","type":"choice","question":"Which?","options":[{"name":"alpha"},{"name":"beta","description":"second"}]},{"id":"s","type":"score","question":"Rate?","levels":["bad","good"]},{"id":"y","type":"yes_no","question":"True?"}],"chat_template_kwargs":{"enable_thinking":false},"prompt_format_version":1,"return_prompt_token_ids":true}"#
+                #"{"model":"m","input":"context","questions":[{"type":"choice","instructions":"Which?","choices":[{"value":"alpha"},{"value":"beta","description":"second"}]},{"type":"score","instructions":"Rate?","levels":[{"label":"bad"},{"label":"good"}]},{"type":"predicate","instructions":"True?"}]}"#
             )
         #expect(request.questions.count == 3)
-        #expect(request.returnPromptTokenIDs)
+        #expect(request.returnPromptTokenIDs == false)
         #expect(request.questions[0].decisionLabels == ["A", "B"])
         #expect(request.questions[1].decisionLabels == ["0", "1"])
         #expect(request.questions[2].decisionLabels == ["yes", "no"])
@@ -33,31 +33,30 @@ struct DecisionAPITests {
     }
 
     @Test func rejectsUnsupportedAndMalformedWireFields() throws {
-        let base = #"{"model":"m","input":"x","questions":[{"id":"q","type":"yes_no","question":"true?"}]}"#
+        let base = #"{"model":"m","input":"x","questions":[{"type":"predicate","instructions":"true?"}]}"#
         #expect(throws: DecisionWireError.self) { try parse(base.replacingOccurrences(
             of: "\"model\":",
             with: "\"unknown\":1,\"model\":"
         )) }
         #expect(throws: DecisionWireError.self) { try parse(base.replacingOccurrences(
-            of: "\"question\":\"true?\"",
-            with: "\"question\":9"
+            of: "\"instructions\":\"true?\"",
+            with: "\"instructions\":9"
         )) }
         #expect(throws: DecisionWireError.self) { try parse(base.replacingOccurrences(
-            of: "\"type\":\"yes_no\"",
+            of: "\"type\":\"predicate\"",
             with: "\"type\":\"other\""
         )) }
-        #expect(throws: DecisionWireError.self) { try parse(base.replacingOccurrences(
-            of: "\"model\":\"m\"",
-            with: "\"model\":\"m\",\"prompt_format_version\":2"
-        )) }
-        #expect(throws: DecisionWireError.self) { try parse(base.replacingOccurrences(
-            of: "\"model\":\"m\"",
-            with: "\"model\":\"m\",\"chat_template_kwargs\":{\"enable_thinking\":true}"
-        )) }
-        #expect(throws: DecisionWireError.self) { try parse(base.replacingOccurrences(
-            of: "\"model\":\"m\"",
-            with: "\"model\":\"m\",\"temperature\":0"
-        )) }
+        // Temperature, prompt version and thinking toggles are not part of the OpenAI request.
+        for field in [
+            "\"prompt_format_version\":1",
+            "\"chat_template_kwargs\":{\"enable_thinking\":false}",
+            "\"temperature\":1"
+        ] {
+            #expect(throws: DecisionWireError.self) { try parse(base.replacingOccurrences(
+                of: "\"model\":\"m\"",
+                with: "\"model\":\"m\"," + field
+            )) }
+        }
     }
 
     @Test func computesConditionalProbabilitiesWithoutAlteringLabelMass() throws {

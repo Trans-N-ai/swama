@@ -11,7 +11,7 @@
 它在你的 Mac 上运行语言、视觉、嵌入、语音识别和语音合成模型，并通过 OpenAI 兼容 API、命令行工具和菜单栏应用提供服务。
 
 - **OpenAI 兼容 API**：聊天补全（流式、工具调用、图片输入）、Responses 的无状态子集、嵌入、音频转录，以及语音合成（实验性）。
-- **决策打分**：SGLang 风格的 `/v1/decisions`，不生成文字，直接给选择题、打分题和是非题的各选项打分。
+- **决策打分**：遵循 OpenAI Decisions API 的 `/v1/decisions`，不生成文字，直接给选择题、打分题和是非题（predicate）打分。
 - **模型别名**：`swama run qwen3.5 "…"` 首次使用时自动从 Hugging Face 下载。
 - **菜单栏应用**：在后台运行服务、安装 `swama` 命令、设置上下文长度上限。
 
@@ -82,7 +82,7 @@ Hugging Face 上的任何 MLX 模型都可以用完整 ID 使用（例如 `mlx-c
 | `GET /v1/models` | 已下载的模型 |
 | `POST /v1/chat/completions` | 流式（`"stream": true`）、工具调用、视觉模型的 `image_url` 输入 |
 | `POST /v1/responses` | 无状态子集，支持范围见[英文 README 的支持矩阵](README.md#api) |
-| `POST /v1/decisions` | 不生成文字，直接给选择题、打分题和是非题打分，说明见[英文 README](README.md#api)（含已知限制：是非题只读小写 `yes`/`no`，MoE 模型概率漂移更大） |
+| `POST /v1/decisions` | OpenAI Decisions API 格式（旧 SGLang 格式已移除），不生成文字，直接给选择题、打分题和是非题打分，说明见[英文 README](README.md#api)（含已知限制：是非题只读小写 `yes`/`no`，MoE 模型概率漂移更大） |
 | `POST /v1/embeddings` | 嵌入模型，例如 `mlx-community/embeddinggemma-300m-4bit` |
 | `POST /v1/audio/transcriptions` | multipart 上传，本地语音识别 |
 | `POST /v1/audio/speech` | 语音合成（实验性） |

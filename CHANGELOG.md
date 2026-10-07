@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** `POST /v1/decisions` now follows the OpenAI Decisions API (openai-openapi `4a4020d8`): `predicate`,
+  `choice` and `score` questions with optional names, string or user-message input with inline data-URL images (up to
+  4), answers in question order with typed choice values, and OpenAI-shaped `usage`. The SGLang prompt format 1 wire
+  (`id`/`question`/`options` questions, `yes_no`, `label_mass`, `temperature`, `chat_template_kwargs`,
+  `prompt_format_version`, `return_prompt_token_ids`) was removed from this route; such requests now get HTTP 400.
+  `/v1/systemone` is unchanged.
+
 ### Added
 - Initial release of Swama
 - Swift-based machine learning runtime for macOS

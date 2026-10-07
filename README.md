@@ -13,7 +13,7 @@ OpenAI-compatible API, a command-line tool and a menu bar app.
 
 - **OpenAI-compatible API**: chat completions (streaming, tool calling, image input), a stateless subset of Responses,
   embeddings, audio transcription and text-to-speech (experimental).
-- **Decision scoring**: SGLang-style `/v1/decisions` scores choices, ratings, and yes/no answers without generating text.
+- **Decision scoring**: `/v1/decisions` follows the OpenAI Decisions API and scores predicates, choices, and ratings without generating text.
 - **Model aliases**: `swama run qwen3.5 "…"` downloads the model from Hugging Face on first use.
 - **Menu bar app**: runs the server in the background, installs the `swama` command and sets the context limit.
 
@@ -90,7 +90,7 @@ The server listens on port 28100 by default (`--port` or `SWAMA_PORT` to change 
 | `GET /v1/models` | Downloaded models |
 | `POST /v1/chat/completions` | Streaming (`"stream": true`), tool calling, `image_url` input for vision models |
 | `POST /v1/responses` | Stateless subset — see below |
-| `POST /v1/decisions` | Scores choices, ratings and yes/no answers without generating text — see below |
+| `POST /v1/decisions` | OpenAI Decisions API: scores predicates, choices and ratings without generating text — see below |
 | `POST /v1/systemone` | SystemOne request/response adapter over the same decision scorer — see below |
 | `POST /v1/embeddings` | Embedding models such as `mlx-community/embeddinggemma-300m-4bit` |
 | `POST /v1/audio/transcriptions` | Multipart upload, local speech recognition |
@@ -167,65 +167,81 @@ Qwen3-TTS and VyvoTTS `en-us-1`; Kokoro defaults to `af_heart`, KittenTTS to `Be
 </details>
 
 <details>
-<summary><b><code>/v1/decisions</code> (SGLang prompt format 1)</b></summary>
+<summary><b><code>/v1/decisions</code> (OpenAI Decisions API)</b></summary>
 
+`POST /v1/decisions` follows the [OpenAI Decisions API](https://platform.openai.com/docs/api-reference/decisions)
+(openai-openapi `4a4020d8`). It scores a finite set of answers without generating text. **Breaking change:** the
+earlier SGLang prompt format 1 wire (questions with `id`/`question`/`options`, `yes_no`, `label_mass`,
+`temperature`, `chat_template_kwargs`, `prompt_format_version`, `return_prompt_token_ids`) has been removed from this
+route; such requests now get HTTP 400. `/v1/systemone` is unchanged.
 
-`POST /v1/decisions` scores a finite set of answers without generating text.
-It accepts `choice` (2–26 named options), `score` (2–10 levels), and `yes_no`
-questions. Each answer includes probabilities conditional on its labels and
-`label_mass`, the total probability of those labels against the full
-vocabulary. A low `label_mass` means the model may prefer an answer outside the
-requested set. The response has `prompt_format_version: 1`; a request pinning
-another version is rejected.
+**Request.** `model` (an explicit local model), `input`, `questions` (1–200) and `safety_identifier` (a string of
+at most 128 characters, or null; accepted and ignored). Parsing is strict: an unknown field at any level is refused
+with HTTP 400.
 
-This endpoint uses SGLang's public prompt wording and response fields. Swama
-requires an explicit local `model` because it can serve more than one model.
-The local chat tokenizer must preserve the rendered prompt and encode every
-answer label as one distinct token at the answer position. The request passes
-`enable_thinking: false` to the template; requesting it on is rejected. Templates
-may ignore this flag. Open reasoning prefixes and a recognized single-token
-`<think>` or `[THINK]` opener at the vocabulary maximum are rejected. This check
-does not certify every reasoning format or guarantee the model follows
-instructions. `chat_template_kwargs` other than that fixed toggle are currently
-unsupported. Each question starts with a
-fresh KV cache, independent of the chat prompt cache. Inputs are textual:
-objects and arrays render as compact JSON with sorted keys; image and audio
-parts are unsupported. Use string inputs when comparing exact prompts across servers,
-because structured JSON is canonicalized by Swama. Even identical low-precision
-weights can produce probability differences across backends and prefill layouts.
+- `predicate`: `{"type":"predicate","name"?,"instructions"}`, the probability that a statement about the input is true.
+- `choice`: `{"type":"choice","name"?,"instructions","choices":[{"value","description"?}]}` with 2–255 choices. A
+  `value` is a string or a boolean and comes back with the same JSON type.
+- `score`: `{"type":"score","name"?,"instructions","levels":[{"label","description"?}]}` with 2–10 ordered levels.
 
-For `choice` and `score`, Swama additionally returns `confidence` in `[0, 1]`.
-This is a local extension to the Decisions response, using the formulas from
+`instructions` must not be blank. `name` is optional and must be unique when given. Duplicate choice values are
+refused. The prompt shows a boolean as `true`/`false`, so a string `"true"` and a boolean `true` in the same choice
+cannot be told apart and are refused too. Choice values must otherwise be non-empty, contain no control characters
+and be distinct ignoring case. A level with a description is shown as `label: description`. More than 26 choices use
+the model's two-letter labels (AA, AB, …), as on `/v1/systemone`; a model without enough single-token pair labels
+refuses them.
+
+`input` is a string, or an array of user messages `{"role":"user","content":…,"type"?:"message"}` whose `content` is
+a string or a list of `input_text` and `input_image` parts. Texts are joined with newlines in order and images keep
+their order. Images must be base64 data URLs and follow the `/v1/systemone` image rules below: PNG, JPEG or WebP
+checked by file signature, complete files, at most 4 MiB and 16 megapixels each, 8 MiB in total, and at most 4 per
+request (fewer than OpenAI's 128). They need a vision model. `detail` is accepted and ignored. Other roles, other part
+types and remote URLs are refused. A blank input is allowed and rendered as is.
+
+**Response.** `model`, `answers` in question order, and `usage`. Each answer carries its `name`, or `null` when the
+question had none.
+
+- `predicate`: `probability`, the yes probability conditional on the `yes`/`no` labels.
+- `choice`: `choice` (the typed value with the highest probability; ties go to the first), `probabilities` as
+  `[{value, probability}]` in request order, and `confidence`.
+- `score`: `score` (the expected level index), `probabilities` as `[{value, label, probability}]` with an integer
+  `value`, and `confidence`.
+
+Answers are never `refusal`; a request the backend cannot serve is refused as a whole with a 4xx error
+(`{"error":{"message","type"}}`; unknown models use 404). `usage` reports `input_tokens` and `total_tokens`; output,
+cached, cache-write and reasoning tokens are 0. Temperature is fixed at 1.
+
+**How it scores.** Swama renders one prompt per question and reads the next-token probabilities of the answer
+labels (`yes`/`no`, `A`, `B`, …, or `0`, `1`, …), using SGLang's public prompt wording. Probabilities are
+normalized over those labels only; the probability left outside them is not reported. The local chat tokenizer must
+preserve the rendered prompt and encode every answer label as one distinct token at the answer position. The
+template gets `enable_thinking: false`; templates may ignore it. Open reasoning prefixes and a recognized
+single-token `<think>` or `[THINK]` opener at the vocabulary maximum are rejected. This check does not certify every
+reasoning format or guarantee the model follows instructions. Each question starts with a fresh KV cache,
+independent of the chat prompt cache. Even identical low-precision weights can produce probability differences
+across backends and prefill layouts.
+
+`confidence` uses the formulas from
 [SGLang's SystemOne implementation](https://github.com/sgl-project/sglang/blob/eb9c9ee99d47bf4c526a06cd84da59cd9cf4e2a5/python/sglang/srt/entrypoints/systemone/serving.py#L242-L258).
-It measures concentration among the candidates, **not the probability that the
-answer is correct**. It does not change the prompt, probabilities, score, or
-`label_mass`. The `yes_no` response continues to return its two probabilities
-without a separate confidence field.
-
-Let `q` be the returned candidate probabilities normalized to sum to 1, `n` the
-number of candidates, and `m` the first index with maximum probability. For scores,
-use the original `levels` order (probability keys `"0"`, `"1"`, …), not JSON object
-iteration order:
+It measures concentration among the candidates, **not the probability that the answer is correct**. Let `q` be the
+candidate probabilities, `n` the number of candidates, and `m` the first index with maximum probability (levels in
+request order):
 
 - Choice: `clamp((n * max(q) - 1) / (n - 1), 0, 1)`.
 - Score: `max(0, 1 - sum(q[i] * abs(i - m)) / U)`, where
   `U = sum(abs(i - (n - 1) / 2)) / n`. This uses absolute distance and the
   uniform distribution's midpoint, not variance or a denominator centered on `m`.
 
-For example, three choice probabilities `[0.7, 0.2, 0.1]` give confidence `0.55`;
-uniform probabilities give `0`, and a one-hot distribution gives `1`. Lowering
-`temperature` can increase confidence while leaving `label_mass` unchanged.
-A high confidence can coexist with tiny label mass. Downstream routing should
-consider both, fix the temperature used for thresholds, and validate accuracy
-on representative application data; neither value guarantees correctness.
+For example, three choice probabilities `[0.7, 0.2, 0.1]` give confidence `0.55`; uniform probabilities give `0`, and
+a one-hot distribution gives `1`. Validate thresholds on representative application data; confidence does not
+guarantee correctness.
 
 **Known limitations**
 
-- **`yes_no` reads only lowercase labels.** As in SGLang, `label_mass` counts only the lowercase `yes` and `no`
-  tokens. Many models also put probability on `Yes` and `No`,
-  so `label_mass` reads low even on clear cases. When a model prefers the capitalized form for one answer but not the
-  other, `probabilities["yes"]` can differ from the case-combined answer, and in independent testing it occasionally
-  pointed the other way. Swama does not merge case variants; validate `yes_no` thresholds on your own data.
+- **`predicate` reads only lowercase labels.** As in SGLang, only the lowercase `yes` and `no` tokens are scored. Many
+  models also put probability on `Yes` and `No`. When a model prefers the capitalized form for one answer but not the
+  other, `probability` can differ from the case-combined answer, and in independent testing it occasionally pointed
+  the other way. Swama does not merge case variants; validate predicate thresholds on your own data.
 - **The measured Qwen3.5 models produce bf16 logits.** Two labels can tie exactly; ties go to the first option in the
   order given. Values can shift between Swama versions, dependency updates and backends; do not rely on bit-for-bit
   probability agreement across those configurations.
@@ -237,7 +253,18 @@ on representative application data; neither value guarantees correctness.
 ```bash
 curl -X POST http://localhost:28100/v1/decisions \
   -H "Content-Type: application/json" \
-  -d '{"model":"mlx-community/Qwen3.5-0.8B-MLX-4bit","input":"My invoice charged me twice.","questions":[{"id":"team","type":"choice","question":"Which team should handle this?","options":[{"name":"billing"},{"name":"technical"},{"name":"sales"}]}]}'
+  -d '{"model":"mlx-community/Qwen3.5-0.8B-4bit","input":"My invoice charged me twice.","questions":[{"type":"predicate","name":"billing","instructions":"Is this a billing issue?"},{"type":"choice","name":"team","instructions":"Which team should handle this?","choices":[{"value":"billing"},{"value":"technical"},{"value":"sales"}]},{"type":"score","name":"urgency","instructions":"How urgent is it?","levels":[{"label":"low"},{"label":"medium"},{"label":"high","description":"needs action today"}]},{"type":"choice","instructions":"Was the customer charged correctly?","choices":[{"value":true},{"value":false}]}]}'
+```
+
+Response from that model (formatted):
+
+```json
+{"model":"mlx-community/Qwen3.5-0.8B-4bit","answers":[
+  {"type":"predicate","name":"billing","probability":0.8175744761936437},
+  {"type":"choice","name":"team","choice":"billing","probabilities":[{"value":"billing","probability":0.9478362250325003},{"value":"technical","probability":0.047189986937231164},{"value":"sales","probability":0.004973788030268673}],"confidence":0.9217543375487502},
+  {"type":"score","name":"urgency","score":1.922966354728045,"probabilities":[{"value":0,"label":"low","probability":0.015163456120649954},{"value":1,"label":"medium","probability":0.04670673303065524},{"value":2,"label":"high","probability":0.9381298108486948}],"confidence":0.8844495320920672},
+  {"type":"choice","name":null,"choice":true,"probabilities":[{"value":true,"probability":0.5621765008857981},{"value":false,"probability":0.4378234991142019}],"confidence":0.12435300177159614}],
+ "usage":{"input_tokens":184,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":184}}
 ```
 
 </details>
@@ -246,12 +273,12 @@ curl -X POST http://localhost:28100/v1/decisions \
 <summary><b><code>/v1/systemone</code> (SystemOne OpenAPI 0.2.0)</b></summary>
 
 `POST /v1/systemone` accepts an explicit local `model`, textual or structured `state`, and a map of named
-`questions`. It calls the same engine, model pool, prompt format and scorer as `/v1/decisions`.
+`questions`. It calls the same engine, model pool, prompt wording and scorer as `/v1/decisions`.
 `noul` maps to yes/no and returns `noul = p(yes)`; `choice` returns the selected name, probabilities and confidence;
 `score` returns the expected level, probabilities, confidence and the original criteria in `legend`.
 The response has `model`, `answers` and `usage` (`input_tokens`, `output_tokens: 0`).
-`x_label_mass` is the same diagnostic value called `label_mass` by Decisions. Confidence remains concentration,
-not calibrated correctness. The existing model/template and lowercase yes/no limitations above also apply.
+`x_label_mass` is the total probability of the answer labels against the full vocabulary; a low value means the
+model may prefer an answer outside the requested set. Confidence remains concentration, not calibrated correctness. The model/template and lowercase yes/no limitations of `/v1/decisions` above also apply.
 
 Swama's current backend accepts **2–26 choices, 2–10 score levels, and non-empty instructions**.
 Single-option questions, empty or omitted instructions, invalid rubrics, and unsupported counts receive a readable
@@ -261,11 +288,10 @@ Duplicate JSON object keys are rejected instead of overwriting the earlier value
 
 Question and choice-criteria maps retain request order; that order determines labels and the first winner on ties.
 String state is passed through. Objects and arrays render as compact Unicode JSON in their original member order,
-following SGLang `render_text` (`openai/serving_decisions.py:369–374`, frozen commit `eb9c9ee9`);
-this differs from Decisions' sorted structured-input rendering. For an exact comparison,
-send that same rendered text as the Decisions `input`. Rubric descriptions may be strings, objects or arrays; the
+following SGLang `render_text` (`openai/serving_decisions.py:369–374`, frozen commit `eb9c9ee9`).
+For an exact comparison, send that same rendered text as the Decisions `input` string. Rubric descriptions may be strings, objects or arrays; the
 score answer echoes their original JSON values in `legend`. Temperature, prompt version and token-ID-return fields
-belong to `/v1/decisions`, not this route. `chat_template_kwargs` supports only `enable_thinking: false`.
+are refused on this route. `chat_template_kwargs` supports only `enable_thinking: false`.
 
 The official [Python SDK](https://github.com/typesafe-ai/typesafe-sdk-python) and
 [JavaScript SDK](https://github.com/typesafe-ai/typesafe-sdk-js) can call this endpoint with a local base URL and model.
@@ -281,7 +307,7 @@ a declared type that does not match the bytes is refused, and so is a truncated 
 header before decoding), 8 MiB decoded in total, and a 13 MiB request body (HTTP 413). Remote URLs and `video` are
 refused. Images need a vision model and share the chat path's multimodal context limit (4096 tokens). Images are resized
 the way the chat path resizes them (up to 1344 px for Qwen3.5), so in practice Qwen3.5-9B fits at most 3 images per
-request; a request over the limit is refused with `maximum context length`. `"images": []` is the same as no field. `/v1/decisions` does not take images.
+request; a request over the limit is refused with `maximum context length`. `"images": []` is the same as no field. `/v1/decisions` takes images only in the OpenAI format, as `input_image` parts.
 
 ```python
 from typesafe_sdk import Choice, Noul, Score, TypeSafeClient
