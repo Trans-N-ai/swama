@@ -10,9 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.5.1] - 2026-10-07
 
 ### Fixed
-- The macOS app now ships `swama_SwamaCore.bundle` next to the embedded CLI. The v2.5.0 app crashed on its first
-  inference on any Mac other than the build machine because the CLI could not load that bundle; its assets were
-  withdrawn within minutes of publication.
+- The macOS app now ships `swama_SwamaCore.bundle` next to the embedded CLI. Since v2.4.0, the app crashed on its
+  first inference on any Mac other than the build machine because the CLI could not load that bundle (introduced in
+  #148). The v2.5.0 assets were withdrawn within minutes of publication; v2.4.0 users should upgrade.
 
 ## [2.5.0] - 2026-10-07
 
