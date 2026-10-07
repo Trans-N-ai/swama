@@ -309,3 +309,38 @@ func decisionTestPNG(red: CGFloat, green: CGFloat, blue: CGFloat) throws -> Data
 
     return data
 }
+
+// MARK: - DecisionResizeBoundTests
+
+@Suite("Decision images: resize bound")
+struct DecisionResizeBoundTests {
+    private func bound(requested: Int? = nil, qwen: Bool = false, sizes: [CGSize?]) -> Int? {
+        LegacyServerCoreBackend.decisionResizeBound(requested: requested, appliesQwenDefault: qwen, imageSizes: sizes)
+    }
+
+    @Test func noBoundMeansNoResize() {
+        #expect(bound(sizes: []) == nil)
+        #expect(bound(sizes: [CGSize(width: 512, height: 341)]) == nil)
+    }
+
+    @Test func qwenDefaultIsCappedAtTheLargestImage() {
+        #expect(bound(qwen: true, sizes: [CGSize(width: 512, height: 341)]) == 512)
+        #expect(bound(qwen: true, sizes: [CGSize(width: 2000, height: 1000)]) == 1344)
+    }
+
+    @Test func requestedBoundIsCappedAtTheLargestImage() {
+        #expect(bound(requested: 512, sizes: [CGSize(width: 300, height: 200)]) == 300)
+        #expect(bound(requested: 512, sizes: [CGSize(width: 1280, height: 720)]) == 512)
+    }
+
+    @Test func unreadableSizeKeepsTheUncappedBound() {
+        #expect(bound(qwen: true, sizes: [nil]) == 1344)
+        #expect(bound(requested: 512, sizes: [CGSize(width: 300, height: 200), nil]) == 512)
+    }
+
+    @Test func largestOfSeveralImagesWins() {
+        #expect(bound(requested: 1344, sizes: [CGSize(width: 400, height: 300), CGSize(width: 900, height: 600)]) ==
+            900
+        )
+    }
+}
