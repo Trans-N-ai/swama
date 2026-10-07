@@ -1,5 +1,6 @@
 import CoreImage
 import Foundation
+import ImageIO
 import MLXLMCommon
 import SwamaCore
 import SwamaKit
@@ -358,16 +359,76 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
 
     /// The image resize policy for a decision: the request's own maximum when given, otherwise the
     /// same policy the chat path applies to the same model, so a decision sees what chat would see.
+    /// The bound is capped at the longest side of the largest image, so images are not enlarged beyond
+    /// what the model needs: enlarging adds tokens and latency but no information. Two exceptions: a
+    /// tiny image is still enlarged until its short side reaches `minimumShortSide`, and since resize is
+    /// per request, with several images of different sizes the smaller ones may be enlarged up to the
+    /// largest one's size.
     private func decisionImageProcessing(_ request: DecisionRequest, modelName: String) -> MLXLMCommon.UserInput
         .Processing
     {
-        if let size = request.imageMaxDimension {
-            return .init(resize: .init(width: size, height: size))
+        let bound = Self.decisionResizeBound(
+            requested: request.imageMaxDimension,
+            appliesQwenDefault: !request.images.isEmpty && shouldApplyQwen35MultimodalSafety(modelName: modelName),
+            imageSizes: request.images.map { Self.pixelSize(of: $0.data) }
+        )
+        guard let bound else {
+            return .init()
         }
-        if !request.images.isEmpty, shouldApplyQwen35MultimodalSafety(modelName: modelName) {
-            return .init(resize: .init(width: 1344, height: 1344))
+
+        return .init(resize: .init(width: bound, height: bound))
+    }
+
+    /// The square resize bound for a decision, or `nil` for no resize. Never exceeds the longest side
+    /// of the largest image, except that every image's short side must still reach
+    /// `minimumShortSide` after fitting (vision processors refuse sides below their patch factor, 32
+    /// for Qwen3.5). An image whose size is unknown (`nil`) leaves the bound uncapped.
+    static func decisionResizeBound(requested: Int?, appliesQwenDefault: Bool, imageSizes: [CGSize?]) -> Int? {
+        let bound: Int
+        if let requested {
+            bound = requested
         }
-        return .init()
+        else if appliesQwenDefault {
+            bound = 1344
+        }
+        else {
+            return nil
+        }
+
+        var needed = 0
+        for size in imageSizes {
+            guard let size, size.width > 0, size.height > 0 else {
+                return bound
+            }
+
+            let longest = Double(max(size.width, size.height))
+            let shortest = Double(min(size.width, size.height))
+            let keepsShortSide = Int((Double(minimumShortSide) * longest / shortest).rounded(.up))
+            needed = max(needed, Int(longest), keepsShortSide)
+        }
+        guard needed > 0 else {
+            return bound
+        }
+
+        return min(bound, needed)
+    }
+
+    /// Smallest short side an image may have after resizing, with margin over the Qwen3.5 patch factor.
+    static let minimumShortSide = 64
+
+    /// Pixel size from the image header, without decoding. Orientation does not matter because callers
+    /// only use the longer side.
+    private static func pixelSize(of data: Data) -> CGSize? {
+        guard
+            let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = properties[kCGImagePropertyPixelWidth] as? Int,
+            let height = properties[kCGImagePropertyPixelHeight] as? Int
+        else {
+            return nil
+        }
+
+        return CGSize(width: width, height: height)
     }
 
     private func shouldApplyQwen35MultimodalSafety(modelName: String) -> Bool {
