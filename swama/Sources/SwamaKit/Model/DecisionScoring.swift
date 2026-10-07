@@ -19,6 +19,7 @@ package enum DecisionScoringError: Error, LocalizedError {
     case tooManyOptions(requested: Int, available: Int)
     case imagesNotSupported
     case invalidImage
+    case unprocessableImage(String)
 
     package var errorDescription: String? {
         switch self {
@@ -46,6 +47,8 @@ package enum DecisionScoringError: Error, LocalizedError {
         case .imagesNotSupported: "Images are not supported by this model; it has no vision processor."
 
         case .invalidImage: "The image data is invalid."
+
+        case let .unprocessableImage(message): "The image cannot be processed by this model: \(message)"
         }
     }
 }
@@ -303,7 +306,14 @@ func decisionImageInput(
     }
 
     let userInput = try decisionImageUserInput(content: content, images: images, processing: processing)
-    let input = try await context.processor.prepare(input: userInput)
+    let input: LMInput
+    do {
+        input = try await context.processor.prepare(input: userInput)
+    }
+    catch let VLMError.imageProcessingFailure(message) {
+        // The vision processor refused the image (for example an extreme aspect ratio): client input.
+        throw DecisionScoringError.unprocessableImage(message)
+    }
     let tokenIDs = input.text.tokens.flattened().asArray(Int.self)
     // The same multimodal safety limit the chat path applies to requests with media.
     let limit = min(contextLimit, InferenceSafetyLimits.multimodalContextLimit)

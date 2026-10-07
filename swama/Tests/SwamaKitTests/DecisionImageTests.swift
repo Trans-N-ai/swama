@@ -95,6 +95,16 @@ struct DecisionImageRequestTests {
             )
         }
     }
+
+    @Test func imageErrorsAreReportedAsInvalidImage() {
+        #expect(LegacyServerCoreBackend.errorCode(for: .invalidImage) == .invalidImage)
+        #expect(LegacyServerCoreBackend.errorCode(for: .unprocessableImage("too thin")) == .invalidImage)
+        #expect(LegacyServerCoreBackend.errorCode(for: .invalidLogits) == .backendFailure)
+        #expect(
+            SwamaKit.DecisionScoringError.unprocessableImage("too thin").errorDescription
+                == "The image cannot be processed by this model: too thin"
+        )
+    }
 }
 
 // MARK: - DecisionImageModelTests

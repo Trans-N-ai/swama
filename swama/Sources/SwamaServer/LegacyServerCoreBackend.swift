@@ -165,17 +165,23 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
             throw CancellationError()
         }
         catch let error as DecisionScoringError {
-            let code: SwamaError.Code =
-                switch error {
-                case .contextLimitExceeded: .contextLimitExceeded
-                case .invalidLogits: .backendFailure
-                case .invalidImage: .invalidImage
-                default: .invalidRequest
-                }
-            throw SwamaError(code: code, message: error.localizedDescription, model: request.model)
+            throw SwamaError(
+                code: Self.errorCode(for: error), message: error.localizedDescription, model: request.model
+            )
         }
         catch {
             throw mapError(error, model: request.model, fallback: .backendFailure)
+        }
+    }
+
+    /// The core error code a decision scoring failure is reported as.
+    static func errorCode(for error: DecisionScoringError) -> SwamaError.Code {
+        switch error {
+        case .contextLimitExceeded: .contextLimitExceeded
+        case .invalidLogits: .backendFailure
+        case .invalidImage,
+             .unprocessableImage: .invalidImage
+        default: .invalidRequest
         }
     }
 
@@ -358,7 +364,8 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
     }
 
     /// The image resize policy for a decision: the request's own maximum when given, otherwise the
-    /// same policy the chat path applies to the same model, so a decision sees what chat would see.
+    /// chat path's policy for the same model as the starting bound (the cap below then lowers it for
+    /// images smaller than that bound, which chat does not do).
     /// The bound is capped at the longest side of the largest image, so images are not enlarged beyond
     /// what the model needs: enlarging adds tokens and latency but no information. Two exceptions: a
     /// tiny image is still enlarged until its short side reaches `minimumShortSide`, and since resize is
