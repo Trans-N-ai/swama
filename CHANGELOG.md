@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-10-07
+
+### Fixed
+- The macOS app now ships `swama_SwamaCore.bundle` next to the embedded CLI. Since v2.4.0, the app crashed on its
+  first inference on any Mac other than the build machine because the CLI could not load that bundle (introduced in
+  #148). The v2.5.0 assets were withdrawn within minutes of publication; v2.4.0 users should upgrade.
+
 ## [2.5.0] - 2026-10-07
 
 ### Added
@@ -17,8 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SystemOne API adapter on `POST /v1/systemone`, sharing the Decisions engine (#167), with Clef-style images (#171),
   an empty state accepted like SGLang (#168), and two-letter labels for more than 26 choices (#169).
 - Image inputs for decisions at the Core and scorer layers (#170).
+- `detail: "low"` on every image in a decision resizes images to 512 px for faster, lower-detail answers (#174).
 
 ### Changed
+- Decision images are no longer enlarged beyond what the model needs; small images are read at their own size (#175).
+- Old SGLang-format requests to `/v1/decisions` get an explicit message pointing to the OpenAI format (#174).
 - Decision post-processing runs on the device, and reasoning openers are cached (#166).
 - Decision prompts are tokenized before taking the exclusive model slot (#165), and repeated tokenization in
   scoring is reduced (#157).
