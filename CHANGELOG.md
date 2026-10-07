@@ -7,15 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- **Breaking:** `POST /v1/decisions` now follows the OpenAI Decisions API (openai-openapi `4a4020d8`): `predicate`,
-  `choice` and `score` questions with optional names, string or user-message input with inline data-URL images (up to
-  4), answers in question order with typed choice values, and OpenAI-shaped `usage`. The SGLang prompt format 1 wire
-  (`id`/`question`/`options` questions, `yes_no`, `label_mass`, `temperature`, `chat_template_kwargs`,
-  `prompt_format_version`, `return_prompt_token_ids`) was removed from this route; such requests now get HTTP 400.
-  `/v1/systemone` is unchanged.
+## [2.5.0] - 2026-10-07
 
 ### Added
+- Local Decisions API on `POST /v1/decisions`, following the OpenAI Decisions API (openai-openapi `4a4020d8`):
+  `predicate`, `choice` and `score` questions with optional names, string or user-message input with inline
+  data-URL images (up to 4), answers in question order with typed choice values and candidate confidence, and
+  OpenAI-shaped `usage` (#155, #172).
+- SystemOne API adapter on `POST /v1/systemone`, sharing the Decisions engine (#167), with Clef-style images (#171),
+  an empty state accepted like SGLang (#168), and two-letter labels for more than 26 choices (#169).
+- Image inputs for decisions at the Core and scorer layers (#170).
+
+### Changed
+- Decision post-processing runs on the device, and reasoning openers are cached (#166).
+- Decision prompts are tokenized before taking the exclusive model slot (#165), and repeated tokenization in
+  scoring is reduced (#157).
+- Waiting model operations are admitted in arrival order instead of polling (#164).
+- mlx-swift-lm updated, with the tokenizer bridge isolated (#159).
+- READMEs trimmed and corrected against the current code (#156).
+
+### Fixed
+- Abandoned generations are cancelled when the client disconnects (#161).
+- Model ID validation no longer rejects every ID in Swift 6.4 Release builds (#160).
+
+## [v1.0.0] - 2025-06-04
+
+### Added
+- Initial public release
 - Initial release of Swama
 - Swift-based machine learning runtime for macOS
 - OpenAI-compatible API server
@@ -42,7 +60,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Xcode 15.0+ (for compilation)
 - Swift 6.1+
 
-## [v1.0.0] - 2025-06-04
-
-### Added
-- Initial public release
