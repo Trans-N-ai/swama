@@ -357,15 +357,15 @@ struct OpenAIDecisionsAPITests {
         )
     }
 
-    @Test func refusesEachRemovedSGLangRequestKeyWithAHint() throws {
-        let hint = "The SGLang prompt format 1 request shape was removed from /v1/decisions"
-        for field in [
-            #""temperature":1"#,
-            #""chat_template_kwargs":{"enable_thinking":false}"#,
-            #""prompt_format_version":1"#,
-            #""return_prompt_token_ids":true"#
+    @Test func removedRequestKeysAloneAreUnknownFieldsWithoutTheHint() throws {
+        // An OpenAI-shaped request with one stray SGLang field is told about that field, not the whole format.
+        for (key, field) in [
+            ("temperature", #""temperature":1"#),
+            ("chat_template_kwargs", #""chat_template_kwargs":{"enable_thinking":false}"#),
+            ("prompt_format_version", #""prompt_format_version":1"#),
+            ("return_prompt_token_ids", #""return_prompt_token_ids":true"#)
         ] {
-            refusal(body(questions: Self.predicate, extra: "," + field), contains: hint)
+            refusal(body(questions: Self.predicate, extra: "," + field), contains: "Unknown decision field '\(key)'.")
         }
     }
 
@@ -564,7 +564,7 @@ struct OpenAIDecisionsAPITests {
             ),
             (
                 body(questions: Self.predicate, extra: #","temperature":1"#),
-                legacyMessage
+                "Unknown decision field 'temperature'."
             ),
             (body(questions: ""), "questions must be an array of 1–200 questions."),
             ("[]", "Invalid decision request.")

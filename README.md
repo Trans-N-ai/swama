@@ -174,7 +174,8 @@ Qwen3-TTS and VyvoTTS `en-us-1`; Kokoro defaults to `af_heart`, KittenTTS to `Be
 earlier SGLang prompt format 1 wire (questions with `id`/`question`/`options`, `yes_no`, `label_mass`,
 `temperature`, `chat_template_kwargs`, `prompt_format_version`, `return_prompt_token_ids`) has been removed from this
 route; such requests now get HTTP 400 with a message saying the SGLang prompt format 1 request shape was removed
-(any of those top-level fields, or a question with `id`, `question`, `options` or type `yes_no`). `/v1/systemone` is unchanged.
+(a question with `id`, `question`, `options` or type `yes_no`); a removed top-level field alone, such as `temperature`
+on an otherwise OpenAI-shaped request, is reported as an unknown field. `/v1/systemone` is unchanged.
 
 **Request.** `model` (an explicit local model), `input`, `questions` (1–200) and `safety_identifier` (a string of
 at most 128 characters, or null; accepted and ignored). Parsing is strict: an unknown field at any level is refused

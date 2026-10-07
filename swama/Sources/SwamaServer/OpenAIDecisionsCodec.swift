@@ -396,16 +396,9 @@ struct OpenAIDecisionRequest: Sendable {
         ])
     }
 
+    /// Only question shapes count: an OpenAI request with a stray top-level field such as `temperature` should be told
+    /// about that field, not that its whole format is wrong.
     private static func usesRemovedSGLangShape(_ body: [String: JSONValue]) -> Bool {
-        let removedRequestKeys = [
-            "temperature",
-            "chat_template_kwargs",
-            "prompt_format_version",
-            "return_prompt_token_ids"
-        ]
-        if removedRequestKeys.contains(where: { body[$0] != nil }) {
-            return true
-        }
         guard case let .array(questions)? = body["questions"] else {
             return false
         }
