@@ -507,7 +507,8 @@ package actor RuntimeCoreEngine {
                 switch error {
                 case .contextLimitExceeded: .contextLimitExceeded
                 case .invalidLogits: .backendFailure
-                case .invalidImage: .invalidImage
+                case .invalidImage,
+                     .unprocessableImage: .invalidImage
                 default: .invalidRequest
                 }
             throw RuntimeCoreError(code: code, model: request.model, message: error.localizedDescription)
