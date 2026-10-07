@@ -118,7 +118,7 @@ struct SystemOneRequest: Sendable {
             }
         }
         return .init(
-            // SGLang accepts any state, including an empty one; /v1/decisions still requires input.
+            // SGLang accepts any state, including an empty one.
             // More than 26 options take the model's two-letter labels.
             decision: .init(
                 model: .init(model), input: state.text, questions: decisions,
@@ -270,65 +270,72 @@ enum SystemOneImages {
         var images = [DecisionImage](), total = 0
         for (index, item) in items.enumerated() {
             let (mediaType, base64) = try mediaTypeAndBase64(item, index: index)
-            guard let data = Data(base64Encoded: base64), !data.isEmpty else {
-                throw DecisionWireError.invalid("images[\(index)] is not valid base64.")
-            }
-
-            // Judge the format by its bytes; a declaration alone is not enough.
-            guard let actual = sniffedMediaType(data) else {
-                throw DecisionWireError.invalid("images[\(index)] must be PNG, JPEG, or WebP data.")
-            }
-            guard actual == mediaType else {
-                throw DecisionWireError.invalid("images[\(index)] is declared \(mediaType) but contains \(actual).")
-            }
-            guard data.count <= maximumImageBytes else {
-                throw DecisionWireError.invalid("images[\(index)] is larger than 4 MiB.")
-            }
-
-            total += data.count
-            guard total <= maximumTotalBytes else {
-                throw DecisionWireError.invalid("images exceed 8 MiB in total.")
-            }
-
-            // A truncated file still has a valid header; decoding would fill the missing rows with black.
-            guard isComplete(data) else {
-                throw DecisionWireError.invalid("images[\(index)] is truncated or incomplete.")
-            }
-            guard let pixels = pixelCount(data) else {
-                throw DecisionWireError.invalid("images[\(index)] is not a decodable image.")
-            }
-            guard pixels <= maximumPixels else {
-                throw DecisionWireError.invalid("images[\(index)] is larger than 16 megapixels.")
-            }
-
-            images.append(.init(data: data, mediaType: mediaType))
+            try images.append(decode(base64, mediaType: mediaType, field: "images[\(index)]", total: &total))
         }
         return images
+    }
+
+    /// Decodes and checks one image: the bytes must match the declared type, be whole, and fit the size and pixel
+    /// limits. `total` accumulates decoded bytes across the request. Shared by every route that takes images.
+    static func decode(_ base64: String, mediaType: String, field: String, total: inout Int) throws -> DecisionImage {
+        guard let data = Data(base64Encoded: base64), !data.isEmpty else {
+            throw DecisionWireError.invalid("\(field) is not valid base64.")
+        }
+
+        // Judge the format by its bytes; a declaration alone is not enough.
+        guard let actual = sniffedMediaType(data) else {
+            throw DecisionWireError.invalid("\(field) must be PNG, JPEG, or WebP data.")
+        }
+        guard actual == mediaType else {
+            throw DecisionWireError.invalid("\(field) is declared \(mediaType) but contains \(actual).")
+        }
+        guard data.count <= maximumImageBytes else {
+            throw DecisionWireError.invalid("\(field) is larger than 4 MiB.")
+        }
+
+        total += data.count
+        guard total <= maximumTotalBytes else {
+            throw DecisionWireError.invalid("images exceed 8 MiB in total.")
+        }
+
+        // A truncated file still has a valid header; decoding would fill the missing rows with black.
+        guard isComplete(data) else {
+            throw DecisionWireError.invalid("\(field) is truncated or incomplete.")
+        }
+        guard let pixels = pixelCount(data) else {
+            throw DecisionWireError.invalid("\(field) is not a decodable image.")
+        }
+        guard pixels <= maximumPixels else {
+            throw DecisionWireError.invalid("\(field) is larger than 16 megapixels.")
+        }
+
+        return .init(data: data, mediaType: mediaType)
+    }
+
+    /// Splits a `data:<type>;base64,<payload>` URL; the type must be on the allow-list. Remote URLs are refused.
+    static func dataURL(_ text: String, field: String) throws -> (mediaType: String, base64: String) {
+        guard text.lowercased().hasPrefix("data:") else {
+            throw DecisionWireError.invalid("\(field) must be a base64 data URL; remote URLs are not accepted.")
+        }
+        guard let comma = text.firstIndex(of: ","),
+              let header = Optional(text[text.index(text.startIndex, offsetBy: 5) ..< comma]),
+              header.lowercased().hasSuffix(";base64")
+        else {
+            throw DecisionWireError.invalid("\(field) must be a base64 data URL.")
+        }
+
+        let mediaType = String(header.dropLast(";base64".count)).lowercased()
+        guard mediaTypes.contains(mediaType) else {
+            throw DecisionWireError.invalid("\(field) data URL must be image/png, image/jpeg, or image/webp.")
+        }
+
+        return (mediaType, String(text[text.index(after: comma)...]))
     }
 
     private static func mediaTypeAndBase64(_ item: SystemOneJSON, index: Int) throws -> (String, String) {
         switch item {
         case let .string(text):
-            guard text.lowercased().hasPrefix("data:") else {
-                throw DecisionWireError.invalid(
-                    "images[\(index)] must be a base64 data URL; remote URLs are not accepted."
-                )
-            }
-            guard let comma = text.firstIndex(of: ","),
-                  let header = Optional(text[text.index(text.startIndex, offsetBy: 5) ..< comma]),
-                  header.lowercased().hasSuffix(";base64")
-            else {
-                throw DecisionWireError.invalid("images[\(index)] must be a base64 data URL.")
-            }
-
-            let mediaType = String(header.dropLast(";base64".count)).lowercased()
-            guard mediaTypes.contains(mediaType) else {
-                throw DecisionWireError.invalid(
-                    "images[\(index)] data URL must be image/png, image/jpeg, or image/webp."
-                )
-            }
-
-            return (mediaType, String(text[text.index(after: comma)...]))
+            return try dataURL(text, field: "images[\(index)]")
 
         case let .object(members):
             if let unknown = members.first(where: { !["content_type", "base64"].contains($0.name) }) {

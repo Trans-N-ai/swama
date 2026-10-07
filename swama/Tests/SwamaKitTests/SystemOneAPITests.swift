@@ -172,18 +172,4 @@ struct SystemOneAPITests {
         }
         #expect(throws: DecisionWireError.self) { try parse(#"{"model":"m","state":null,"# + questions + "}") }
     }
-
-    @Test func decisionsStillRefusesBlankInput() throws {
-        for input in [#""""#, #"" ""#] {
-            let body = #"{"model":"m","input":"# + input
-                + #","questions":[{"id":"q","type":"yes_no","question":"Is it?"}]}"#
-            do {
-                _ = try DecisionsHandler.parse(JSONDecoder().decode([String: JSONValue].self, from: Data(body.utf8)))
-                Issue.record("/v1/decisions accepted a blank input")
-            }
-            catch {
-                #expect(error.localizedDescription == "input must not be blank.")
-            }
-        }
-    }
 }

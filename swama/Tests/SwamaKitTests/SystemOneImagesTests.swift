@@ -169,14 +169,15 @@ struct SystemOneImagesTests {
         }
     }
 
-    @Test func decisionsRouteStillRefusesImages() throws {
+    @Test func decisionsRouteRefusesTheTopLevelImagesExtension() throws {
+        // /v1/decisions takes images only as input_image parts, not as Clef's top-level array.
         let body: [String: JSONValue] = [
             "model": .string("m"), "input": .string("x"),
-            "questions": .array([.object(["id": .string("q"), "type": .string("yes_no"), "question": .string("?")])]),
+            "questions": .array([.object(["type": .string("predicate"), "instructions": .string("?")])]),
             "images": .array([.string("data:image/png;base64,AAAA")])
         ]
         #expect(throws: DecisionWireError.self) {
-            _ = try DecisionsHandler.parse(body)
+            _ = try OpenAIDecisionRequest.parse(body)
         }
     }
 
