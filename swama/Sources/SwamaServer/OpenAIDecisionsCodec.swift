@@ -47,6 +47,12 @@ struct OpenAIDecisionRequest: Sendable {
     static let maximumSafetyIdentifierLength = 128
 
     static func parse(_ body: [String: JSONValue]) throws -> OpenAIDecisionRequest {
+        if usesRemovedSGLangShape(body) {
+            throw invalid(
+                "The SGLang prompt format 1 request shape was removed from /v1/decisions; "
+                    + "send the OpenAI Decisions format (questions with type, name and instructions)."
+            )
+        }
         try allow(body, ["model", "input", "questions", "safety_identifier"])
         guard case let .string(model)? = body["model"],
               !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -379,6 +385,29 @@ struct OpenAIDecisionRequest: Sendable {
                 ("total_tokens", .integer(result.usage.totalTokens))
             ]))
         ])
+    }
+
+    private static func usesRemovedSGLangShape(_ body: [String: JSONValue]) -> Bool {
+        let removedRequestKeys = [
+            "temperature",
+            "chat_template_kwargs",
+            "prompt_format_version",
+            "return_prompt_token_ids"
+        ]
+        if removedRequestKeys.contains(where: { body[$0] != nil }) {
+            return true
+        }
+        guard case let .array(questions)? = body["questions"] else {
+            return false
+        }
+
+        let removedQuestionKeys = ["id", "question", "options"]
+        for case let .object(question) in questions {
+            if removedQuestionKeys.contains(where: { question[$0] != nil }) || question["type"] == .string("yes_no") {
+                return true
+            }
+        }
+        return false
     }
 
     private static func allow(_ object: [String: JSONValue], _ keys: Set<String>) throws {
