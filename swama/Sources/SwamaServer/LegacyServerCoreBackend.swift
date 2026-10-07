@@ -359,9 +359,11 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
 
     /// The image resize policy for a decision: the request's own maximum when given, otherwise the
     /// same policy the chat path applies to the same model, so a decision sees what chat would see.
-    /// The bound is capped at the longest side of the largest image, so images are never enlarged:
-    /// enlarging adds tokens and latency but no information. Resize is per request, so with several
-    /// images of different sizes the smaller ones may still be enlarged up to the largest one's size.
+    /// The bound is capped at the longest side of the largest image, so images are not enlarged beyond
+    /// what the model needs: enlarging adds tokens and latency but no information. Two exceptions: a
+    /// tiny image is still enlarged until its short side reaches `minimumShortSide`, and since resize is
+    /// per request, with several images of different sizes the smaller ones may be enlarged up to the
+    /// largest one's size.
     private func decisionImageProcessing(_ request: DecisionRequest, modelName: String) -> MLXLMCommon.UserInput
         .Processing
     {
@@ -378,7 +380,9 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
     }
 
     /// The square resize bound for a decision, or `nil` for no resize. Never exceeds the longest side
-    /// of the largest image; an image whose size is unknown (`nil`) leaves the bound uncapped.
+    /// of the largest image, except that every image's short side must still reach
+    /// `minimumShortSide` after fitting (vision processors refuse sides below their patch factor, 32
+    /// for Qwen3.5). An image whose size is unknown (`nil`) leaves the bound uncapped.
     static func decisionResizeBound(requested: Int?, appliesQwenDefault: Bool, imageSizes: [CGSize?]) -> Int? {
         let bound: Int
         if let requested {
@@ -391,20 +395,26 @@ struct LegacyServerCoreBackend: SwamaEngineBackend {
             return nil
         }
 
-        var longestSide = 0
+        var needed = 0
         for size in imageSizes {
-            guard let size else {
+            guard let size, size.width > 0, size.height > 0 else {
                 return bound
             }
 
-            longestSide = max(longestSide, Int(max(size.width, size.height)))
+            let longest = Double(max(size.width, size.height))
+            let shortest = Double(min(size.width, size.height))
+            let keepsShortSide = Int((Double(minimumShortSide) * longest / shortest).rounded(.up))
+            needed = max(needed, Int(longest), keepsShortSide)
         }
-        guard longestSide > 0 else {
+        guard needed > 0 else {
             return bound
         }
 
-        return min(bound, longestSide)
+        return min(bound, needed)
     }
+
+    /// Smallest short side an image may have after resizing, with margin over the Qwen3.5 patch factor.
+    static let minimumShortSide = 64
 
     /// Pixel size from the image header, without decoding. Orientation does not matter because callers
     /// only use the longer side.

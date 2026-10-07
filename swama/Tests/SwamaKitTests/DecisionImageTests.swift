@@ -338,6 +338,18 @@ struct DecisionResizeBoundTests {
         #expect(bound(requested: 512, sizes: [CGSize(width: 300, height: 200), nil]) == 512)
     }
 
+    @Test func tinyImagesAreStillEnlargedToTheMinimumShortSide() {
+        // The vision processor refuses sides below its patch factor, so tiny images keep being enlarged.
+        #expect(bound(qwen: true, sizes: [CGSize(width: 8, height: 8)]) == 64)
+        #expect(bound(qwen: true, sizes: [CGSize(width: 16, height: 32)]) == 128)
+        #expect(bound(requested: 512, sizes: [CGSize(width: 40, height: 20)]) == 128)
+        // An extreme aspect ratio cannot reach the minimum within the bound; the bound wins, as before.
+        #expect(bound(qwen: true, sizes: [CGSize(width: 2000, height: 10)]) == 1344)
+        // With several images, the box must keep every image's short side.
+        #expect(bound(qwen: true, sizes: [CGSize(width: 900, height: 600), CGSize(width: 16, height: 32)]) == 900)
+        #expect(bound(qwen: true, sizes: [CGSize(width: 200, height: 200), CGSize(width: 300, height: 30)]) == 640)
+    }
+
     @Test func largestOfSeveralImagesWins() {
         #expect(bound(requested: 1344, sizes: [CGSize(width: 400, height: 300), CGSize(width: 900, height: 600)]) ==
             900
