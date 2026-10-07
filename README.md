@@ -196,7 +196,9 @@ refuses them.
 a string or a list of `input_text` and `input_image` parts. Texts are joined with newlines in order and images keep
 their order. Images must be base64 data URLs and follow the `/v1/systemone` image rules below: PNG, JPEG or WebP
 checked by file signature, complete files, at most 4 MiB and 16 megapixels each, 8 MiB in total, and at most 4 per
-request (fewer than OpenAI's 128). They need a vision model. `detail` is accepted and ignored. Other roles, other part
+request (fewer than OpenAI's 128). They need a vision model. When every image sets `detail: "low"`, images are resized to fit
+512 pixels per side, which is several times faster (Qwen3.5-9B on an M5 Pro: one 1280-pixel photo drops from about 1,240
+to 240 input tokens and from 1.8 s to 0.36 s); otherwise `detail` keeps the default resizing. Other roles, other part
 types and remote URLs are refused. A blank input is allowed and rendered as is.
 
 **Response.** `model`, `answers` in question order, and `usage`. Each answer carries its `name`, or `null` when the

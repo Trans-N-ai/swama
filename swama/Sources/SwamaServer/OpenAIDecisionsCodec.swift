@@ -45,6 +45,8 @@ struct OpenAIDecisionRequest: Sendable {
     static let maximumQuestions = 200
     static let maximumChoices = 255
     static let maximumSafetyIdentifierLength = 128
+    /// `detail: "low"` on every image resizes images to fit this many pixels per side, trading detail for speed.
+    static let lowDetailMaxDimension = 512
 
     static func parse(_ body: [String: JSONValue]) throws -> OpenAIDecisionRequest {
         if usesRemovedSGLangShape(body) {
@@ -69,7 +71,7 @@ struct OpenAIDecisionRequest: Sendable {
             }
         }
 
-        let (input, images) = try parseInput(body["input"])
+        let (input, images, allLowDetail) = try parseInput(body["input"])
         guard case let .array(rawQuestions)? = body["questions"],
               (1 ... maximumQuestions).contains(rawQuestions.count)
         else {
@@ -94,7 +96,9 @@ struct OpenAIDecisionRequest: Sendable {
                 model: .init(model), input: input, questions: decisions,
                 allowsBlankInput: true,
                 allowsPairLabels: metadata.contains { $0.values.count > 26 },
-                images: images
+                images: images,
+                // Core resizes per request, not per image, so any image that is not low detail keeps the default.
+                imageMaxDimension: allLowDetail ? lowDetailMaxDimension : nil
             ),
             questions: metadata
         )
@@ -215,15 +219,16 @@ struct OpenAIDecisionRequest: Sendable {
         }
     }
 
-    /// The text joined with newlines in order, and the images in order. Only user messages with `input_text` and
-    /// `input_image` parts are served; images must be data URLs.
-    private static func parseInput(_ value: JSONValue?) throws -> (String, [DecisionImage]) {
+    /// The text joined with newlines in order, the images in order, and whether there are images and every one asked
+    /// for low detail. Only user messages with `input_text` and `input_image` parts are served; images must be data
+    /// URLs.
+    private static func parseInput(_ value: JSONValue?) throws -> (String, [DecisionImage], Bool) {
         switch value {
         case let .string(text)?:
-            return (text, [])
+            return (text, [], false)
 
         case let .array(messages)?:
-            var texts = [String](), sources = [(field: String, mediaType: String, base64: String)]()
+            var texts = [String](), sources = [(field: String, mediaType: String, base64: String)](), lowDetail = 0
             for (messageIndex, raw) in messages.enumerated() {
                 let field = "input[\(messageIndex)]"
                 guard case let .object(message) = raw else {
@@ -265,12 +270,16 @@ struct OpenAIDecisionRequest: Sendable {
                                 throw invalid("\(partField) image_url must be a string.")
                             }
 
-                            // The detail level is accepted and ignored; images use the chat path's resizing.
+                            // Only low changes anything; high, auto, original and null use the chat path's resizing.
                             if let detail = part["detail"], detail != .null {
                                 guard case let .string(level) = detail,
                                       ["low", "high", "auto", "original"].contains(level)
                                 else {
                                     throw invalid("\(partField) detail must be low, high, auto, original, or null.")
+                                }
+
+                                if level == "low" {
+                                    lowDetail += 1
                                 }
                             }
                             let (mediaType, base64) = try SystemOneImages.dataURL(url, field: partField)
@@ -298,7 +307,7 @@ struct OpenAIDecisionRequest: Sendable {
                     total: &total
                 ))
             }
-            return (texts.joined(separator: "\n"), images)
+            return (texts.joined(separator: "\n"), images, !images.isEmpty && lowDetail == images.count)
 
         default:
             throw invalid("input must be a string or an array of user messages.")

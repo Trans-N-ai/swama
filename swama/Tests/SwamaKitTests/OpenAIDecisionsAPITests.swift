@@ -115,6 +115,33 @@ struct OpenAIDecisionsAPITests {
         #expect(try parse(body(input: #""""#, questions: Self.predicate)).decision.input == "")
     }
 
+    @Test func lowDetailOnEveryImageResizesTo512() throws {
+        let pngText = try image(.png).base64EncodedString()
+        func images(_ details: [String?]) -> String {
+            let parts = details.map { detail in
+                let field = detail.map { #","detail":"\#($0)""# } ?? ""
+                return #"{"type":"input_image","image_url":"data:image/png;base64,\#(pngText)"\#(field)}"#
+            }
+            return #"[{"role":"user","content":[\#(parts.joined(separator: ","))]}]"#
+        }
+        func dimension(_ input: String) throws -> Int? {
+            try parse(body(input: input, questions: Self.predicate)).decision.imageMaxDimension
+        }
+
+        #expect(OpenAIDecisionRequest.lowDetailMaxDimension == 512)
+        #expect(try dimension(images(["low"])) == 512)
+        #expect(try dimension(images(["low", "low"])) == 512)
+        // Core resizes per request, so one image that is not low detail keeps the default for all of them.
+        #expect(try dimension(images(["low", "high"])) == nil)
+        #expect(try dimension(images(["low", nil])) == nil)
+        for detail in ["high", "auto", "original"] {
+            #expect(try dimension(images([detail])) == nil)
+        }
+        #expect(try dimension(images([nil])) == nil)
+        #expect(try dimension(#""text only""#) == nil)
+        #expect(try dimension("[]") == nil)
+    }
+
     @Test func safetyIdentifierIsAcceptedAndIgnored() throws {
         let plain = try parse(body(questions: Self.predicate)).decision
         for value in ["null", #""""#, #""\#(String(repeating: "é", count: 128))""#] {
