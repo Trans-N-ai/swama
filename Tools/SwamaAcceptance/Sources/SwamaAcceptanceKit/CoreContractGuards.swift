@@ -26,12 +26,8 @@ func compilerPublicAPIReport(
 
     var environment = try developerEnvironment(developerDirectory)
     environment["SWIFTPM_MODULECACHE_OVERRIDE"] = scratch.appendingPathComponent("module-cache").path
-    let swift = developerDirectory.appendingPathComponent(
-        "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
-    )
-    let extractor = developerDirectory.appendingPathComponent(
-        "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-symbolgraph-extract"
-    )
+    let swift = try selectedSwiftTool("swift", developerDirectory: developerDirectory)
+    let extractor = try selectedSwiftTool("swift-symbolgraph-extract", developerDirectory: developerDirectory)
     guard FileManager.default.isExecutableFile(atPath: swift.path),
           FileManager.default.isExecutableFile(atPath: extractor.path)
     else {
@@ -706,9 +702,7 @@ private final class PreciseIdentifierModuleResolver {
     private var cache: [String: Resolution] = [:]
 
     init(developerDirectory: URL, preciseIdentifiers: Set<String>) throws {
-        demangler = developerDirectory.appendingPathComponent(
-            "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-demangle"
-        )
+        demangler = try selectedSwiftTool("swift-demangle", developerDirectory: developerDirectory)
         guard FileManager.default.isExecutableFile(atPath: demangler.path) else {
             throw AcceptanceFailure.unknown("missing Swift demangler: \(demangler.path)")
         }

@@ -41,6 +41,35 @@ func developerEnvironment(_ developerDirectory: URL) throws -> [String: String] 
     return environment
 }
 
+func selectedSwiftTool(_ name: String, developerDirectory: URL) throws -> URL {
+    let result = try runCommand(
+        ["xcrun", "--find", name],
+        currentDirectory: FileManager.default.temporaryDirectory,
+        environment: developerEnvironment(developerDirectory),
+        timeout: 10,
+        sampleMemory: false,
+        timeoutFailureKind: .unknown,
+        timeoutContext: "Swift toolchain selection"
+    )
+    let path = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard result.returnCode == 0, path.hasPrefix("/"),
+          FileManager.default.isExecutableFile(atPath: path)
+    else {
+        throw AcceptanceFailure.unknown("cannot resolve selected Swift tool \(name): \(commandFailureSummary(result))")
+    }
+
+    let tool = URL(fileURLWithPath: path)
+    if name != "swift" {
+        let compiler = try selectedSwiftTool("swift", developerDirectory: developerDirectory)
+        guard tool.deletingLastPathComponent().resolvingSymlinksInPath()
+            == compiler.deletingLastPathComponent().resolvingSymlinksInPath()
+        else {
+            throw AcceptanceFailure.unknown("selected Swift tools come from different toolchains")
+        }
+    }
+    return tool
+}
+
 func runCommand(
     _ command: [String],
     currentDirectory: URL,
