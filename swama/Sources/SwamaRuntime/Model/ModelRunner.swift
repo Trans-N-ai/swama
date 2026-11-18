@@ -263,7 +263,7 @@ package actor ModelRunner {
                 case .miss:
                     // A cacheable miss (no prior slot, mismatch, rotated, or a KV config change):
                     // full prefill on a fresh cache, captured so it can be stored for next turn.
-                    let freshCache = context.model.newCache(parameters: generationParameters)
+                    let freshCache = try context.model.newCache(parameters: generationParameters)
                     return try buildPromptCacheGenerationRun(
                         iterInput: lmInput,
                         cache: freshCache,
@@ -289,7 +289,10 @@ package actor ModelRunner {
 
                 do {
                     switch generationEvent {
-                    case let .chunk(chunkString):
+                    // Swama v2 exposes one text stream. Keep separately emitted reasoning
+                    // in that stream rather than silently dropping model output on upgrade.
+                    case let .chunk(chunkString),
+                         let .reasoning(chunkString):
                         if didRecordFirstToken == false, chunkString.isEmpty == false {
                             SwamaDiagnostics.firstToken(diagnosticOperation, model: modelName)
                             didRecordFirstToken = true
@@ -310,6 +313,15 @@ package actor ModelRunner {
 
                     case let .info(info):
                         capturedCompletionInfo = info
+
+                    case let .rejectedToolCall(rejection):
+                        // This API has no rejected-call event; propagate the upstream error
+                        // instead of returning a successful response with a lost tool call.
+                        throw RejectedToolCallError(rejection)
+
+                    case .steering:
+                        // No steering controls are submitted by this generation path.
+                        break
 
                     case let .toolCall(toolCall):
                         if didRecordFirstToken == false {
@@ -786,6 +798,16 @@ private func buildPromptCacheGenerationRun(
         kvBits: generationParameters.kvBits
     )
 
+    // Seed the upstream reasoning parser from the whole prompt, including a reused
+    // cache prefix, so cached and uncached generation route text identically.
+    let reasoningPrimedInside = context.configuration.reasoningConfig.map { config in
+        ReasoningEventEmitter.promptEndsInsideReasoning(
+            promptTokens: promptCacheTokenArray(fullHistory ?? iterInput.text.tokens),
+            config: config,
+            tokenizer: context.tokenizer
+        )
+    } ?? false
+
     let prefillStart = Date()
     let iterator: TokenIterator
     switch strategy {
@@ -809,7 +831,7 @@ private func buildPromptCacheGenerationRun(
             cache: cache,
             processor: wrappedProcessor,
             sampler: generationParameters.sampler(),
-            prefillStepSize: generationParameters.prefillStepSize,
+            prefill: generationParameters.prefill,
             maxTokens: generationParameters.maxTokens
         )
 
@@ -830,7 +852,9 @@ private func buildPromptCacheGenerationRun(
         modelConfiguration: context.configuration,
         tokenizer: context.tokenizer,
         iterator: iterator,
-        tools: tools
+        tools: tools,
+        toolCallPolicy: generationParameters.toolCallPolicy,
+        reasoningPrimedInside: reasoningPrimedInside
     )
 
     return PromptCacheGenerationRun(stream: stream, task: task, cache: cache, prefillMs: prefillMs)

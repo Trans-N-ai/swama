@@ -1,6 +1,6 @@
 # Swama
 
-[![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
+[![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://swift.org)
 [![macOS](https://img.shields.io/badge/macOS-15.4+-blue.svg)](https://www.apple.com/macos/)
 [![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -18,7 +18,7 @@
 ## 系统要求
 
 - Apple Silicon Mac，macOS 15.4 或更高
-- 仅从源码构建时需要：带 Swift 6.2 工具链的 Xcode
+- 仅从源码构建时需要：带 Swift 6.3 工具链的 Xcode
 
 ## 安装
 

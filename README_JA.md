@@ -1,6 +1,6 @@
 # Swama
 
-[![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
+[![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://swift.org)
 [![macOS](https://img.shields.io/badge/macOS-15.4+-blue.svg)](https://www.apple.com/macos/)
 [![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -18,7 +18,7 @@
 ## 動作環境
 
 - Apple Silicon Mac、macOS 15.4 以降
-- ソースからビルドする場合のみ：Swift 6.2 ツールチェーンを含む Xcode
+- ソースからビルドする場合のみ：Swift 6.3 ツールチェーンを含む Xcode
 
 ## インストール
 

@@ -1,6 +1,6 @@
 # Swama
 
-[![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
+[![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://swift.org)
 [![macOS](https://img.shields.io/badge/macOS-15.4+-blue.svg)](https://www.apple.com/macos/)
 [![MLX](https://img.shields.io/badge/MLX-Swift-green.svg)](https://github.com/ml-explore/mlx-swift)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -20,7 +20,7 @@ OpenAI-compatible API, a command-line tool and a menu bar app.
 ## Requirements
 
 - Apple Silicon Mac, macOS 15.4 or later
-- Building from source only: Xcode with the Swift 6.2 toolchain
+- Building from source only: Xcode with the Swift 6.3 toolchain
 
 ## Install
 

@@ -53,8 +53,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/DecisionScoring.swift",
-        legacySHA256: "ed516d6fcb03659627fe8cbd6542b13d69246c27e738d159040b84e53866a9ed",
-        runtimeSHA256: "b5a8beab5463a7226c0742987d1bd8f936b0909e10e88a3cb542b9607dfff376",
+        legacySHA256: "fee4ef2430c763925ff712766828888204447781b443eb1c32f9e45a9726edf3",
+        runtimeSHA256: "f49d9daaa68bacab62ebe22618eb87d6a3dd4f8e223bfbffbd64e0a7a5afc804",
         derivedSymbols: ["func scoreDecision", "struct DecisionLogits"]
     ),
     .init(
@@ -169,8 +169,8 @@ private let lineage: [LineageEntry] = [
     ),
     .init(
         path: "Model/ModelRunner.swift",
-        legacySHA256: "a982adaadc1f4c1d575c73930a92f357440e7a8bfed1fd8da9b10b2e64b12868",
-        runtimeSHA256: "b2f6517948bc74de0bc6f9d3b1a28d39f4f1065e6819db77e0318e7eeb30c2cf",
+        legacySHA256: "56e3fcd0ba1fa0cbaf614fc030d403f496a35d5dce57ddc65439b4ce755df9b1",
+        runtimeSHA256: "41f39e4a9127a1dcae40531512a4d7bab8cc968f62bfe4afeb665abe640e1065",
         derivedSymbols: ["actor ModelRunner", "struct ChatRunResult", "func runChat"]
     ),
     .init(

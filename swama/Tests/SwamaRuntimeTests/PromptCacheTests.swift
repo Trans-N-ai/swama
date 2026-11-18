@@ -243,7 +243,8 @@ private func words(_ ids: [Int]) -> String {
 func makeTestContainer(
     numLayers: Int = 2,
     contentVocabSize: Int = 16,
-    period: Int = 2
+    period: Int = 2,
+    reasoningConfig: ReasoningConfig? = nil
 ) -> (container: MLXLMCommon.ModelContainer, tokenizer: WordVocabTokenizer) {
     let tokenizer = WordVocabTokenizer(contentVocabSize: contentVocabSize)
     let model = WordEchoModel(
@@ -252,7 +253,9 @@ func makeTestContainer(
         contentVocabSize: contentVocabSize,
         period: period
     )
-    let configuration = MLXLMCommon.ModelConfiguration(id: "prompt-cache-test-\(UUID().uuidString)")
+    let configuration = MLXLMCommon.ModelConfiguration(
+        id: "prompt-cache-test-\(UUID().uuidString)", reasoningConfig: reasoningConfig
+    )
     let context = MLXLMCommon.ModelContext(
         configuration: configuration,
         model: model,
@@ -936,6 +939,58 @@ struct PromptCacheIteratorStrategyTests {
 
 @Suite("Prompt cache: end to end")
 struct PromptCacheEndToEndTests {
+    @Test func primedReasoningSurvivesCachedGenerationAndMatchesUpstreamText() async throws {
+        let reasoning = ReasoningConfig(
+            startDelimiter: "<sep>", endDelimiter: "w3", promptStrategy: .alwaysOn
+        )
+        let (container, _) = makeTestContainer(reasoningConfig: reasoning)
+        let messages: [MLXLMCommon.Chat.Message] = [.user(words([1, 2]))]
+        let parameters = GenerateParameters(maxTokens: 3, maxKVSize: 4096, temperature: 0)
+        let referenceStream = try await container.perform { context in
+            let input = try await context.processor.prepare(input: .init(chat: messages))
+            return try generate(input: input, parameters: parameters, context: context)
+        }
+        var referenceText = ""
+        var sawReasoning = false
+        for await event in referenceStream {
+            switch event {
+            case let .chunk(text): referenceText += text
+
+            case let .reasoning(text):
+                sawReasoning = true
+                referenceText += text
+
+            default: break
+            }
+        }
+        #expect(sawReasoning, "the reference must actually emit the new reasoning event")
+        #expect(referenceText.components(separatedBy: "w2").count == 3)
+
+        let modelName = await container.configuration.name
+        let store = PromptCacheStore()
+        // Seed only a strict prefix; runChat must restore it and generate from the suffix.
+        let prefix = [WordVocabTokenizer.userToken, 1]
+        // WordEchoModel uses this same attention-cache factory for each of its layers.
+        let prefixCache = try (0 ..< 2).map { _ in try makeAttentionKVCache(parameters: parameters) }
+        let keys = MLXArray(prefix.map(Float.init), [1, 1, prefix.count, 1])
+        for layer in prefixCache {
+            _ = layer.update(keys: keys, values: keys)
+        }
+        store.checkin(
+            modelName: modelName,
+            slot: PromptCacheSlot(
+                tokens: prefix, cache: prefixCache,
+                kvConfig: PromptCacheKVConfig(maxKVSize: 4096)
+            ),
+            epoch: store.currentEpoch(modelName: modelName)
+        )
+        let runner = ModelRunner(container: container, promptCacheStore: store)
+        let result = try await runner.runChat(userInput: .init(chat: messages), parameters: parameters)
+        #expect(result.output == referenceText)
+        #expect(result.rawText == referenceText)
+        #expect(prefixCache[0].offset > prefix.count, "the seeded prefix must actually be reused")
+    }
+
     @Test func multiTurnEquivalenceWithRepetitionPenalty() async throws {
         let (container, _) = makeTestContainer(period: 5)
         // Small per-turn generations keep each turn's *suffix* (previous reply + new user
