@@ -934,7 +934,7 @@ private func storePromptCacheIfReusable(
 // MARK: - GenerationTextRenderer
 
 /// Preserve recognizable reasoning boundaries in the v2 text stream.
-private struct GenerationTextRenderer {
+struct GenerationTextRenderer {
     private var reasoningOpen = false
 
     mutating func render(_ event: Generation) -> String? {
@@ -956,12 +956,21 @@ private struct GenerationTextRenderer {
             return closeReasoning() + text
 
         case let .rejectedToolCall(rejection):
-            let preview = rejection.isPreviewTruncated
-                ? "[Rejected tool call output: \(rejection.rawTextByteCount) bytes; preview truncated]\n"
-                + rejection.rawTextPreview
-                : rejection.rawTextPreview
-            let text = closeReasoning() + preview
-            return text.isEmpty ? nil : text
+            let notice = "[Tool call rejected: \(rejection.reason.rawValue)]"
+            let diagnostic: String
+            if rejection.isPreviewTruncated {
+                diagnostic = notice + " Output \(rejection.rawTextByteCount) bytes; truncated preview omitted."
+            }
+            else {
+                // Diagnostic text must not retain active tool-protocol delimiters.
+                let preview = rejection.rawTextPreview
+                    .replacingOccurrences(of: "<", with: "‹")
+                    .replacingOccurrences(of: ">", with: "›")
+                    .replacingOccurrences(of: "[", with: "〔")
+                    .replacingOccurrences(of: "]", with: "〕")
+                diagnostic = notice + "\n" + preview
+            }
+            return closeReasoning() + diagnostic
 
         case .info,
              .toolCall:

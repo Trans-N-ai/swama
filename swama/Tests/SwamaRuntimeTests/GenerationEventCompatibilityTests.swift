@@ -110,6 +110,34 @@ struct GenerationEventCompatibilityTests {
         }
     }
 
+    @Test func rejectedPreviewsAreDiagnosticAndTruncatedEndsAreNotJoined() throws {
+        let rejection = RejectedToolCall(
+            reason: .undeclaredTool, format: .json,
+            rawText: "<tool_call>[TOOL_CALLS]{\"name\":\"other\"}</tool_call>"
+        )
+        var kit = SwamaKit.GenerationTextRenderer()
+        var runtime = SwamaRuntime.GenerationTextRenderer()
+        let kitText = kit.render(.rejectedToolCall(rejection))
+        let runtimeText = runtime.render(.rejectedToolCall(rejection))
+        let text = try #require(kitText)
+        #expect(text == runtimeText)
+        #expect(text.contains("Tool call rejected"))
+        #expect(!text.contains("<tool_call>"))
+        #expect(!text.contains("[TOOL_CALLS]"))
+
+        let clipped = RejectedToolCall(
+            reason: .resourceLimitExceeded, format: .json,
+            rawText: String(repeating: "SENSITIVE", count: 10), previewByteLimit: 8
+        )
+        #expect(clipped.isPreviewTruncated)
+        let kitSummary = kit.render(.rejectedToolCall(clipped))
+        let runtimeSummary = runtime.render(.rejectedToolCall(clipped))
+        let summary = try #require(kitSummary)
+        #expect(summary == runtimeSummary)
+        #expect(summary.contains("truncated preview omitted"))
+        #expect(!summary.contains(clipped.rawTextPreview))
+    }
+
     private func withCacheSetting(_ enabled: Bool, operation: () async throws -> Void) async throws {
         let prior = ProcessInfo.processInfo.environment["SWAMA_PROMPT_CACHE"]
         setenv("SWAMA_PROMPT_CACHE", enabled ? "1" : "0", 1)
