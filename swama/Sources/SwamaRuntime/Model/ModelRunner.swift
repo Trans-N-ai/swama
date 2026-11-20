@@ -263,7 +263,7 @@ package actor ModelRunner {
                 case .miss:
                     // A cacheable miss (no prior slot, mismatch, rotated, or a KV config change):
                     // full prefill on a fresh cache, captured so it can be stored for next turn.
-                    let freshCache = context.model.newCache(parameters: generationParameters)
+                    let freshCache = try context.model.newCache(parameters: generationParameters)
                     return try buildPromptCacheGenerationRun(
                         iterInput: lmInput,
                         cache: freshCache,
@@ -282,14 +282,14 @@ package actor ModelRunner {
             )
 
             var thrownError: Error?
+            var textRenderer = GenerationTextRenderer()
             for await generationEvent in run.stream {
                 if Task.isCancelled {
                     break
                 }
 
                 do {
-                    switch generationEvent {
-                    case let .chunk(chunkString):
+                    if let chunkString = textRenderer.render(generationEvent) {
                         if didRecordFirstToken == false, chunkString.isEmpty == false {
                             SwamaDiagnostics.firstToken(diagnosticOperation, model: modelName)
                             didRecordFirstToken = true
@@ -307,9 +307,21 @@ package actor ModelRunner {
                             // Only accumulate if no onToken callback (for non-streaming)
                             output += chunkString
                         }
+                    }
+                    switch generationEvent {
+                    case .chunk,
+                         .reasoning,
+                         .steering:
+                        break
 
                     case let .info(info):
                         capturedCompletionInfo = info
+
+                    case let .rejectedToolCall(rejection):
+                        // Return the bounded preview to the caller, never to automatic logs.
+                        modelRunnerLogger.info(
+                            "Model tool output rejected: \(rejection.reason.rawValue), bytes=\(rejection.rawTextByteCount)"
+                        )
 
                     case let .toolCall(toolCall):
                         if didRecordFirstToken == false {
@@ -786,6 +798,16 @@ private func buildPromptCacheGenerationRun(
         kvBits: generationParameters.kvBits
     )
 
+    // Seed the upstream reasoning parser from the whole prompt, including a reused
+    // cache prefix, so cached and uncached generation route text identically.
+    let reasoningPrimedInside = context.configuration.reasoningConfig.map { config in
+        ReasoningEventEmitter.promptEndsInsideReasoning(
+            promptTokens: promptCacheTokenArray(fullHistory ?? iterInput.text.tokens),
+            config: config,
+            tokenizer: context.tokenizer
+        )
+    } ?? false
+
     let prefillStart = Date()
     let iterator: TokenIterator
     switch strategy {
@@ -809,7 +831,7 @@ private func buildPromptCacheGenerationRun(
             cache: cache,
             processor: wrappedProcessor,
             sampler: generationParameters.sampler(),
-            prefillStepSize: generationParameters.prefillStepSize,
+            prefill: generationParameters.prefill,
             maxTokens: generationParameters.maxTokens
         )
 
@@ -830,7 +852,9 @@ private func buildPromptCacheGenerationRun(
         modelConfiguration: context.configuration,
         tokenizer: context.tokenizer,
         iterator: iterator,
-        tools: tools
+        tools: tools,
+        toolCallPolicy: generationParameters.toolCallPolicy,
+        reasoningPrimedInside: reasoningPrimedInside
     )
 
     return PromptCacheGenerationRun(stream: stream, task: task, cache: cache, prefillMs: prefillMs)
@@ -904,5 +928,66 @@ private func storePromptCacheIfReusable(
         modelRunnerLogger.info(
             "prompt_cache store skipped model=\(modelName, privacy: .public) reason=\(PromptCacheMissReason.invalidated.rawValue, privacy: .public)"
         )
+    }
+}
+
+// MARK: - GenerationTextRenderer
+
+/// Preserve recognizable reasoning boundaries in the v2 text stream.
+struct GenerationTextRenderer {
+    private var reasoningOpen = false
+
+    mutating func render(_ event: Generation) -> String? {
+        switch event {
+        case let .reasoning(text):
+            guard !text.isEmpty else {
+                return nil
+            }
+
+            let prefix = reasoningOpen ? "" : "<think>"
+            reasoningOpen = true
+            return prefix + text
+
+        case let .chunk(text):
+            guard !text.isEmpty else {
+                return nil
+            }
+
+            return closeReasoning() + text
+
+        case let .rejectedToolCall(rejection):
+            let notice = "[Tool call rejected: \(rejection.reason.rawValue)]"
+            let diagnostic: String
+            if rejection.isPreviewTruncated {
+                diagnostic = notice + " Output \(rejection.rawTextByteCount) bytes; truncated preview omitted."
+            }
+            else {
+                // Diagnostic text must not retain active tool-protocol delimiters.
+                let preview = rejection.rawTextPreview
+                    .replacingOccurrences(of: "<", with: "‹")
+                    .replacingOccurrences(of: ">", with: "›")
+                    .replacingOccurrences(of: "[", with: "〔")
+                    .replacingOccurrences(of: "]", with: "〕")
+                diagnostic = notice + "\n" + preview
+            }
+            return closeReasoning() + diagnostic
+
+        case .info,
+             .toolCall:
+            let text = closeReasoning()
+            return text.isEmpty ? nil : text
+
+        case .steering:
+            return nil
+        }
+    }
+
+    private mutating func closeReasoning() -> String {
+        guard reasoningOpen else {
+            return ""
+        }
+
+        reasoningOpen = false
+        return "</think>"
     }
 }

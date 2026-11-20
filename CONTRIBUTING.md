@@ -12,14 +12,14 @@ expected, what happened, and any error output. `swama logs` prints the diagnosti
 ## Development setup
 
 - Apple Silicon Mac, macOS 15.4 or later
-- Xcode with the Swift 6.2 toolchain
+- Xcode with the Swift 6.3 toolchain
 - [SwiftFormat](https://github.com/nicklockwood/SwiftFormat) 0.56.2 (the version CI pins)
 
 ```bash
 # CLI and libraries (Swift package in swama/)
 cd swama
 swift build -c release
-swift test
+swift test --no-parallel
 
 # macOS app — it bundles the CLI from swama/.build/arm64-apple-macosx/release/swama-bin
 mv .build/release/swama .build/release/swama-bin
@@ -32,8 +32,8 @@ xcodebuild -project Swama.xcodeproj -scheme Swama -configuration Release
 - `swiftformat . --lint` passes from the repository root (configuration in `.swiftformat`).
 - `Tools/Versioning/version.sh check` passes. Version bumps go in their own pull request; see
   [Tools/Versioning/README.md](Tools/Versioning/README.md).
-- `swift test` passes locally. CI currently runs only the format and version checks — the test job is disabled — so
-  running the tests is on you.
+- `swift test --no-parallel` passes locally. CI currently runs only the format and version checks — the test job is disabled — so
+  running the tests is on you. Diagnostic fixtures swap process-global recorders, so keep test cases serial.
 - New behaviour has tests, and user-facing changes update all three READMEs (`README.md`, `README_CN.md`,
   `README_JA.md`).
 - Keep each pull request to one change, describe what changed and how you verified it, and reference related issues.

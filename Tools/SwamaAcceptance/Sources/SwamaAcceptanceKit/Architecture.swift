@@ -12,9 +12,7 @@ func compilerImportedModules(
 }
 
 private func validateSwiftParserToolchain(_ developerDirectory: URL) throws {
-    let swift = developerDirectory.appendingPathComponent(
-        "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
-    )
+    let swift = try selectedSwiftTool("swift", developerDirectory: developerDirectory)
     guard FileManager.default.isExecutableFile(atPath: swift.path) else {
         throw AcceptanceFailure.unknown("missing Swift 6.3 toolchain for SwiftParser: \(swift.path)")
     }

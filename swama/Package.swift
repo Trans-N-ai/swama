@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.3
 import PackageDescription
 
 let package = Package(
@@ -32,18 +32,17 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/huggingface/swift-transformers.git", from: "1.3.3"),
-        // Pin before throwing cache APIs break the audio dependency.
-        // Audio may enable FoundationModels transitively; our local tokenizer bridge
-        // keeps MLXHuggingFace and its FoundationModels adapter out of product targets.
+        // Bind the MLX 0.33-compatible formal model-library release.
+        // Keep FoundationModels integration disabled for the existing tokenizer bridge.
         .package(
             url: "https://github.com/ml-explore/mlx-swift-lm",
-            revision: "4ffa64deea2e88ee32bd3764fc3c10ac80439514",
+            exact: "3.33.0",
             traits: []
         ),
-        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMajor(from: "0.31.4")),
+        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.33.0"),
         .package(
             url: "https://github.com/Blaizzy/mlx-audio-swift.git",
-            revision: "cae704f53bc32a3d0b606823828fbc5bedaaf388"
+            exact: "0.2.0"
         ),
     ],
     targets: [

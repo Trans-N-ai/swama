@@ -220,7 +220,7 @@ extension ModelRunner {
             }
 
             try Task.checkCancellation()
-            let cache = context.model.newCache(parameters: nil)
+            let cache = try context.model.newCache(parameters: nil)
             let input: LMInput
             let scoredIDs: [Int]
             if images.isEmpty {

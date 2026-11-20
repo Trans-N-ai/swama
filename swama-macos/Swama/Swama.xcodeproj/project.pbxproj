@@ -13,7 +13,7 @@
 		89E5EE6A2F04DD010093AB6A /* swift-nio_NIOPosix.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8983B0352DD733CB00840502 /* swift-nio_NIOPosix.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		89E5EE6B2F04DD010093AB6A /* swift-transformers_Hub.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8983B0332DD733C600840502 /* swift-transformers_Hub.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		89E5EE6C2F04DD010093AB6A /* mlx-swift_Cmlx.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8983B0312DD733BF00840502 /* mlx-swift_Cmlx.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		89E5EE6E2F04DD3B0093AB6A /* mlx-audio_MLXAudio.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 89E5EE6D2F04DD3B0093AB6A /* mlx-audio_MLXAudio.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		89E5EE6E2F04DD3B0093AB6A /* MLXAudio_MLXAudioTTS.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 89E5EE6D2F04DD3B0093AB6A /* MLXAudio_MLXAudioTTS.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		89C0BE022F6A000100000001 /* swama_SwamaCore.bundle in CopyFiles */ = {isa = PBXBuildFile; fileRef = 89C0BE012F6A000100000001 /* swama_SwamaCore.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -41,7 +41,7 @@
 			dstPath = Contents/Helpers;
 			dstSubfolderSpec = 1;
 			files = (
-				89E5EE6E2F04DD3B0093AB6A /* mlx-audio_MLXAudio.bundle in CopyFiles */,
+				89E5EE6E2F04DD3B0093AB6A /* MLXAudio_MLXAudioTTS.bundle in CopyFiles */,
 				89E5EE6A2F04DD010093AB6A /* swift-nio_NIOPosix.bundle in CopyFiles */,
 				89E5EE6B2F04DD010093AB6A /* swift-transformers_Hub.bundle in CopyFiles */,
 				89E5EE6C2F04DD010093AB6A /* mlx-swift_Cmlx.bundle in CopyFiles */,
@@ -60,7 +60,7 @@
 		8983B0312DD733BF00840502 /* mlx-swift_Cmlx.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "../../swama/Sources/SwamaCore/Resources/mlx-swift_Cmlx.bundle"; sourceTree = "<group>"; };
 		8983B0332DD733C600840502 /* swift-transformers_Hub.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "swift-transformers_Hub.bundle"; sourceTree = "<group>"; };
 		8983B0352DD733CB00840502 /* swift-nio_NIOPosix.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "swift-nio_NIOPosix.bundle"; sourceTree = "<group>"; };
-		89E5EE6D2F04DD3B0093AB6A /* mlx-audio_MLXAudio.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = "mlx-audio_MLXAudio.bundle"; sourceTree = "<group>"; };
+		89E5EE6D2F04DD3B0093AB6A /* MLXAudio_MLXAudioTTS.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = MLXAudio_MLXAudioTTS.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 		89C0BE012F6A000100000001 /* swama_SwamaCore.bundle */ = {isa = PBXFileReference; explicitFileType = "wrapper.cfbundle"; path = swama_SwamaCore.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -112,7 +112,7 @@
 		894B2B902DD33F680081F47B = {
 			isa = PBXGroup;
 			children = (
-				89E5EE6D2F04DD3B0093AB6A /* mlx-audio_MLXAudio.bundle */,
+				89E5EE6D2F04DD3B0093AB6A /* MLXAudio_MLXAudioTTS.bundle */,
 				8983B0352DD733CB00840502 /* swift-nio_NIOPosix.bundle */,
 				8983B0332DD733C600840502 /* swift-transformers_Hub.bundle */,
 				8983B0312DD733BF00840502 /* mlx-swift_Cmlx.bundle */,
