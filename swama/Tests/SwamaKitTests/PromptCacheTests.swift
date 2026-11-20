@@ -939,7 +939,7 @@ struct PromptCacheIteratorStrategyTests {
 
 @Suite("Prompt cache: end to end")
 struct PromptCacheEndToEndTests {
-    @Test func primedReasoningSurvivesCachedGenerationAndMatchesUpstreamText() async throws {
+    @Test func primedReasoningRetainsBoundariesDuringCachedGeneration() async throws {
         let reasoning = ReasoningConfig(
             startDelimiter: "<sep>", endDelimiter: "w3", promptStrategy: .alwaysOn
         )
@@ -950,19 +950,21 @@ struct PromptCacheEndToEndTests {
             let input = try await context.processor.prepare(input: .init(chat: messages))
             return try generate(input: input, parameters: parameters, context: context)
         }
-        var referenceText = ""
+        var referenceReasoning = ""
+        var referenceAnswer = ""
         var sawReasoning = false
         for await event in referenceStream {
             switch event {
-            case let .chunk(text): referenceText += text
+            case let .chunk(text): referenceAnswer += text
 
             case let .reasoning(text):
                 sawReasoning = true
-                referenceText += text
+                referenceReasoning += text
 
             default: break
             }
         }
+        let referenceText = "<think>" + referenceReasoning + "</think>" + referenceAnswer
         #expect(sawReasoning, "the reference must actually emit the new reasoning event")
         #expect(referenceText.components(separatedBy: "w2").count == 3)
 

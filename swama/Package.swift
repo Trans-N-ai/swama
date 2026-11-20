@@ -39,7 +39,7 @@ let package = Package(
             exact: "3.33.0",
             traits: []
         ),
-        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMajor(from: "0.33.0")),
+        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.33.0"),
         .package(
             url: "https://github.com/Blaizzy/mlx-audio-swift.git",
             exact: "0.2.0"

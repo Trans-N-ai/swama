@@ -282,17 +282,14 @@ package actor ModelRunner {
             )
 
             var thrownError: Error?
+            var textRenderer = GenerationTextRenderer()
             for await generationEvent in run.stream {
                 if Task.isCancelled {
                     break
                 }
 
                 do {
-                    switch generationEvent {
-                    // Swama v2 exposes one text stream. Keep separately emitted reasoning
-                    // in that stream rather than silently dropping model output on upgrade.
-                    case let .chunk(chunkString),
-                         let .reasoning(chunkString):
+                    if let chunkString = textRenderer.render(generationEvent) {
                         if didRecordFirstToken == false, chunkString.isEmpty == false {
                             SwamaDiagnostics.firstToken(diagnosticOperation, model: modelName)
                             didRecordFirstToken = true
@@ -310,18 +307,21 @@ package actor ModelRunner {
                             // Only accumulate if no onToken callback (for non-streaming)
                             output += chunkString
                         }
+                    }
+                    switch generationEvent {
+                    case .chunk,
+                         .reasoning,
+                         .steering:
+                        break
 
                     case let .info(info):
                         capturedCompletionInfo = info
 
                     case let .rejectedToolCall(rejection):
-                        // This API has no rejected-call event; propagate the upstream error
-                        // instead of returning a successful response with a lost tool call.
-                        throw RejectedToolCallError(rejection)
-
-                    case .steering:
-                        // No steering controls are submitted by this generation path.
-                        break
+                        // Return the bounded preview to the caller, never to automatic logs.
+                        modelRunnerLogger.info(
+                            "Model tool output rejected: \(rejection.reason.rawValue), bytes=\(rejection.rawTextByteCount)"
+                        )
 
                     case let .toolCall(toolCall):
                         if didRecordFirstToken == false {
@@ -928,5 +928,57 @@ private func storePromptCacheIfReusable(
         modelRunnerLogger.info(
             "prompt_cache store skipped model=\(modelName, privacy: .public) reason=\(PromptCacheMissReason.invalidated.rawValue, privacy: .public)"
         )
+    }
+}
+
+// MARK: - GenerationTextRenderer
+
+/// Preserve recognizable reasoning boundaries in the v2 text stream.
+private struct GenerationTextRenderer {
+    private var reasoningOpen = false
+
+    mutating func render(_ event: Generation) -> String? {
+        switch event {
+        case let .reasoning(text):
+            guard !text.isEmpty else {
+                return nil
+            }
+
+            let prefix = reasoningOpen ? "" : "<think>"
+            reasoningOpen = true
+            return prefix + text
+
+        case let .chunk(text):
+            guard !text.isEmpty else {
+                return nil
+            }
+
+            return closeReasoning() + text
+
+        case let .rejectedToolCall(rejection):
+            let preview = rejection.isPreviewTruncated
+                ? "[Rejected tool call output: \(rejection.rawTextByteCount) bytes; preview truncated]\n"
+                + rejection.rawTextPreview
+                : rejection.rawTextPreview
+            let text = closeReasoning() + preview
+            return text.isEmpty ? nil : text
+
+        case .info,
+             .toolCall:
+            let text = closeReasoning()
+            return text.isEmpty ? nil : text
+
+        case .steering:
+            return nil
+        }
+    }
+
+    private mutating func closeReasoning() -> String {
+        guard reasoningOpen else {
+            return ""
+        }
+
+        reasoningOpen = false
+        return "</think>"
     }
 }
